@@ -3,8 +3,10 @@
  * (db/state.ts: SQLite `~/.mandate/state.sqlite` or the Postgres `mandate_server` schema):
  * - `~/.mandate/session.secret`: 32 random bytes (or `MANDATE_SESSION_SECRET`); signs cookies and encrypts tokens at rest.
  * - `sessions`: server-side sessions keyed by sha256(sid) with an expiry. The cookie is `<sid>.<hmac>`; logout deletes it.
- * - `github_tokens`: each user's GitHub OAuth access token, AES-256-GCM encrypted, with granted scopes and a `revoked`
- *   flag (set when GitHub answers 401). Used by GitHub-backed projects (`connectedBy`) to pull / push.
+ * - `github_tokens`: each user's GitHub access token, AES-256-GCM encrypted, with granted scopes and a `revoked`
+ *   flag (set when GitHub answers 401). Used by GitHub-backed projects (`connectedBy`) to pull / push. GitHub App
+ *   user tokens expire (8 h) and come with a rotating refresh token (6 months): both are encrypted together, refreshed
+ *   before expiry (`refreshDue`, and on read), and a failed refresh marks the token revoked ("Reconnect GitHub").
  *   Tokens never reach the browser, logs, URLs or argv. A small in-process cache serves the few synchronous readers
  *   (push gate, git credential getter); it is refreshed on every async read / write and every minute on Postgres.
  */
@@ -19,7 +21,7 @@ export interface SessionUser {
   avatarUrl: string;
   /** GitHub numeric user id (user directory: noreply co-author addresses); not stored in the session. */
   githubId?: number;
-  /** 'github' (OAuth, server mode) or 'local' (one-time link, local mode); unset = github (older sessions). */
+  /** 'github' (GitHub sign-in); 'local' sessions of older installs are refused. Unset = github (older sessions). */
   kind?: 'github' | 'local';
 }
 
@@ -59,7 +61,29 @@ export function loadServerSecret(home: string, env: NodeJS.ProcessEnv = process.
   return secret;
 }
 
+/** A stored GitHub token (decrypted). GitHub App user tokens carry their expiry and refresh token. */
+export interface StoredToken {
+  token: string;
+  scopes: string[];
+  /** A GitHub App user-to-server token (no scopes; access = app installations ∩ the user's access). */
+  app?: boolean;
+  /** Epoch ms when the access token expires (GitHub App tokens). */
+  expiresAt?: number;
+  refreshToken?: string;
+  /** Epoch ms when the refresh token expires. */
+  refreshExpiresAt?: number;
+}
+
+/** Exchanges a refresh token for a new pair (GitHub App user tokens); throws on a rejected refresh token. */
+export type TokenRefresher = (refreshToken: string) => Promise<{ token: string; refreshToken?: string; expiresIn?: number; refreshExpiresIn?: number }>;
+
+/** Refresh this long before the access token expires. */
+const REFRESH_MARGIN_MS = 15 * 60_000;
+
 export class AuthStore {
+  /** Set at startup when sign-in uses a GitHub App (user tokens expire and refresh). */
+  refresher: TokenRefresher | null = null;
+  private readonly refreshing = new Map<string, Promise<StoredToken | null>>();
   private readonly macKey: Buffer;
   private readonly encKey: Buffer;
   private readonly state: Promise<ServerState>;
@@ -81,7 +105,8 @@ export class AuthStore {
     this.state = state ? Promise.resolve(state) : stateForHome(home);
     this.ready = this.state.then(async (st) => {
       await this.loadTokens();
-      if (st.db.caps.multiInstance) setInterval(() => void this.loadTokens().catch(() => undefined), 60_000).unref();
+      // Other instances may change tokens in a shared database (checked each time: the database can switch at runtime).
+      setInterval(() => (st.db.caps.multiInstance ? void this.loadTokens().catch(() => undefined) : undefined), 60_000).unref();
     });
     this.ready.catch(() => undefined);
   }
@@ -171,11 +196,13 @@ export class AuthStore {
     return r ? { ...r, revoked: Number(r.revoked) } : undefined;
   }
 
-  async saveToken(login: string, token: string, scopes: string[]): Promise<void> {
+  async saveToken(login: string, token: string, scopes: string[], extra: Omit<StoredToken, 'token' | 'scopes'> = {}): Promise<void> {
     const iv = randomBytes(12);
     const c = createCipheriv('aes-256-gcm', this.encKey, iv);
     c.setAAD(Buffer.from(login.toLowerCase()));
-    const ct = Buffer.concat([c.update(token, 'utf8'), c.final()]);
+    // Plain OAuth App tokens are stored as is (older rows too); GitHub App tokens as a versioned JSON payload.
+    const plain = extra.app || extra.refreshToken || extra.expiresAt ? JSON.stringify({ v: 2, t: token, ...(extra.app ? { a: 1 } : {}), ...(extra.expiresAt ? { e: extra.expiresAt } : {}), ...(extra.refreshToken ? { r: extra.refreshToken } : {}), ...(extra.refreshExpiresAt ? { re: extra.refreshExpiresAt } : {}) }) : token;
+    const ct = Buffer.concat([c.update(plain, 'utf8'), c.final()]);
     const enc = Buffer.concat([iv, c.getAuthTag(), ct]).toString('base64url');
     const st = await this.state;
     const d = st.db.dialect;
@@ -183,27 +210,84 @@ export class AuthStore {
     this.cache.set(login.toLowerCase(), { login, enc, scopes: JSON.stringify(scopes), revoked: 0 });
   }
 
-  private decrypt(login: string, t: TokenRow | undefined): { token: string; scopes: string[] } | null {
+  private decrypt(login: string, t: TokenRow | undefined): StoredToken | null {
     if (!t || t.revoked) return null;
     try {
       const b = Buffer.from(t.enc, 'base64url');
       const d = createDecipheriv('aes-256-gcm', this.encKey, b.subarray(0, 12));
       d.setAAD(Buffer.from(login.toLowerCase()));
       d.setAuthTag(b.subarray(12, 28));
-      return { token: Buffer.concat([d.update(b.subarray(28)), d.final()]).toString('utf8'), scopes: parseScopes(t.scopes) };
+      const plain = Buffer.concat([d.update(b.subarray(28)), d.final()]).toString('utf8');
+      const scopes = parseScopes(t.scopes);
+      if (!plain.startsWith('{"v":2')) return { token: plain, scopes };
+      const j = JSON.parse(plain) as { t: string; a?: number; e?: number; r?: string; re?: number };
+      return { token: j.t, scopes, ...(j.a ? { app: true } : {}), ...(j.e ? { expiresAt: j.e } : {}), ...(j.r ? { refreshToken: j.r } : {}), ...(j.re ? { refreshExpiresAt: j.re } : {}) };
     } catch {
       return null;
     }
   }
 
-  /** The user's token (null when none, revoked or undecryptable). */
-  async token(login: string): Promise<{ token: string; scopes: string[] } | null> {
-    return this.decrypt(login, await this.row(login));
+  /** The user's token (null when none, revoked or undecryptable); a GitHub App token about to expire is refreshed first. */
+  async token(login: string): Promise<StoredToken | null> {
+    const t = this.decrypt(login, await this.row(login));
+    if (t?.expiresAt && t.refreshToken && t.expiresAt - REFRESH_MARGIN_MS <= this.now() && this.refresher) return (await this.refresh(login)) ?? (t.expiresAt > this.now() ? t : null);
+    return t;
   }
 
-  /** Synchronous variant over the cache (git credential getters, push gates). */
-  tokenCached(login: string): { token: string; scopes: string[] } | null {
+  /** Synchronous variant over the cache (git credential getters, push gates); refreshed in the background (`refreshDue`). */
+  tokenCached(login: string): StoredToken | null {
     return this.decrypt(login, this.cache.get(login.toLowerCase()));
+  }
+
+  /**
+   * Refresh one user's GitHub App token (single flight per login: the refresh token rotates, so two concurrent
+   * refreshes would revoke each other). A rejected refresh token marks the token revoked ("Reconnect GitHub").
+   */
+  async refresh(login: string): Promise<StoredToken | null> {
+    const lc = login.toLowerCase();
+    const running = this.refreshing.get(lc);
+    if (running) return running;
+    const job = (async () => {
+      const cur = this.decrypt(login, await this.row(login));
+      if (!cur?.refreshToken || !this.refresher) return cur;
+      if (cur.refreshExpiresAt && cur.refreshExpiresAt <= this.now()) {
+        await this.markRevoked(login);
+        return null;
+      }
+      try {
+        const r = await this.refresher(cur.refreshToken);
+        const now = this.now();
+        const next: StoredToken = {
+          token: r.token,
+          scopes: cur.scopes,
+          ...(cur.app ? { app: true } : {}),
+          ...(r.expiresIn ? { expiresAt: now + r.expiresIn * 1000 } : {}),
+          ...(r.refreshToken ? { refreshToken: r.refreshToken } : {}),
+          ...(r.refreshExpiresIn ? { refreshExpiresAt: now + r.refreshExpiresIn * 1000 } : {}),
+        };
+        await this.saveToken((await this.row(login))?.login ?? login, next.token, next.scopes, next);
+        return next;
+      } catch (e) {
+        // A rejected refresh token (bad_refresh_token, 401): the user signs in again. Network errors retry later.
+        if ((e as { status?: number }).status === 400 || (e as { status?: number }).status === 401 || /bad_refresh_token|invalid_grant/.test((e as Error).message)) await this.markRevoked(login);
+        return null;
+      }
+    })().finally(() => this.refreshing.delete(lc));
+    this.refreshing.set(lc, job);
+    return job;
+  }
+
+  /** Refresh every GitHub App token that expires within `withinMs` (background sweep; keeps pushes working). */
+  async refreshDue(withinMs = 30 * 60_000): Promise<string[]> {
+    if (!this.refresher) return [];
+    const due: string[] = [];
+    for (const [, row] of this.cache) {
+      const t = this.decrypt(row.login, row);
+      if (t?.refreshToken && t.expiresAt && t.expiresAt - withinMs <= this.now()) due.push(row.login);
+    }
+    const done: string[] = [];
+    for (const login of due) if (await this.refresh(login)) done.push(login);
+    return done;
   }
 
   /** Granted scopes of the user's (non-revoked) token. */

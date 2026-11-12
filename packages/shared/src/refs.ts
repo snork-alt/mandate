@@ -105,7 +105,7 @@ export type NodeRef =
   | { kind: 'commits'; sha: string }
   /** Agent identity (case-folded id: `mandate://agents/Giulia` and `.../giulia` are the same node). */
   | { kind: 'agents'; name: string }
-  /** A person (server mode): the case-folded GitHub login, `mandate://users/<login>`. */
+  /** A person: the owner or a case-folded GitHub login, `mandate://users/<login>`. */
   | { kind: 'users'; login: string }
   | { kind: 'branches'; name: string }
   | { kind: 'verifications'; id: string }

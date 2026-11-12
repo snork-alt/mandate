@@ -18,7 +18,7 @@ import { projectIdSchema, type ProjectConfig, type RemoteConfig } from '../confi
 import { idFromTitle, uniqueId } from '@mandate/shared';
 import type { ProjectsStore } from './store.js';
 import type { AuthStore } from '../auth/sessions.js';
-import { GithubClient, GithubError, type AuthConfigSource, type GithubRepo } from '../auth/github.js';
+import { appInstallUrl, GithubClient, GithubError, type AuthConfigSource, type GithubRepo } from '../auth/github.js';
 import { originOk, type AuthOptions } from '../auth/http.js';
 import type { KeyStore } from '../auth/keys.js';
 import type { ProjectRegistry } from './registry.js';
@@ -119,7 +119,9 @@ export function githubRemote(store: AuthStore, cloneUrl: (repo: string) => strin
   };
 }
 
-const needScope = (scopes: string[], isPrivate: boolean) => (isPrivate ? !scopes.includes('repo') : !scopes.includes('repo') && !scopes.includes('public_repo'));
+/** OAuth App tokens need the repo / public_repo scope; GitHub App tokens have no scopes (installation permissions). */
+const needScope = (tok: { scopes: string[]; app?: boolean }, isPrivate: boolean) => !tok.app && needScopeOf(tok.scopes, isPrivate);
+const needScopeOf = (scopes: string[], isPrivate: boolean) => (isPrivate ? !scopes.includes('repo') : !scopes.includes('repo') && !scopes.includes('public_repo'));
 
 export type CreateStep = 'clone' | 'init' | 'push' | 'key';
 export type ProgressFn = (step: CreateStep, status: 'start' | 'done') => void;
@@ -149,7 +151,7 @@ export async function createProject(deps: AdminDeps, login: string, raw: unknown
     throw new AdminError(e instanceof GithubError && e.status === 404 ? 404 : 502, 'github_error', (e as Error).message, 'repo');
   }
   if (!repo.canPush) throw new AdminError(403, 'github_error', `you cannot push to ${repo.fullName}`, 'repo', 'pick a repo you can write to');
-  if (needScope(tok.scopes, repo.private)) throw new AdminError(403, 'needs_scope', `storing a project in ${repo.private ? 'a private' : 'a public'} repo needs the GitHub '${repo.private ? 'repo' : 'public_repo'}' scope`, 'repo', 'grant the scope (New project → consent step)');
+  if (needScope(tok, repo.private)) throw new AdminError(403, 'needs_scope', `storing a project in ${repo.private ? 'a private' : 'a public'} repo needs the GitHub '${repo.private ? 'repo' : 'public_repo'}' scope`, 'repo', 'grant the scope (New project → consent step)');
   const branch = input.branch ?? repo.defaultBranch ?? 'main';
   if (!repo.empty && repo.defaultBranch && branch !== repo.defaultBranch) {
     throw new AdminError(400, 'invalid_input', `only the default branch (${repo.defaultBranch}) is supported for an existing repo`, 'branch');
@@ -297,6 +299,12 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps & { au
     }
     return p.user.login;
   };
+  const appInfo = (slug: string | null, installations: { account: string; type: string; selection: string }[]) => ({
+    slug,
+    /** Install the app on more accounts / repositories, then refresh the list. */
+    installUrl: slug ? appInstallUrl(deps.github.webBase, slug) : null,
+    installations,
+  });
   const upgrade = (scope: string) => `/auth/github/login?scope=${scope}&returnTo=${encodeURIComponent('/?new=1')}`;
 
   app.get('/ui/github/repos', async (req, reply) => {
@@ -321,7 +329,24 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps & { au
       grantUrl: clientId ? `https://github.com/settings/connections/applications/${clientId}` : null,
       owner,
     };
-    if (!tok) return { ...base, needsScope: 'repo', owners: [], items: [] };
+    const app = deps.source.current().github?.app;
+    if (!tok) return { ...base, needsScope: app ? null : 'repo', owners: [], items: [], ...(app ? { app: appInfo(app.slug, []) } : {}) };
+    // GitHub App: the user's token sees only repositories where the app is installed (∩ the user's own access), so
+    // the picker lists installations and offers "Install Mandate on more repos / organizations".
+    if (app || tok.app) {
+      try {
+        const insts = await deps.github.installations(tok.token);
+        const lists = await Promise.all(insts.filter((i) => owner === 'all' || i.account.toLowerCase() === owner.toLowerCase()).map((i) => deps.github.installationRepos(tok.token, i.id, needle).catch(() => [] as GithubRepo[])));
+        const byName = new Map<string, GithubRepo>();
+        for (const r of lists.flat()) byName.set(r.fullName.toLowerCase(), r);
+        const items = [...byName.values()].sort((x, y) => (y.pushedAt ?? '').localeCompare(x.pushedAt ?? ''));
+        const owners = insts.map((i) => ({ login: i.account, name: null, avatarUrl: i.avatarUrl, type: i.accountType === 'Organization' ? ('org' as const) : ('user' as const), canCreateRepos: false, restricted: false, selection: i.selection }));
+        return { ...base, needsScope: null, owners, items, app: appInfo(app?.slug ?? null, insts.map((i) => ({ account: i.account, type: i.accountType, selection: i.selection }))) };
+      } catch (e) {
+        if (e instanceof GithubError && e.status === 401) void deps.store.markRevoked(login);
+        return send(reply, new AdminError(502, 'github_error', (e as Error).message));
+      }
+    }
     try {
       const [orgs, mine] = await Promise.all([deps.github.orgs(tok.token).catch(() => []), deps.github.repos(tok.token, needle)]);
       const seen = new Set(mine.items.map((r) => r.owner.toLowerCase()));
@@ -350,20 +375,42 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps & { au
     }
   });
 
+  // Settings → Admins: look a GitHub login up (avatar, name) before adding it. Admins only, with their own token.
+  app.get('/ui/github/users/:login', async (req, reply) => {
+    const p = await uiGate(req, reply, deps, deps.hostOk);
+    if (!p || p.kind !== 'ui') return reply;
+    if (notAdmin(reply, p.user.login)) return reply;
+    const login = (req.params as { login: string }).login;
+    if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(login)) return send(reply, new AdminError(400, 'invalid_input', 'not a GitHub login', 'login'));
+    const tok = await deps.store.token(p.user.login);
+    if (!tok) return send(reply, new AdminError(401, 'needs_scope', 'no usable GitHub token for your account', 'login', 'sign in with GitHub again'));
+    try {
+      const u = await deps.github.userByLogin(tok.token, login);
+      if (!u || u.type !== 'User') return send(reply, new AdminError(404, 'not_found', `no GitHub user '${login}'`, 'login'));
+      reply.header('Cache-Control', 'no-store');
+      return { login: u.login, name: u.name, avatarUrl: u.avatarUrl };
+    } catch (e) {
+      if (e instanceof GithubError && e.status === 401) void deps.store.markRevoked(p.user.login);
+      return send(reply, new AdminError(502, 'github_error', (e as Error).message, 'login'));
+    }
+  });
+
   app.post('/ui/github/repos', async (req, reply) => {
     const login = await post(req, reply);
     if (!login) return reply;
     const r = createRepoInputSchema.safeParse(req.body);
     if (!r.success) return send(reply, new AdminError(400, 'invalid_input', r.error.issues[0]!.message, String(r.error.issues[0]!.path[0] ?? 'name')));
     const tok = await deps.store.token(login);
-    if (!tok || needScope(tok.scopes, r.data.private)) return send(reply, new AdminError(403, 'needs_scope', `creating a ${r.data.private ? 'private' : 'public'} repo needs the '${r.data.private ? 'repo' : 'public_repo'}' scope`, 'repo'));
+    if (!tok || needScope(tok, r.data.private)) return send(reply, new AdminError(403, 'needs_scope', `creating a ${r.data.private ? 'private' : 'public'} repo needs the '${r.data.private ? 'repo' : 'public_repo'}' scope`, 'repo'));
     const owner = r.data.owner && r.data.owner.toLowerCase() !== login.toLowerCase() ? r.data.owner : undefined;
     try {
       return { repo: await deps.github.createRepo(tok.token, { name: r.data.name, private: r.data.private, ...(r.data.description ? { description: r.data.description } : {}), ...(owner ? { owner } : {}) }) };
     } catch (e) {
       const st = e instanceof GithubError ? e.status : 502;
       const restricted = /OAuth App access restrictions/i.test((e as Error).message);
-      return send(reply, new AdminError(st === 422 ? 409 : st === 403 ? 403 : 502, 'github_error', (e as Error).message, restricted ? 'owner' : 'name', restricted ? 'grant this app access to the organization, then retry' : undefined));
+      // A GitHub App cannot create repositories (it asks only for contents + metadata): create it on GitHub instead.
+      const app = tok.app && (st === 403 || st === 404);
+      return send(reply, new AdminError(st === 422 ? 409 : st === 403 ? 403 : 502, 'github_error', (e as Error).message, restricted ? 'owner' : 'name', restricted ? 'grant this app access to the organization, then retry' : app ? 'create the repository on GitHub, install Mandate on it, then refresh the list' : undefined));
     }
   });
 

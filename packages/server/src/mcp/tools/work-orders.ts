@@ -34,8 +34,8 @@ const woResult = async (ctx: ToolContext, id: string, commits: string[], extra: 
   ...extra,
   workOrder: (await ctx.reads.workOrderGet({ ref: id })) as unknown,
 });
-/** The author of a comment: the agent identity plus, in server mode, the GitHub user it acts as. */
-// The user is the write's attributed user (server mode: login or service:<name>; local mode: none).
+/** The author of a comment: the agent identity plus the user it acts as. */
+// The user is the write's attributed user (a GitHub login or service:<name>).
 const author = (ctx: ToolContext) => ({ agent: ctx.commit!.agent, ...(ctx.commit!.user ? { user: ctx.commit!.user } : {}) });
 
 /** Write boilerplate lives once in the server INSTRUCTIONS. */
@@ -75,7 +75,7 @@ Example: {"ref":"wo-01jc...","section":"auth-flow","files":["app:src/auth/callba
     name: 'work_order_touch_from_commits',
     title: 'Touched code from commits',
     kind: 'write',
-    description: `Compute touched files (paths, changed line ranges, renames) and commits from code commits (commits: [sha] or range: "base..head") and merge them like work_order_touch + work_order_git_update (commits, headCommit). Only works when the server can read a local checkout of the code repo (local mode, repo wired with \`mandate connect\`); otherwise it fails with code_repo_unavailable: then report the files yourself (work_order_touch).${COMMON}
+    description: `Compute touched files (paths, changed line ranges, renames) and commits from code commits (commits: [sha] or range: "base..head") and merge them like work_order_touch + work_order_git_update (commits, headCommit). Only works when the server can read a local checkout of the code repo (Mandate on this computer, repo wired with \`mandate connect\`); otherwise it fails with code_repo_unavailable: then report the files yourself (work_order_touch).${COMMON}
 Example: {"ref":"wo-01jc...","repo":"app","range":"main..HEAD"}`,
     input: workOrderTouchFromCommitsInputSchema,
     run: async (a, ctx) => {

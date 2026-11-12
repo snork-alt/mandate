@@ -13,7 +13,7 @@ import { mcpFixture, type McpFixture } from './mcp/fixture.js';
 
 let fx: McpFixture;
 beforeAll(async () => {
-  fx = await mcpFixture({ settings: memorySettings('local') });
+  fx = await mcpFixture({ settings: memorySettings() });
 }, 120_000);
 afterAll(async () => {
   await fx?.close();

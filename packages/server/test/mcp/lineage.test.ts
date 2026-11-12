@@ -10,7 +10,7 @@ import { memorySettings } from '../../src/projects/settings.js';
 
 let fx: McpFixture;
 beforeAll(async () => {
-  fx = await mcpFixture({ settings: memorySettings('local') });
+  fx = await mcpFixture({ settings: memorySettings() });
   // This client asks in chat, so confirmedByUser confirms its standard writes.
   await fx.call('flow_set', { questions: 'chat' });
 }, 120_000);

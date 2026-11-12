@@ -87,7 +87,7 @@ beforeAll(async () => {
   keys = new KeyStore(path.join(home, 'keys.json'));
   keys.ensureProjectKeys(['specs', 'other']);
   const oauth = new OAuthStore(home);
-  auth = { keys, store, mode: 'server', sharedKeys: false, agentTokens: tokens, oauth, isAdmin: (l) => l === 'octo' };
+  auth = { keys, store, sharedKeys: false, agentTokens: tokens, oauth, isAdmin: (l) => l === 'octo' };
   perms = new RepoPermissions(store, new GithubClient({ web: 'https://gh.test', api: 'https://api.gh.test', fetch: mockFetch }));
   const cfg = (id: string, repo: string): ProjectConfig => ({ id, name: id, dataDir: path.join(home, id), branch: 'main', author: { name: 'T', email: 't@x' }, git: { backend: 'embedded', cliPath: 'git', cliEnv: {} }, index: {} as ProjectConfig['index'], idempotencyFile: '', autoPush: { enabled: false, debounceSeconds: 10, intervalSeconds: 300 }, github: { repo, connectedBy: 'octo' } });
   const configs = [cfg('specs', 'acme/specs'), cfg('other', 'acme/other')];

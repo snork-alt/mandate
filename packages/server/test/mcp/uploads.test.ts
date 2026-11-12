@@ -339,7 +339,7 @@ describe('uploads in server mode', () => {
     await activity.start();
     const registry = new ProjectRegistry([cfg], async (p) => ({ config: p, git, storage, index: null, activity, ctx: { project: { id: p.id, name: p.name }, storage, index: null, reads: new DocReadService(storage), views: new DocViewService(storage), activity }, close: async () => activity.stop() }) as unknown as ProjectRuntime);
     app = Fastify({ logger: false });
-    registerMcp(app, { projects: registry, auth: { keys, store, mode: 'server', sharedKeys: false, agentTokens: tokens } });
+    registerMcp(app, { projects: registry, auth: { keys, store, sharedKeys: false, agentTokens: tokens } });
     await app.listen({ port: 0, host: '127.0.0.1' });
     base = `http://127.0.0.1:${(app.server.address() as { port: number }).port}`;
   }, 60_000);

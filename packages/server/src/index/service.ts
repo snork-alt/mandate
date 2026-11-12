@@ -575,9 +575,9 @@ export class IndexService {
     await this.ensureFresh();
     return whereUsedOf(this.ctx, input);
   }
-  async contributors(input: ContributorsInput, opts: { agentsOnly?: boolean } = {}) {
+  async contributors(input: ContributorsInput) {
     await this.ensureFresh();
-    return contributorsOf(this.ctx, input, opts);
+    return contributorsOf(this.ctx, input);
   }
   async codeRules(input: CodeRulesInput) {
     await this.ensureFresh();

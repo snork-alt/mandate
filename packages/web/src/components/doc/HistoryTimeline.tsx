@@ -41,7 +41,7 @@ export function HistoryTimeline({ entries, loading, now, versionHref, activeComm
   const tagged = entries.some((e) => e.changes);
   // "Content changes only": hide metadata-only commits (heartbeats...), but keep the selected one.
   const byContent = tagged && contentOnly ? entries.filter((e) => !e.changes || e.changes.includes('text') || e.commit === activeCommit) : entries;
-  // "By user" (server mode only; local mode records no users).
+  // "By user".
   const userOptions = usersOf(entries, showUsers);
   const filtered = filterByUsers(byContent, users, showUsers);
   const hidden = entries.length - filtered.length;

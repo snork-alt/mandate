@@ -1,36 +1,48 @@
-/** Mode settings in config.json (validated by the server schema), Host allow-list, reverse-proxy snippets. */
+/** Where Mandate runs, in config.json (validated by the server schema), Host allow-list, reverse-proxy snippets. */
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { loadConfig } from '../../server/src/config.js';
 import { configFile } from '../src/context.js';
-import { allowedHosts, publicUrlProblem, readSettings, writeSettings } from '../src/settings.js';
+import { allowedHosts, publicUrlProblem, readSettings, savePort, writeSettings } from '../src/settings.js';
 import { caddySnippet, nginxSnippet, sshTunnel } from '../src/proxy.js';
 import { tempCtx, write } from './helpers.js';
 
 const serverEnv = (ctx: ReturnType<typeof tempCtx>) => ({ HOME: ctx.home, MANDATE_HOME: ctx.mandateHome });
 
-describe('config written per mode', () => {
-  it('local: 127.0.0.1, no public URL, projects folder', () => {
-    const ctx = tempCtx();
-    writeSettings(ctx, { mode: 'local', port: 4300, bind: '127.0.0.1', trustProxy: false, baseDir: '~/mandate' });
-    const j = JSON.parse(readFileSync(configFile(ctx), 'utf8'));
-    expect(j.server).toEqual({ mode: 'local', port: 4300, bind: '127.0.0.1', trustProxy: false });
-    expect(j.local).toEqual({ baseDir: '~/mandate' });
-    const c = loadConfig(serverEnv(ctx));
-    expect(c).toMatchObject({ mode: 'local', host: '127.0.0.1', port: 4300, publicUrl: 'http://localhost:4300', trustProxy: false });
-    expect(readSettings(ctx)).toMatchObject({ mode: 'local', url: 'http://localhost:4300', configured: true });
-  });
-
-  it('server: public URL, bind, trustProxy; other keys kept; re-run switches back cleanly', () => {
+describe('start --port is remembered', () => {
+  it('savePort stores only the port: later commands use it, the wizard still opens, the server accepts it', () => {
     const ctx = tempCtx();
     write(configFile(ctx), `${JSON.stringify({ embedding: { provider: 'none' } }, null, 2)}\n`);
-    writeSettings(ctx, { mode: 'server', port: 4000, bind: '127.0.0.1', publicUrl: 'https://mandate.example.com/', trustProxy: true });
+    savePort(ctx, 4500);
+    const j = JSON.parse(readFileSync(configFile(ctx), 'utf8'));
+    expect(j).toEqual({ embedding: { provider: 'none' }, server: { port: 4500 } });
+    expect(readSettings(ctx)).toMatchObject({ port: 4500, url: 'http://localhost:4500', configured: false });
+    expect(loadConfig(serverEnv(ctx))).toMatchObject({ port: 4500 });
+  });
+});
+
+describe('config written per address', () => {
+  it('this computer: 127.0.0.1, no public URL; older users / mode keys are dropped', () => {
+    const ctx = tempCtx();
+    write(configFile(ctx), `${JSON.stringify({ server: { users: 'me', mode: 'local' } })}\n`);
+    writeSettings(ctx, { port: 4300, bind: '127.0.0.1', trustProxy: false });
+    const j = JSON.parse(readFileSync(configFile(ctx), 'utf8'));
+    expect(j.server).toEqual({ port: 4300, bind: '127.0.0.1', trustProxy: false });
+    const c = loadConfig(serverEnv(ctx));
+    expect(c).toMatchObject({ host: '127.0.0.1', port: 4300, publicUrl: 'http://localhost:4300', trustProxy: false });
+    expect(readSettings(ctx)).toMatchObject({ url: 'http://localhost:4300', configured: true });
+  });
+
+  it('a server: public URL, bind, trustProxy; other keys kept; moving back to this computer is clean', () => {
+    const ctx = tempCtx();
+    write(configFile(ctx), `${JSON.stringify({ embedding: { provider: 'none' } }, null, 2)}\n`);
+    writeSettings(ctx, { port: 4000, bind: '127.0.0.1', publicUrl: 'https://mandate.example.com/', trustProxy: true });
     const j = JSON.parse(readFileSync(configFile(ctx), 'utf8'));
     expect(j.embedding).toEqual({ provider: 'none' });
-    expect(j.server).toEqual({ mode: 'server', port: 4000, bind: '127.0.0.1', trustProxy: true, publicUrl: 'https://mandate.example.com' });
+    expect(j.server).toEqual({ port: 4000, bind: '127.0.0.1', trustProxy: true, publicUrl: 'https://mandate.example.com' });
     const c = loadConfig(serverEnv(ctx));
-    expect(c).toMatchObject({ mode: 'server', publicUrl: 'https://mandate.example.com', trustProxy: true });
-    writeSettings(ctx, { mode: 'local', port: 4000, bind: '127.0.0.1', trustProxy: false });
+    expect(c).toMatchObject({ publicUrl: 'https://mandate.example.com', trustProxy: true });
+    writeSettings(ctx, { port: 4000, bind: '127.0.0.1', trustProxy: false });
     expect(JSON.parse(readFileSync(configFile(ctx), 'utf8')).server.publicUrl).toBeUndefined();
   });
 

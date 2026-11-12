@@ -200,7 +200,7 @@ export const integritySnoozeSchema = z.object({
   /** ISO time the snooze ends. */
   until: z.string(),
   note: z.string().trim().min(1).max(500),
-  /** The user (server mode) or the agent that recorded it. */
+  /** The user or the agent that recorded it. */
   by: z.string().min(1),
   at: z.string(),
 });

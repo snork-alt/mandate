@@ -8,7 +8,7 @@ import { buildRef } from '@mandate/shared/refs';
 import { useContributors } from '../../lib/people';
 import { UserAvatar } from '../people/People';
 
-/** Server mode: the user who claimed a work order (its `claimed` contributor), else null. */
+/** Team: the user who claimed a work order (its `claimed` contributor), else null. */
 function useClaimer(workOrder?: string): string | null {
   const q = useContributors(workOrder ? buildRef({ kind: 'work-orders', id: workOrder }) : null);
   const direct = (q.data ?? []).filter((c) => c.kind === 'direct');
@@ -16,7 +16,7 @@ function useClaimer(workOrder?: string): string | null {
 }
 
 /**
- * Small round avatar of a claim: in server mode (with `workOrder`) the user who claimed it, "via <agent>" in its hover
+ * Small round avatar of a claim: in a team (with `workOrder`) the user who claimed it, "via <agent>" in its hover
  * card; otherwise the agent's initials. Red ring when the claim is stale.
  */
 export function ClaimAvatar({ claim, now, size = 20, workOrder }: { claim: Claim; now: number; size?: number; workOrder?: string }) {

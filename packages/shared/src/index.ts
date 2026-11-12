@@ -32,7 +32,7 @@ export interface FileMeta {
   versionCount: number;
   /** Latest commit that changed the file (null when uncommitted). */
   lastCommit: string | null;
-  /** Who created the file (first commit): user (server mode only) and coding agent. */
+  /** Who created the file (first commit): user and coding agent. */
   createdBy?: import('./lineage.js').Attribution;
   /** Who made the last change. */
   lastEditedBy?: import('./lineage.js').Attribution;
@@ -49,11 +49,11 @@ export interface HistoryEntry {
   trailers: Record<string, string>;
   agent?: string;
   branch?: string;
-  /** Server mode: the user who triggered the write (`Mandate-User` / `Agent-User` trailer); never set in local mode. */
+  /** The user who triggered the write (`Mandate-User` / `Agent-User` trailer); absent on older agent-only commits. */
   user?: string;
   /** Recorded causes of the write (`Caused-By` trailer). */
   causes?: string[];
-  /** Server mode: co-authors (`Co-authored-by:` logins: contributors of the causes). */
+  /** Team: co-authors (`Co-authored-by:` logins: contributors of the causes). */
   coAuthors?: string[];
   /** What the commit changed in the document: section text, the status field, other metadata. */
   changes?: ('text' | 'status' | 'metadata')[];
@@ -856,11 +856,11 @@ const feedbackFields = {
   relatedTo: z.array(relatedRefSchema).default([]),
   /** Author (server-set from the commit's agent / author; legacy items: derived from history). */
   createdBy: z.string().min(1).optional(),
-  /** Server mode: the user who triggered the creation (server-set from the principal; never client input). */
+  /** The user who triggered the creation (server-set from the principal; never client input). */
   createdByUser: z.string().min(1).optional(),
   /** The audit finding this item was filed from (spec_wrong / ambiguous findings). */
   fromFinding: findingUriSchema.optional(),
-  /** Who accepted it (server-set principal: the server-mode user, else the agent); legacy items: derived from history. */
+  /** Who accepted it (server-set principal: the user, else the agent); legacy items: derived from history. */
   acceptedBy: z.string().min(1).optional(),
   /**
    * Approval override (server-set by feedback_accept with override: true): the acceptance may approve the accepter's
@@ -1100,7 +1100,7 @@ export const verificationRecordSchema = z.object({
    */
   codeRefs: z.array(auditCodeRefSchema).max(30).optional(),
   by: z.string().min(1),
-  /** Server mode: the user who triggered the write (server-set from the principal; never client input). */
+  /** The user who triggered the write (server-set from the principal; never client input). */
   byUser: z.string().min(1).optional(),
   at: z.string(),
   createdAt: z.string().optional(),
@@ -1356,6 +1356,8 @@ export interface HealthResponse {
   version: string;
   dataDir: string;
   remote: string | null;
+  /** Process start time (epoch ms): a new value means the server restarted. */
+  startedAt?: number;
 }
 
 export interface ApiError {

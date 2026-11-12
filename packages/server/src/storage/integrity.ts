@@ -129,7 +129,7 @@ export function checkIntegrity(
       }
     }
   }
-  // Approval overrides (self-approval by the sole active user / an admin / local mode) stay visible.
+  // Approval overrides (self-approval by the sole active user / an admin) stay visible.
   for (const f of m.feedback ?? []) {
     if (f.approvalOverride) out.push(issue('self_approved_override', `mandate://feedback/${f.id}`, `${f.id} was accepted with an approval override by ${f.approvalOverride.by}: ${f.approvalOverride.reason}`));
   }

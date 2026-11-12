@@ -2,7 +2,7 @@ import { Tooltip } from '@mantine/core';
 import { IconEye, IconPencil } from '@tabler/icons-react';
 import { accessLabel, type ProjectSummary } from './projects';
 
-/** Project access from GitHub repo permissions (server mode): read → read tools only; push → agents may write. */
+/** Project access from GitHub repo permissions (team): read → read tools only; push → agents may write. */
 export function AccessBadge({ access, compact, noTip }: { access: ProjectSummary['access']; compact?: boolean; noTip?: boolean }) {
   const label = accessLabel(access);
   if (!label) return null;

@@ -413,13 +413,13 @@ describe('user-confirmed rules', () => {
     await docs.sectionArchive('specs', S('c', 'ac'), as('carol', { trailers: { Feedback: fbC.id } }));
   });
 
-  it('self_approved_override: self-approval only with override + reason, for the sole active user, an admin or local mode', async () => {
+  it('self_approved_override: self-approval only with override + reason, for the sole active user or an admin', async () => {
     const { storage, docs, spec, std, git } = await setup();
     await std('ui', [rule('contrast')]);
     await spec('s', [sec('a', { links: [link(T('ui'), 'follows')] }), sec('b', { links: [link(T('ui'), 'follows')] }), sec('c', { links: [link(T('ui'), 'follows')] })]);
     const accept = TOOLS.find((t) => t.name === 'feedback_accept')!;
     const serverCtx = (login: string, admin = false) =>
-      ({ storage, index: null, reads: new DocReadService(storage), clientName: 'claude-code', principal: { kind: 'user', login, project: 'test', via: 'pat', tokenId: 't', tokenName: 't' }, settings: { ...memorySettings('server'), isAdmin: () => admin } }) as unknown as ToolContext;
+      ({ storage, index: null, reads: new DocReadService(storage), clientName: 'claude-code', principal: { kind: 'user', login, project: 'test', via: 'pat', tokenId: 't', tokenName: 't' }, settings: { ...memorySettings(), isAdmin: () => admin } }) as unknown as ToolContext;
     const call = async (ctx: ToolContext, args: object) => (await callTool(accept, args, ctx)).structuredContent as { error?: { code: string; message: string } };
     const fileAs = async (u: string, sid: string) => (await storage.feedbackService.create({ targets: [S('s', sid)], kind: 'question', body: 'waive?' }, as('claude-code', { trailers: { [USER_TRAILER]: u } }))).id;
     const waive = (fb: string, u: string, sid: string) => docs.linkAdd('specs', S('s', sid), { to: T('ui', 'contrast'), rel: 'deviates_from', note: 'n', feedback: fb }, as('claude-code', { trailers: { [USER_TRAILER]: u } }));
@@ -439,11 +439,11 @@ describe('user-confirmed rules', () => {
     const f2 = await fileAs('other', 'b');
     expect((await call(serverCtx('solo'), { ref: f2, override: true, overrideReason: 'r' })).error?.code).toBe('override_not_allowed');
     expect((await call(serverCtx('solo', true), { ref: f2, override: true, overrideReason: 'admin decision' })).error).toBeUndefined();
-    // Local mode: one person by nature (agent identity is the principal).
+    // No authenticated user (an agent without a GitHub principal): self-approval is refused.
     const f3 = (await storage.feedbackService.create({ targets: [S('s', 'c')], kind: 'question', body: 'w' }, as('me'))).id;
-    const local = { storage, index: null, reads: new DocReadService(storage), clientName: 'me', settings: memorySettings('local') } as unknown as ToolContext;
-    expect((await callTool(accept, { ref: f3, agent: 'me', override: true, overrideReason: 'local' }, local)).isError).toBeFalsy();
-    await docs.linkAdd('specs', S('s', 'c'), { to: T('ui', 'contrast'), rel: 'deviates_from', note: 'n', feedback: f3 }, as('me'));
+    const anon = { storage, index: null, reads: new DocReadService(storage), clientName: 'me', settings: memorySettings() } as unknown as ToolContext;
+    const r = await callTool(accept, { ref: f3, agent: 'me', override: true, overrideReason: 'nobody' }, anon);
+    expect((r.structuredContent as { error?: { code: string } }).error?.code).toBe('override_not_allowed');
   });
 
   it('ready_gate: a spec becomes ready only when every live section has an acceptance criterion', async () => {

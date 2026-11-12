@@ -186,10 +186,10 @@ export function agentGuides(input: SnippetInput): AgentGuide[] {
 /** The recommended path: the Mandate CLI wires the agent up in the current code repository. */
 export const connectCommand = (project: string) => `mandate connect --project ${project}`;
 
-/** Env var for a personal token (server mode): the same `MANDATE_KEY_<ID>` the CLI exports (env.sh) and Mandate's upload curl reads. */
+/** Env var for a personal token (team): the same `MANDATE_KEY_<ID>` the CLI exports (env.sh) and Mandate's upload curl reads. */
 export const tokenEnvVar = keyEnvVar;
 
-/** Server mode: agents that sign in with GitHub themselves (MCP OAuth discovery); no key to copy. */
+/** Team: agents that sign in with GitHub themselves (MCP OAuth discovery); no key to copy. */
 export interface OAuthGuide {
   id: string;
   label: string;
@@ -245,3 +245,24 @@ export const urlReachNote = (url: string, withKey = false): string =>
   isLoopbackUrl(url)
     ? 'This URL works on this machine only. Set a public URL in Settings to connect remote agents.'
     : `This URL is public: remote agents, including ChatGPT connectors that need a public HTTPS MCP URL, can connect${withKey ? ' with the key' : ''}.`;
+
+/* ------------------------------------------------------------------ one-line installer */
+
+export type InstallShell = 'sh' | 'powershell';
+
+/** Windows browsers get the PowerShell one-liner first. */
+export const shellFor = (userAgent: string): InstallShell => (/Windows/i.test(userAgent) ? 'powershell' : 'sh');
+
+/** `curl -fsSL <base>/p/<id>/install.sh | sh` (or `irm …/install.ps1 | iex`); no token in it, ever. */
+export function installCommand(base: string, project: string, shell: InstallShell): string {
+  const root = `${base.replace(/\/+$/, '')}/p/${project}`;
+  return shell === 'sh' ? `curl -fsSL ${root}/install.sh | sh` : `irm ${root}/install.ps1 | iex`;
+}
+
+/** Download, check the published SHA-256, then run (for people who do not pipe into a shell). */
+export function verifyCommands(base: string, project: string, shell: InstallShell): string {
+  const root = `${base.replace(/\/+$/, '')}/p/${project}`;
+  return shell === 'sh'
+    ? `curl -fsSLO ${root}/install.sh\ncurl -fsSL ${root}/install.sh.sha256 | shasum -a 256 -c -\nsh install.sh`
+    : `irm ${root}/install.ps1 -OutFile install.ps1\n(Get-FileHash install.ps1 -Algorithm SHA256).Hash.ToLower() -eq (irm ${root}/install.ps1.sha256).Split(' ')[0]\n.\\install.ps1`;
+}

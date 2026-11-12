@@ -470,7 +470,7 @@ export class DocReadService {
         entries = await this.storage.feedbackService.historyOf(ref.id);
         break;
     }
-    // Server mode: only the commits a given user triggered (local mode records no user, so nothing matches).
+    // Only the commits a given user triggered (older agent-only commits never match).
     if (inp.user) entries = entries.filter((e) => e.user === inp.user);
     if (ref.sectionId) return this.sectionHistory(ref.kind as DocKind, ref.id, ref.sectionId, entries, inp.limit);
     return { uri: buildRef({ kind: ref.kind, id: ref.id }), total: entries.length, entries: entries.slice(0, inp.limit) };

@@ -488,7 +488,7 @@ export interface UploadRouteDeps {
   perms?: RepoPermissions;
   uploads: UploadService;
   hostOk: (req: FastifyRequest) => boolean;
-  /** Public base URL (server mode: server.publicUrl); else derived from the request. */
+  /** Public base URL (a team: server.publicUrl); else derived from the request. */
   baseUrl?: string;
   samePrincipal: (a: Principal, b: Principal) => boolean;
 }

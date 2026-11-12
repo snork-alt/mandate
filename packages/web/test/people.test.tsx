@@ -32,8 +32,8 @@ afterEach(() => {
   calls.length = 0;
 });
 
-const status = (mode: 'local' | 'server'): AuthStatus => ({ authenticated: true, user: null, configured: true, missing: [], callbackUrl: null, loginUrl: '/login', mode });
-const wrap = (mode: 'local' | 'server', ui: React.ReactNode) =>
+const status = (_where: 'computer' | 'server'): AuthStatus => ({ authenticated: true, user: null, configured: true, missing: [], callbackUrl: null, loginUrl: '/login' });
+const wrap = (mode: 'computer' | 'server', ui: React.ReactNode) =>
   render(
     <MantineProvider>
       <QueryClientProvider client={new QueryClient()}>
@@ -70,7 +70,7 @@ describe('phrasing (pure)', () => {
 });
 
 describe('UserAvatar', () => {
-  it('server mode: directory image, initials fallback, service badge, styled hover card (no title=)', async () => {
+  it('directory image, initials fallback, service badge, styled hover card (no title=)', async () => {
     wrap('server', (
       <>
         <UserAvatar user="alice" agent="claude-code" at={new Date().toISOString()} />
@@ -107,20 +107,6 @@ describe('UserAvatar', () => {
     ));
     fireEvent.click(screen.getByRole('button', { name: 'Filter by bob' }));
     expect(filter).toHaveBeenCalledWith('bob');
-  });
-  it('local mode: no user avatars or images; agent stacks (no user recorded) still render', async () => {
-    await new Promise((r) => setTimeout(r, 40));
-    calls.length = 0;
-    wrap('local', (
-      <>
-        <UserAvatar user="alice" />
-        <AvatarStack contributors={[c('claude-code', 'direct', { userRecorded: false })]} form="full" />
-      </>
-    ));
-    await new Promise((r) => setTimeout(r, 40));
-    expect(document.querySelector('img, [data-testid=avatar-initials]')).toBeNull();
-    expect(screen.getByTestId('agent-avatar').getAttribute('data-agent')).toBe('claude-code');
-    expect(calls.filter((x) => x.name === 'users_resolve')).toHaveLength(0);
   });
 });
 
@@ -160,7 +146,7 @@ describe('AvatarStack', () => {
 describe('Changing: progress and PR links', () => {
   const work: WorkProgress = { sectionsDone: 1, sectionsTotal: 2, claimedBy: 'claude-code', branch: 'wo/login-fix', prs: [{ repo: 'app', number: 412, url: 'https://github.com/acme/app/pull/412', status: 'open' }, { repo: 'app', number: 7 }] };
   it('progress, claim, branch and PRs that link out', () => {
-    wrap('local', <WorkProgressLine work={work} />);
+    wrap('computer', <WorkProgressLine work={work} />);
     const line = screen.getByTestId('work-progress');
     expect(line.textContent).toContain('1/2 sections');
     expect(line.textContent).toContain('claude-code');
@@ -172,7 +158,7 @@ describe('Changing: progress and PR links', () => {
     expect(line.textContent).toContain('app#7');
   });
   it('the Changing list shows each in-progress item with its work', () => {
-    wrap('local', <ChangingList items={[{ uri: buildRef({ kind: 'work-orders', id: 'wo-1' }), label: 'Fix login', progress: '1/2 sections', work }]} />);
+    wrap('computer', <ChangingList items={[{ uri: buildRef({ kind: 'work-orders', id: 'wo-1' }), label: 'Fix login', progress: '1/2 sections', work }]} />);
     const list = screen.getByTestId('changing-list');
     expect(list.textContent).toContain('Fix login');
     expect(list.textContent).toContain('1/2 sections');
@@ -181,7 +167,7 @@ describe('Changing: progress and PR links', () => {
 });
 
 describe('co-authored history', () => {
-  it('the history rail shows "co-authored by" (server mode only)', async () => {
+  it('the history rail shows "co-authored by" when recorded (team writes)', async () => {
     const { HistoryTimeline } = await import('../src/components/doc/HistoryTimeline');
     const e = { commit: 'a'.repeat(40), subject: 'update rule', body: '', author: 'm', email: 'm@x', date: new Date().toISOString(), trailers: {}, agent: 'claude-code', user: 'carol', coAuthors: ['alice', 'bob'] };
     wrap('server', <HistoryTimeline entries={[e]} now={Date.now()} />);
@@ -189,8 +175,5 @@ describe('co-authored history', () => {
     expect(co.textContent).toContain('co-authored by');
     expect(co.textContent).toContain('alice');
     expect(co.textContent).toContain('bob');
-    cleanup();
-    wrap('local', <HistoryTimeline entries={[e]} now={Date.now()} />);
-    expect(screen.queryByTestId('co-authors')).toBeNull();
   });
 });

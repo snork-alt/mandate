@@ -1,5 +1,5 @@
 /**
- * The database adapter: one async interface over SQLite (better-sqlite3, the default: local mode and small servers)
+ * The database adapter: one async interface over SQLite (better-sqlite3, the default: one machine and small servers)
  * and PostgreSQL (`pg`, pooled: shared server state for several server instances).
  *
  * Portable SQL: `?` placeholders (rewritten to `$n` on Postgres), table names through `dialect.table()` (schema-qualified

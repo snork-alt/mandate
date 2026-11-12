@@ -94,7 +94,7 @@ describe('standard writes', () => {
 describe('MCP tools on seeded data', () => {
   let fx: McpFixture;
   beforeAll(async () => {
-    fx = await mcpFixture({ settings: memorySettings('local') });
+    fx = await mcpFixture({ settings: memorySettings() });
   }, 120_000);
   afterAll(() => fx.close());
 
@@ -146,7 +146,7 @@ describe('MCP tools on seeded data', () => {
 describe('no override past a gate (local mode too)', () => {
   let fx: McpFixture;
   beforeAll(async () => {
-    fx = await mcpFixture({ settings: memorySettings('local') });
+    fx = await mcpFixture({ settings: memorySettings() });
   }, 120_000);
   afterAll(() => fx.close());
 

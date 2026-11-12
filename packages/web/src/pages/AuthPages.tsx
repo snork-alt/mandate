@@ -36,22 +36,13 @@ export function LoginPage({ status }: { status: AuthStatus }) {
       </Text>
       <Text size="sm" c="var(--app-text-muted)" mt={6} mb="lg">
         {APP_NAME} keeps the specifications your coding agents work from.{' '}
-        {status.mode === 'local' ? 'It runs on this computer.' : "Sign in with a GitHub account on this server's allow-list."}
+        Sign in with your GitHub account.
       </Text>
       {error && (
         <Alert color="red" variant="light" icon={<IconAlertTriangle size={16} />} mb="md" data-testid="login-error">
           {error}
         </Alert>
       )}
-      {status.mode === 'local' ? (
-        <div className="np-stack" data-testid="local-login">
-          <Text size="sm">Mandate runs on this computer. Open it from a terminal; the command opens your browser signed in with a one-time link:</Text>
-          <CopyLine value={cli('open').npx} label="command" />
-          <Text size="xs" c="var(--app-text-faint)">
-            In a development checkout: <Code>{cli('open').dev}</Code>
-          </Text>
-        </div>
-      ) : (
       <Button
         fullWidth
         size="md"
@@ -62,7 +53,6 @@ export function LoginPage({ status }: { status: AuthStatus }) {
       >
         Continue with GitHub
       </Button>
-      )}
     </AuthShell>
   );
 }

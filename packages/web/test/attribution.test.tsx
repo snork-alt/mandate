@@ -29,8 +29,8 @@ const txt = (e: Element) => {
   return c.textContent!.replace(/\s+/g, ' ').trim();
 };
 
-const status = (mode: 'local' | 'server'): AuthStatus => ({ authenticated: true, user: null, configured: true, missing: [], callbackUrl: null, loginUrl: '/login', mode });
-const wrap = (mode: 'local' | 'server', ui: React.ReactNode) =>
+const status = (_where: 'computer' | 'server'): AuthStatus => ({ authenticated: true, user: null, configured: true, missing: [], callbackUrl: null, loginUrl: '/login' });
+const wrap = (mode: 'computer' | 'server', ui: React.ReactNode) =>
   render(
     <MantineProvider>
       <QueryClientProvider client={new QueryClient()}>
@@ -47,39 +47,14 @@ const entry = (commit: string, user: string | undefined, agent: string, subject:
 const entries = [entry('a', 'octocat', 'claude-code', 'Rotate tokens'), entry('b', 'hubot', 'codex', 'Add SSO'), entry('c', 'service:ci', 'ci-bot', 'Nightly audit')];
 const doc = { createdAt: ago(48), updatedAt: ago(2), updatedBy: 'codex', createdBy: { user: 'octocat', agent: 'claude-code', at: ago(48), commit: 'c1' }, lastEditedBy: { user: 'hubot', agent: 'codex', at: ago(2), commit: 'c2' } };
 
-describe('attribution: local mode never shows a user', () => {
-  it('object pages: "Created via <agent>" only', () => {
-    wrap('local', <DocAttribution item={doc} />);
-    const t = txt(screen.getByTestId('doc-attribution'));
-    expect(t).toContain('Created via claude-code');
-    expect(t).toContain('Last edited via codex');
-    expect(t).not.toContain('octocat');
-    expect(t).not.toContain('hubot');
-    expect(document.querySelector('.pp-avatar')).toBeNull();
-  });
-  it('history rail: "via <agent>" per entry, no user filter', () => {
-    wrap('local', <HistoryTimeline entries={entries} now={now} />);
-    expect(screen.getAllByTestId('attr-by').map(txt)).toEqual(['via claude-code', 'via codex', 'via ci-bot']);
-    expect(document.body.textContent).not.toContain('octocat');
-    expect(screen.queryByRole('button', { name: /User/ })).toBeNull();
-    expect(screen.queryByTestId('service-badge')).toBeNull();
-  });
-  it('activity feed: no user, no user filter', () => {
-    const ev: ActivityEvent = { id: 'a:0', commit: 'a', type: 'spec.updated', at: ago(1), refs: [], summary: 'Updated a spec', agent: 'claude-code', user: 'octocat' } as ActivityEvent;
-    wrap('local', <ActivityPanel events={[ev]} />);
-    // Local mode: the agent's avatar (initials, no dashed ring) and "via <agent>", never the user.
-    expect(txt(screen.getByTestId('attr-by'))).toBe('CC via claude-code');
-    expect(screen.getByTestId('agent-avatar').getAttribute('data-legacy')).toBeNull();
-    expect(document.body.textContent).not.toContain('octocat');
-    expect(screen.queryByRole('button', { name: /^User/ })).toBeNull();
-  });
-  it('without a known mode users are hidden too', () => {
+describe('attribution: without a known auth status', () => {
+  it('users are hidden', () => {
     render(<MantineProvider><ByLine a={{ user: 'octocat', agent: 'claude-code' }} /></MantineProvider>);
     expect(txt(screen.getByTestId('attr-by'))).toBe('via claude-code');
   });
 });
 
-describe('attribution: server mode', () => {
+describe('attribution', () => {
   it('object pages: "Created by <user> via <agent>" with avatars', async () => {
     wrap('server', <DocAttribution item={doc} />);
     const t = txt(screen.getByTestId('doc-attribution'));
@@ -118,8 +93,7 @@ describe('attribution: server mode', () => {
 });
 
 describe('Settings: recent writers', () => {
-  const data = (mode: 'local' | 'server'): WritersResponse => ({
-    mode,
+  const data = (): WritersResponse => ({
     writers: [
       { user: 'octocat', agent: 'claude-code', source: 'oauth', commits: 12, last: ago(1) },
       { user: null, agent: 'codex', source: 'shared-key', commits: 3, last: ago(5) },
@@ -129,16 +103,11 @@ describe('Settings: recent writers', () => {
     service: 9,
     scanned: 24,
   });
-  it('server mode: users, unattributed and service writes highlighted', () => {
-    render(<MantineProvider><WritersTable data={data('server')} /></MantineProvider>);
+  it('users, unattributed and service writes highlighted', () => {
+    render(<MantineProvider><WritersTable data={data()} /></MantineProvider>);
     expect(screen.getByText('User')).toBeTruthy();
     expect(screen.getByTestId('writers-stats').textContent).toContain('3 without a user');
     const rows = Array.from(document.querySelectorAll('tbody tr'));
     expect(rows.map((r) => r.getAttribute('data-flag'))).toEqual([null, 'unattributed', 'service']);
-  });
-  it('local mode: no user column', () => {
-    render(<MantineProvider><WritersTable data={data('local')} /></MantineProvider>);
-    expect(screen.queryByText('User')).toBeNull();
-    expect(document.body.textContent).not.toContain('octocat');
   });
 });

@@ -5,7 +5,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState, type ReactNode } from 'react';
 import { copyText } from '../lib/copy';
 import { Notice } from '../connect/parts';
-import { setupApi, tildify } from './api';
+import { announceApplied, setupApi, tildify } from './api';
 
 /** The one-paragraph "what and why" at the top of a step. */
 export function StepIntro({ title, children, optional }: { title: string; children: ReactNode; optional?: boolean }) {
@@ -119,6 +119,7 @@ export function SecretField({ name, isSet, label, placeholder, onSaved, testId }
       setValue('');
       setEditing(!r.set);
       onSaved?.(r.set);
+      announceApplied(r.applied);
     },
   });
   return (

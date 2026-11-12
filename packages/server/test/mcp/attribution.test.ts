@@ -1,9 +1,8 @@
 /**
- * Attribution (lineage-brief §7, user decision 2026-11-12): user tracking is SERVER MODE ONLY.
- * - server mode: every write records the user from the authenticated principal (GitHub login, or service:<name> for a
+ * Attribution: every principal is a GitHub user (or a named service account).
+ * - every write records the user from the authenticated principal (GitHub login, or service:<name> for a
  *   service-account key) as `Mandate-User` (+ legacy `Agent-User`), and the agent; records get createdByUser / byUser;
  *   history, file meta and activity return user and agent separately; shared project keys are refused.
- * - local mode: no user is ever recorded or returned (agent only).
  * - the user is never taken from client input.
  */
 import { execFileSync } from 'node:child_process';
@@ -41,8 +40,8 @@ beforeAll(async () => {
 afterAll(cleanupTempDirs);
 
 const USER: Principal = { kind: 'user', login: 'octocat', project: 'test', via: 'oauth', tokenId: 'c1', tokenName: 'claude-code' };
-const ctxOf = (mode: 'local' | 'server', principal?: Principal): ToolContext =>
-  ({ storage, index: null, reads: new DocReadService(storage), views: new DocViewService(storage), settings: memorySettings(mode), clientName: 'claude-code', ...(principal ? { principal } : {}) }) as ToolContext;
+const ctxOf = (_mode: 'team', principal?: Principal): ToolContext =>
+  ({ storage, index: null, reads: new DocReadService(storage), views: new DocViewService(storage), settings: memorySettings(), clientName: 'claude-code', ...(principal ? { principal } : {}) }) as ToolContext;
 const tool = (name: string) => TOOLS.find((t) => t.name === name)!;
 async function call(ctx: ToolContext, name: string, args: Record<string, unknown>) {
   const r = await callTool(tool(name), args, ctx);
@@ -62,9 +61,9 @@ const spec = (id: string) => ({
   ],
 });
 
-describe('server mode: user + agent on every write', () => {
+describe('user + agent on every write', () => {
   it('records Mandate-User (and Agent-User) from the principal, and returns them in history and file meta', async () => {
-    const ctx = ctxOf('server', USER);
+    const ctx = ctxOf('team', USER);
     const id = uid('srv');
     await call(ctx, 'spec_create', spec(id));
     const msg = lastMessage();
@@ -82,7 +81,7 @@ describe('server mode: user + agent on every write', () => {
   });
 
   it('stores createdByUser on feedback and byUser on verifications', async () => {
-    const ctx = ctxOf('server', USER);
+    const ctx = ctxOf('team', USER);
     const id = uid('srvrec');
     await call(ctx, 'spec_create', spec(id));
     const fb = await call(ctx, 'feedback_create', { targets: [`mandate://specs/${id}/sections/overview`], kind: 'bug', body: 'b' });
@@ -92,18 +91,19 @@ describe('server mode: user + agent on every write', () => {
     expect(v.verification.by).toBe('claude-code');
   });
 
-  it('a service-account key is attributed as service:<name>; a plain shared key has no user', () => {
+  it('a service-account key is attributed as service:<name>; a plain key has no user', () => {
     const svc: Principal = { kind: 'key', keyId: 'key_1', keyName: 'ci', project: 'test', service: true };
-    expect(principalUser({ principal: svc, settings: memorySettings('server') })).toBe('service:ci');
-    expect(principalUser({ principal: { kind: 'key', keyId: 'k', keyName: 'default', project: 'test' }, settings: memorySettings('server') })).toBeUndefined();
+    expect(principalUser({ principal: svc })).toBe('service:ci');
+    expect(principalUser({ principal: { kind: 'key', keyId: 'k', keyName: 'default', project: 'test' } })).toBeUndefined();
   });
 
-  it('UI-triggered writes are attributed to the signed-in GitHub user', () => {
-    expect(uiActor('server', { kind: 'user', login: 'octocat' })).toEqual({ user: 'octocat', agent: 'mandate-ui' });
+  it('UI-triggered writes are attributed to the signed-in user', () => {
+    expect(uiActor({ kind: 'user', login: 'octocat' })).toEqual({ user: 'octocat', agent: 'mandate-ui' });
+    expect(uiActor({ kind: 'setup' })).toEqual({ agent: 'mandate-ui' });
   });
 
   it('writers_recent groups writes by user / agent / credential', async () => {
-    const w = await recentWriters(storage.git, 'server', 2000);
+    const w = await recentWriters(storage.git, 2000);
     expect(w.writers.some((x) => x.user === 'octocat' && x.agent === 'claude-code')).toBe(true);
     expect(w.unattributed).toBeGreaterThan(0); // the fixture's older commits
   });
@@ -111,7 +111,7 @@ describe('server mode: user + agent on every write', () => {
 
 describe('the user is never taken from client input', () => {
   it('refuses a client-supplied createdByUser / byUser (strict schemas) and keeps the principal user', async () => {
-    const ctx = ctxOf('server', USER);
+    const ctx = ctxOf('team', USER);
     const id = uid('spoof');
     await call(ctx, 'spec_create', spec(id));
     const r = await callTool(tool('feedback_create'), { targets: [`mandate://specs/${id}/sections/overview`], kind: 'bug', body: 'b', createdByUser: 'mallory' }, ctx);
@@ -134,42 +134,19 @@ describe('the user is never taken from client input', () => {
         return {};
       },
     });
-    await callTool(t, { who: 'mallory' }, ctxOf('server', USER));
+    await callTool(t, { who: 'mallory' }, ctxOf('team', USER));
     expect(seen['Mandate-User']).toBe('octocat');
     expect(seen['Agent-User']).toBe('octocat');
     expect(seen['Caused-By']).toBeUndefined();
     expect(seen.Feedback).toBe('fb-1');
-    await callTool(t, { who: 'mallory' }, ctxOf('local'));
-    expect(seen['Mandate-User']).toBeUndefined();
-    const bad = await callTool(t, { who: 'x', agent: 'a\nMandate-User: mallory' }, ctxOf('server', USER));
+    await callTool(t, { who: 'mallory' }, ctxOf('team'));
+    expect(seen['Mandate-User']).toBeUndefined(); // no principal: no user
+    const bad = await callTool(t, { who: 'x', agent: 'a\nMandate-User: mallory' }, ctxOf('team', USER));
     expect(bad.isError).toBe(true);
   });
 });
 
-describe('local mode: agent only, never a user', () => {
-  it('records no user even for a user principal; history, meta and records carry the agent only', async () => {
-    const ctx = ctxOf('local', USER);
-    const id = uid('loc');
-    await call(ctx, 'spec_create', spec(id));
-    const msg = lastMessage();
-    expect(msg).not.toMatch(/Mandate-User|Agent-User/);
-    expect(msg).toMatch(/^Agent: claude-code$/m);
-    const h = await call(ctx, 'history_get', { ref: `mandate://specs/${id}` });
-    expect(h.entries[0].user).toBeUndefined();
-    expect(h.entries[0].agent).toBe('claude-code');
-    const meta = await storage.history.meta(`specs/${id}.md`);
-    expect(meta.createdBy?.user).toBeUndefined();
-    expect(meta.createdBy?.agent).toBe('claude-code');
-    const fb = await call(ctx, 'feedback_create', { targets: [`mandate://specs/${id}/sections/overview`], kind: 'bug', body: 'b' });
-    expect((await storage.feedback.get(fb.ref.split('/').pop())).createdByUser).toBeUndefined();
-    expect(uiActor('local', { kind: 'user', login: 'matteo' })).toEqual({ agent: 'mandate-ui' });
-    const w = await recentWriters(storage.git, 'local', 50);
-    expect(w.writers.every((x) => x.user === null)).toBe(true);
-    expect(w.unattributed).toBe(0);
-  });
-});
-
-describe('server mode auth: per-user principals only', () => {
+describe('auth: per-user principals only', () => {
   const req = (key: string) => ({ headers: { authorization: `Bearer ${key}` }, method: 'POST' }) as unknown as FastifyRequest;
   let keys: KeyStore;
   let store: AuthStore;
@@ -184,26 +161,25 @@ describe('server mode auth: per-user principals only', () => {
   });
 
   it('refuses shared project keys with a clear message, accepts named service accounts', async () => {
-    const r = await authenticate(req(shared), 'test', { keys, store, mode: 'server', sharedKeys: false });
+    const r = await authenticate(req(shared), 'test', { keys, store, sharedKeys: false });
     expect(r).toMatchObject({ ok: false, status: 401 });
     expect(!r.ok && r.message).toMatch(/use MCP sign-in or a personal token/);
-    const s = await authenticate(req(service), 'test', { keys, store, mode: 'server', sharedKeys: false });
+    const s = await authenticate(req(service), 'test', { keys, store, sharedKeys: false });
     expect(s.ok && s.principal).toMatchObject({ kind: 'key', keyName: 'ci', service: true });
   });
 
-  it('local mode keeps the per-project key (agent-only attribution)', async () => {
-    const r = await authenticate(req(shared), 'test', { keys, store, mode: 'local' });
-    expect(r.ok && r.principal).toMatchObject({ kind: 'key', keyName: 'default' });
-    expect(principalUser({ principal: r.ok ? r.principal : undefined, settings: memorySettings('local') })).toBeUndefined();
+  it('one-time-link sessions of older installs are refused (GitHub sign-in only)', async () => {
+    const cookie = await store.createSession({ login: 'matteo', avatarUrl: '', kind: 'local' });
+    const r = await authenticate({ headers: { cookie: `mandate_session=${cookie}` }, method: 'GET' } as unknown as FastifyRequest, null, { keys, store });
+    expect(r).toMatchObject({ ok: false, status: 401 });
   });
 });
 
-describe('legacy install (auth.github without server.mode): strict, like server mode', () => {
+describe('older OAuth App install (auth.github without app or server.mode): strict per-user agents, allow-list', () => {
   const req = (key: string) => ({ headers: { authorization: `Bearer ${key}` }, method: 'POST' }) as unknown as FastifyRequest;
-  it('the policy treats it as server mode for agents (repo permissions stay explicit-server only)', () => {
-    expect(agentAuthPolicy({ mode: 'server', legacyMode: true })).toEqual({ perUserAgents: true, sharedKeys: false, repoAuth: false });
-    expect(agentAuthPolicy({ mode: 'server', legacyMode: false })).toEqual({ perUserAgents: true, sharedKeys: false, repoAuth: true });
-    expect(agentAuthPolicy({ mode: 'local', legacyMode: false })).toEqual({ perUserAgents: false, sharedKeys: true, repoAuth: false });
+  it('agents are always per user; repo permissions are off only for older OAuth App installs', () => {
+    expect(agentAuthPolicy({ legacyAuth: true })).toEqual({ perUserAgents: true, sharedKeys: false, repoAuth: false });
+    expect(agentAuthPolicy({ legacyAuth: false })).toEqual({ perUserAgents: true, sharedKeys: false, repoAuth: true });
   });
 
   it('shared key 401 with the sign-in hint; service key and personal token accepted', async () => {
@@ -215,8 +191,8 @@ describe('legacy install (auth.github without server.mode): strict, like server 
     await store.saveToken('octocat', 'gho_test', ['repo']);
     const agentTokens = new AgentTokens(home);
     const pat = (await agentTokens.create('octocat', 'test', 'laptop')).token;
-    const policy = agentAuthPolicy({ mode: 'server', legacyMode: true });
-    const opts = { keys, store, mode: 'server' as const, sharedKeys: policy.sharedKeys, agentTokens };
+    const policy = agentAuthPolicy({ legacyAuth: true });
+    const opts = { keys, store, sharedKeys: policy.sharedKeys, agentTokens };
     const r = await authenticate(req(shared), 'test', opts);
     expect(r).toMatchObject({ ok: false, status: 401 });
     expect(!r.ok && r.message).toMatch(/MCP sign-in or a personal token.*--service/);

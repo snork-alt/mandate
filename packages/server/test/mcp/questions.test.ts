@@ -21,9 +21,9 @@ afterAll(async () => fx?.close());
 
 const tool = (n: string) => TOOLS.find((t) => t.name === n)!;
 const base = () => ({ storage: fx.storage, index: fx.index, reads: fx.reads, activity: fx.activity }) as unknown as ToolContext;
-const ui = (mode: 'local' | 'server' = 'server', uiAccess: 'read' | 'write' = 'write', login = 'ada') =>
-  ({ ...base(), settings: memorySettings(mode), clientName: 'mandate-web', principal: { kind: 'ui', user: { login, avatarUrl: '' } }, access: 'read', uiAccess }) as ToolContext;
-const agent = (mode: 'local' | 'server' = 'server', clientName = 'agent-x') => ({ ...base(), settings: memorySettings(mode), clientName }) as ToolContext;
+const ui = (mode: 'me' | 'team' = 'team', uiAccess: 'read' | 'write' = 'write', login = 'ada') =>
+  ({ ...base(), settings: memorySettings(), clientName: 'mandate-web', principal: { kind: 'ui', user: { login, avatarUrl: '' } }, access: 'read', uiAccess }) as ToolContext;
+const agent = (mode: 'me' | 'team' = 'team', clientName = 'agent-x') => ({ ...base(), settings: memorySettings(), clientName }) as ToolContext;
 const run = async (name: string, args: unknown, ctx: ToolContext) => {
   const r = await callTool(tool(name), args, ctx);
   return { isError: !!r.isError, body: r.structuredContent as Record<string, any> };
@@ -75,11 +75,11 @@ describe('question_ask validation', () => {
 });
 
 describe('answer flow', () => {
-  it('a UI session answers through uiAllowed (server mode: attributed to the user); then the question is frozen', async () => {
+  it('a UI session answers through uiAllowed (a team: attributed to the user); then the question is frozen', async () => {
     const id = (await ask()).body.question.id;
     expect(tool('question_answer').uiAllowed).toBe(true);
     // Read-only users cannot answer.
-    expect((await run('question_answer', { id, answers: { q1: '30 days' } }, ui('server', 'read'))).body.error.code).toBe('forbidden');
+    expect((await run('question_answer', { id, answers: { q1: '30 days' } }, ui('team', 'read'))).body.error.code).toBe('forbidden');
     // Every question needs an answer; multiSelect lists only where allowed.
     expect((await run('question_answer', { id, answers: {} }, ui())).body.error.code).toBe('validation');
     expect((await run('question_answer', { id, answers: { q1: ['30 days'] } }, ui())).body.error.code).toBe('validation');
@@ -100,11 +100,9 @@ describe('answer flow', () => {
     expect(r.body.question.answer.answers.q1).toBe('14 days, as in the contract');
   });
 
-  it('agents may relay a chat answer in local mode only', async () => {
-    const id = (await ask({}, agent('local'))).body.question.id;
-    expect((await run('question_answer', { id, answers: { q1: '7 days' }, agent: 'asker' }, agent('server'))).body.error.code).toBe('forbidden');
-    const r = await run('question_answer', { id, answers: { q1: '7 days' }, agent: 'asker' }, agent('local'));
-    expect(r.body.question.answer).toMatchObject({ via: 'chat', by: { agent: 'asker' } });
+  it('agents never answer for the user (the web UI does)', async () => {
+    const id = (await ask({}, agent())).body.question.id;
+    expect((await run('question_answer', { id, answers: { q1: '7 days' }, agent: 'asker' }, agent())).body.error.code).toBe('forbidden');
   });
 
   it('cancel and supersede close an open question', async () => {
@@ -186,10 +184,10 @@ describe('answers as proof', () => {
     const std = await fx.storage.standards.get('api-conventions');
     return `mandate://standards/api-conventions/sections/${std.sections.find((s) => s.type === 'rule')!.id}`;
   };
-  const confirm = async (mode: 'local' | 'server' = 'server', answer: 'ui' | 'chat' | null = 'ui', purpose = 'standard_confirmation') => {
+  const confirm = async (mode: 'me' | 'team' = 'team', answer: 'ui' | 'chat' | null = 'ui', purpose = 'standard_confirmation') => {
     const id = (await ask({ purpose, questions: [q1({ header: 'Rule', question: 'Change the rule text?', options: [opt('Approve'), opt('Skip')], recommended: 'Approve' })] }, agent(mode))).body.question.id;
     if (answer === 'ui') await run('question_answer', { id, answers: { q1: 'Approve' } }, ui(mode));
-    if (answer === 'chat') await run('question_answer', { id, answers: { q1: 'Approve' }, agent: 'asker' }, agent('local'));
+    if (answer === 'chat') await run('question_answer', { id, answers: { q1: 'Approve' } }, ui(mode, 'write', 'service:ci'));
     return id as string;
   };
 
@@ -208,28 +206,24 @@ describe('answers as proof', () => {
   });
 
   it('rejects an unanswered confirmation, and one answered by an ineligible principal', async () => {
-    const open = await confirm('server', null);
+    const open = await confirm('team', null);
     const r = await run('standard_section_update', { ref: await ruleRef(), summary: 'Not confirmed yet, must be refused.', cause: `mandate://questions/${open}`, agent: 'asker' }, agent());
     expect(r.body.error.code).toBe('question_not_answered');
-    // Answered by an agent relaying chat (no signed-in user): not proof in server mode.
-    const chat = await confirm('local', 'chat');
-    const s = await run('standard_section_update', { ref: await ruleRef(), summary: 'Relayed answer, refused in server mode.', cause: `mandate://questions/${chat}`, agent: 'asker' }, agent('server'));
+    // Answered by a service account: not proof.
+    const svc = await confirm('team', 'chat');
+    const s = await run('standard_section_update', { ref: await ruleRef(), summary: 'Answered by a service account, refused.', cause: `mandate://questions/${svc}`, agent: 'asker' }, agent());
     expect(s.body.error.code).toBe('question_ineligible');
-    // Local mode: the same answer is proof.
-    const l = await run('standard_section_update', { ref: await ruleRef(), summary: 'Relayed answer, accepted in local mode.', cause: `mandate://questions/${chat}`, agent: 'asker' }, agent('local'));
-    expect(l.isError, JSON.stringify(l.body)).toBe(false);
-    expect(lastCommit()).toContain(`User-Confirmed: ${chat}`);
   });
 
   it('feedback_accept citing an answered approval question records the approver; override eligibility is the approver\'s', async () => {
     const spec = (await fx.storage.specs.list()).find((x) => x.status !== 'archived' && x.sections.length)!;
     const target = `mandate://specs/${spec.id}/sections/${spec.sections[0]!.id}`;
     const fb = await run('feedback_create', { targets: [target], kind: 'improvement', body: 'Approve me through a question.', agent: 'asker' }, agent());
-    const unanswered = await confirm('server', null, 'approval');
+    const unanswered = await confirm('team', null, 'approval');
     expect((await run('feedback_accept', { ref: fb.body.ref, cause: `mandate://questions/${unanswered}`, agent: 'asker' }, agent())).body.error.code).toBe('question_not_answered');
-    // Without a question, an agent without a user cannot self-approve in server mode.
+    // Without a question, an agent without a user cannot self-approve in a team.
     expect((await run('feedback_accept', { ref: fb.body.ref, override: true, overrideReason: 'sole maintainer', agent: 'asker' }, agent())).body.error.code).toBe('override_not_allowed');
-    const id = await confirm('server', 'ui', 'approval');
+    const id = await confirm('team', 'ui', 'approval');
     const r = await run('feedback_accept', { ref: fb.body.ref, override: true, overrideReason: 'sole maintainer', cause: `mandate://questions/${id}`, agent: 'asker' }, agent());
     expect(r.isError, JSON.stringify(r.body)).toBe(false);
     const msg = lastCommit();
@@ -242,7 +236,7 @@ describe('answers as proof', () => {
 
 describe('flow setting: questions via mandate | chat', () => {
   it('defaults to mandate; flow_set questions chat changes project_info.effective', async () => {
-    const ctx = agent('local', 'flow-agent');
+    const ctx = agent('team', 'flow-agent');
     expect((await run('project_info', {}, ctx)).body.effective.questions).toBe('mandate');
     const set = await run('flow_set', { questions: 'chat', agent: 'flow-agent' }, ctx);
     expect(set.isError, JSON.stringify(set.body)).toBe(false);

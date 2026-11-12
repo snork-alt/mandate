@@ -1,36 +1,45 @@
 /**
- * First-run setup wizard + Settings API, local sign-in, and the SSE probe.
- * - `GET /auth/setup?token=`: the one-time setup link (CLI `setup-url`). Loopback only, or HTTPS in server mode.
- *   Sets the `mandate_setup` cookie (bound to the token: completing setup invalidates it) and redirects to `/setup`.
- * - `GET /auth/local?token=`: local mode one-time sign-in link (CLI `open`), loopback only → session cookie.
- * - `/ui/setup/*`, `/ui/fs/*`, `/ui/projects/local`: admin = a signed-in session (any allowed user) or, until setup
+ * First-run setup wizard + Settings API, GitHub App creation, and the SSE probe.
+ * - `GET /auth/setup?token=`: the one-time setup link (CLI `setup-url`), only to open the wizard before GitHub sign-in
+ *   works. Loopback only, or HTTPS. Sets the `mandate_setup` cookie (bound to the token: completing setup invalidates
+ *   it) and redirects to `/setup`.
+ * - `POST /ui/setup/github/manifest` + `GET /auth/github/app/created`: one-click GitHub App (manifest flow). The
+ *   client secret and webhook secret go to secrets.env, the private key to a 0600 file; config gets ids only.
+ * - `PUT /ui/setup/server`: the server address (public URL; bind / proxy trust derived); restart via
+ *   `POST /ui/setup/restart`.
+ * - `/ui/setup/*`, `/ui/fs/*`: admin = a signed-in session (any allowed user) or, until setup
  *   completes, the setup cookie. UI-only (X-Mandate-UI, no bearer keys), same-origin Origin on writes.
  * Secrets are write-only (secrets.env); responses only say whether they are set.
  */
-import os from 'node:os';
+import { randomBytes } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
+import path from 'node:path';
 import type { TLSSocket } from 'node:tls';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { authenticate, cookieOf, originOk, SESSION_COOKIE, type AuthOptions } from '../auth/http.js';
-import type { AuthConfigSource } from '../auth/github.js';
-import { refreshSecrets } from '../secrets.js';
+import { ADMIN_CLAIM_COOKIE, GithubClient, GithubError, type AuthConfigSource } from '../auth/github.js';
+import { parseDotenv, refreshSecrets } from '../secrets.js';
+import { appTokensFor, gitAuthMethod, GIT_AUTH_METHODS } from '../config.js';
+import { githubRepoOf } from '../auth/app-tokens.js';
 import { AdminError } from '../projects/admin.js';
-import { ConfigConflictError, setSecret, SECRET_NAME_RE, type ConfigFile, type LocalLoginTokens, type SetupState } from './files.js';
+import { ConfigConflictError, setSecret, SECRET_NAME_RE, SetupAdminClaim, writePrivate, type ConfigFile, type SetupState } from './files.js';
 import { FsError, type FolderBrowser } from './fs.js';
-import { createLocalProject, type LocalProjectDeps } from './local-projects.js';
+import type { ProjectRegistry } from '../projects/registry.js';
 import * as probes from './probes.js';
 import { askKeyCandidates, ENDPOINT_PRESETS, endpointOf, isLocalEndpoint, modelPreset, switchEstimate } from '../index/embed/presets.js';
 import { listEmbeddingModels, testEmbeddingModel } from '../index/embed/probe.js';
 import { poolerOf, resolveDatabase } from '../db/config.js';
 import { probePostgres } from '../db/probe.js';
+import type { Restarter } from '../restart.js';
 
 export const SETUP_COOKIE = 'mandate_setup';
 
 export interface SetupDeps {
-  mode: 'local' | 'server';
-  /** Server mode with GitHub repo permissions: the allow-list is an optional extra gate. */
+  /** GitHub repo permissions decide access: the allow-list is an optional extra gate (off for older OAuth App installs). */
   repoAuth?: boolean;
-  legacyMode: boolean;
+  /** GitHub client for the manifest conversion (tests: a mock). */
+  github?: GithubClient;
   publicUrl: string;
   trustProxy: boolean;
   port: number;
@@ -39,16 +48,25 @@ export interface SetupDeps {
   auth: AuthOptions;
   source: AuthConfigSource;
   setup: SetupState;
-  logins: LocalLoginTokens;
   config: ConfigFile;
   secretsFile: string;
   browser: FolderBrowser;
   hostOk: (req: FastifyRequest) => boolean;
-  local: Omit<LocalProjectDeps, 'browser' | 'baseDir'>;
+  local: { registry: ProjectRegistry };
   fetch?: probes.Fetch;
   githubApi?: string;
-  /** Database driver of the running server (Settings shows when a change awaits a restart). */
+  /** Database driver of the running server. */
   activeDatabase?: 'sqlite' | 'postgres';
+  /**
+   * Hot-apply of saved settings (no restart): `git` re-reads config.json and switches every project's git backend;
+   * `database` switches the server-state database (and reports whether it changed). Each throws, leaving the running
+   * server unchanged, when the new setting cannot be applied; the saved change is then rolled back.
+   */
+  apply?: { git?: () => Promise<unknown>; database?: () => Promise<unknown>; databaseUrlEnv?: () => string | null };
+  /** Self-restart after a public URL / bind change (POST /ui/setup/restart). */
+  restarter?: Restarter;
+  /** The public URL the server will use after a restart (re-read from config.json). */
+  nextPublicUrl?: () => string | null;
   /** Test seam for the database probe (PGlite). */
   probeDatabase?: typeof probePostgres;
   log?: { info(m: string): void; warn(m: string): void };
@@ -77,10 +95,32 @@ export function requestIsHttps(req: FastifyRequest, trustProxy: boolean): boolea
 
 type Admin = { kind: 'user'; login: string } | { kind: 'setup' };
 
+const isLoopbackHost = (h: string) => ['localhost', '127.0.0.1', '[::1]', '::1'].includes(h.toLowerCase());
+
+/**
+ * `server` settings for an address: localhost → listen on 127.0.0.1, no proxy; https → behind a reverse proxy on this
+ * machine (127.0.0.1, X-Forwarded-* trusted); plain http on another host → reached directly (all interfaces).
+ */
+export function serverAddress(origin: string): { publicUrl: string; bind: string; trustProxy: boolean } {
+  const u = new URL(origin);
+  if (isLoopbackHost(u.hostname)) return { publicUrl: u.origin, bind: '127.0.0.1', trustProxy: false };
+  if (u.protocol === 'https:') return { publicUrl: u.origin, bind: '127.0.0.1', trustProxy: true };
+  return { publicUrl: u.origin, bind: '0.0.0.0', trustProxy: false };
+}
+
+/** `<scheme>://<host>` of the request (the Host the browser used: the Vite proxy in development), or null. */
+function requestOrigin(req: FastifyRequest, trustProxy: boolean): string | null {
+  const host = String(req.headers.host ?? '').toLowerCase();
+  if (!/^[a-z0-9.[\]:-]+$/.test(host)) return null;
+  const https = requestIsHttps(req, trustProxy);
+  return `${https ? 'https' : 'http'}://${host}`;
+}
+
 const fail = (reply: FastifyReply, status: number, code: string, message: string, extra: { path?: string; hint?: string } = {}) => reply.code(status).send({ error: { code, message, ...extra } });
 
 export function registerSetupRoutes(app: FastifyInstance, d: SetupDeps): void {
   const secure = d.publicUrl.startsWith('https://') ? '; Secure' : '';
+  const gh = d.github ?? new GithubClient();
 
   const setupCookieOk = (req: FastifyRequest) => {
     const v = d.auth.store.unsign<{ h: string; exp: number }>(cookieOf(req, SETUP_COOKIE));
@@ -127,7 +167,7 @@ export function registerSetupRoutes(app: FastifyInstance, d: SetupDeps): void {
 
   /* -------------------------------------------------------------- public */
 
-  // SSE probe for the server-mode "SSE through the proxy" check: one event now, the end 1.5 s later.
+  // SSE probe for the team "SSE through the proxy" check: one event now, the end 1.5 s later.
   app.get('/health/sse', async (_req, reply) => {
     reply.hijack();
     const res = reply.raw;
@@ -142,8 +182,8 @@ export function registerSetupRoutes(app: FastifyInstance, d: SetupDeps): void {
   app.get('/auth/setup', async (req, reply) => {
     const token = (req.query as { token?: string }).token;
     const local = clientIsLoopback(req, d.trustProxy);
-    // Remote use of the token only over HTTPS (server mode); plain-http non-loopback requests are refused.
-    if (!local && !(d.mode === 'server' && requestIsHttps(req, d.trustProxy))) return fail(reply, 403, 'forbidden', 'the setup link works on this machine (or over HTTPS in server mode); use an SSH tunnel until HTTPS is set up');
+    // Remote use of the token only over HTTPS (a team); plain-http non-loopback requests are refused.
+    if (!local && !requestIsHttps(req, d.trustProxy)) return fail(reply, 403, 'forbidden', 'the setup link works on this machine (or over HTTPS); use an SSH tunnel until HTTPS is set up');
     if (!d.hostOk(req)) return fail(reply, 403, 'forbidden', 'forbidden host');
     if (d.setup.complete()) return reply.redirect('/setup?error=already_complete');
     if (!d.setup.checkToken(token)) return reply.redirect('/setup?error=invalid_token');
@@ -152,22 +192,6 @@ export function registerSetupRoutes(app: FastifyInstance, d: SetupDeps): void {
     reply.header('Cache-Control', 'no-store');
     return reply.redirect('/setup');
   });
-
-  const localSession = async (reply: FastifyReply) => {
-    const u = os.userInfo();
-    const cookie = await d.auth.store.createSession({ login: u.username, name: u.username, avatarUrl: '', kind: 'local' });
-    reply.header('Set-Cookie', `${SESSION_COOKIE}=${cookie}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${7 * 24 * 3600}${secure}`);
-  };
-
-  if (d.mode === 'local') {
-    app.get('/auth/local', async (req, reply) => {
-      if (!clientIsLoopback(req, d.trustProxy) || !d.hostOk(req)) return fail(reply, 403, 'forbidden', 'local sign-in works only on this machine');
-      if (!(await d.logins.consume((req.query as { token?: string }).token))) return reply.redirect('/login?error=link_expired');
-      await localSession(reply);
-      reply.header('Cache-Control', 'no-store');
-      return reply.redirect('/');
-    });
-  }
 
   /* -------------------------------------------------------------- state */
 
@@ -183,23 +207,21 @@ export function registerSetupRoutes(app: FastifyInstance, d: SetupDeps): void {
       return {
         complete: d.setup.complete(),
         configVersion: d.config.version(),
-        mode: d.mode,
-        legacy: d.legacyMode,
+        legacy: !d.repoAuth,
         config: {
-          server: { mode: f.server.mode ?? d.mode, publicUrl: f.server.publicUrl ?? null, bind: f.server.bind ?? f.server.host, port: f.server.port, trustProxy: f.server.trustProxy },
-          ...(d.mode === 'server'
-            ? {
-                github: {
-                  clientId: g?.clientId ?? null,
-                  clientSecretEnv: g?.clientSecretEnv ?? 'MANDATE_GITHUB_CLIENT_SECRET',
-                  clientSecretSet: setFlag(g?.clientSecretEnv ?? 'MANDATE_GITHUB_CLIENT_SECRET'),
-                  allowedUsers: g?.allowedUsers ?? [],
-                  allowedOrgs: g?.allowedOrgs ?? [],
-                  callbackUrl: g?.callbackUrl ?? null,
-                  suggested: { name: 'Mandate', homepageUrl: d.publicUrl, callbackUrl: `${d.publicUrl}/auth/github/callback` },
-                },
-              }
-            : { local: { baseDir: f.local.baseDir } }),
+          server: { publicUrl: f.server.publicUrl ?? null, bind: f.server.bind ?? f.server.host, port: f.server.port, trustProxy: f.server.trustProxy },
+          github: {
+            clientId: g?.clientId ?? null,
+            clientSecretEnv: g?.clientSecretEnv ?? 'MANDATE_GITHUB_CLIENT_SECRET',
+            clientSecretSet: setFlag(g?.clientSecretEnv ?? 'MANDATE_GITHUB_CLIENT_SECRET'),
+            allowedUsers: g?.allowedUsers ?? [],
+            allowedOrgs: g?.allowedOrgs ?? [],
+            callbackUrl: g?.callbackUrl ?? null,
+            /** 'app' (GitHub App, the default for new setups) or 'oauth' (an existing OAuth App). */
+            kind: g?.app ? 'app' : g?.clientId ? 'oauth' : null,
+            app: g?.app ? { id: g.app.id, slug: g.app.slug, owner: g.app.owner ?? null, ownerType: g.app.ownerType ?? null, htmlUrl: g.app.htmlUrl ?? null, installUrl: `${gh.webBase}/apps/${g.app.slug}/installations/new`, privateKeySet: !!g.app.privateKeyPath && existsSync(g.app.privateKeyPath) } : null,
+            suggested: { name: 'Mandate', homepageUrl: d.publicUrl, callbackUrl: `${d.publicUrl}/auth/github/callback` },
+          },
           ask: {
             maxToolCalls: (f.ask as Record<string, unknown>).maxToolCalls ?? null,
             tokenBudget: (f.ask as Record<string, unknown>).tokenBudget ?? null,
@@ -234,7 +256,7 @@ export function registerSetupRoutes(app: FastifyInstance, d: SetupDeps): void {
             prepare: f.database.prepare ?? null,
             extensionsSchema: f.database.extensionsSchema ?? null,
             pool: f.database.pool,
-            /** The backend this running server uses (a change applies after a restart). */
+            /** The backend this running server uses (saved changes switch it live). */
             active: d.activeDatabase ?? 'sqlite',
           },
           git: {
@@ -242,6 +264,9 @@ export function registerSetupRoutes(app: FastifyInstance, d: SetupDeps): void {
             cliPath: f.git.cliPath,
             author: f.git.author,
             auth: {
+              /** Saved `git.auth.method` (null = default) and the method in effect ('app': GitHub App tokens over HTTPS). */
+              method: f.git.auth.method ?? null,
+              effectiveMethod: gitAuthMethod({ explicit: f.git.auth.method, backend: f.git.backend, appConfigured: !!f.auth.github?.app?.privateKeyPath, sshKeyPath: f.git.auth.sshKeyPath, tokenEnv: f.git.auth.tokenEnv }),
               sshKeyPath: f.git.auth.sshKeyPath,
               sshPassphraseEnv: f.git.auth.sshPassphraseEnv,
               passphraseSet: setFlag(f.git.auth.sshPassphraseEnv),
@@ -261,7 +286,7 @@ export function registerSetupRoutes(app: FastifyInstance, d: SetupDeps): void {
 
   app.get(
     '/ui/setup/checks',
-    wrap(async () => ({ checks: await probes.environmentChecks({ mode: d.mode, home: d.home, localBaseDir: d.localBaseDir, port: d.port, publicUrl: d.publicUrl, ...(d.fetch ? { fetch: d.fetch } : {}) }) })),
+    wrap(async () => ({ checks: await probes.environmentChecks({ home: d.home, localBaseDir: d.localBaseDir, port: d.port, publicUrl: d.publicUrl, ...(d.fetch ? { fetch: d.fetch } : {}) }) })),
   );
 
   /* -------------------------------------------------------------- config writes */
@@ -281,7 +306,6 @@ export function registerSetupRoutes(app: FastifyInstance, d: SetupDeps): void {
       patch: z
         .object({
           github: githubPatch.nullable().optional(),
-          local: z.object({ baseDir: z.string().min(1).max(1000) }).strict().optional(),
           ask: z
             .object({
               default: z.string().nullable().optional(),
@@ -317,11 +341,8 @@ export function registerSetupRoutes(app: FastifyInstance, d: SetupDeps): void {
     '/ui/setup/config',
     wrap(async (req) => {
       const { configVersion, patch } = patchSchema.parse(req.body);
-      if (patch.github !== undefined && d.mode !== 'server') throw new AdminError(400, 'invalid_input', 'GitHub sign-in exists only in server mode', 'github');
-      if (patch.local && d.mode !== 'local') throw new AdminError(400, 'invalid_input', 'the projects folder applies to local mode', 'local');
-      if (patch.local) d.browser.resolve(patch.local.baseDir, false); // confined to home
-      if (patch.database && d.mode !== 'server') throw new AdminError(400, 'invalid_input', 'the database backend is a server-mode setting (local mode uses SQLite)', 'database');
       if (patch.database && ['url', 'connectionString', 'password'].some((k) => k in patch.database!)) throw new AdminError(400, 'invalid_input', 'never put the database URL in config.json: save it as a secret and name the variable in urlEnv', 'database');
+      const before = d.config.text();
       const version = d.config.patch(configVersion, (json) => {
         const obj = (k: string) => (json[k] && typeof json[k] === 'object' ? (json[k] as Record<string, unknown>) : {});
         if (patch.github !== undefined) {
@@ -330,12 +351,12 @@ export function registerSetupRoutes(app: FastifyInstance, d: SetupDeps): void {
           else {
             const g = { ...((auth.github as Record<string, unknown>) ?? {}), ...patch.github };
             if (g.callbackUrl === null) delete g.callbackUrl;
+            // An older OAuth App install (no repo permissions) admits only the allow-list: it must not be empty.
             if (!d.repoAuth && !((g.allowedUsers as string[] | undefined)?.length || (g.allowedOrgs as string[] | undefined)?.length)) throw new AdminError(400, 'invalid_input', 'a remote server needs allowedUsers or allowedOrgs: anyone who can reach the URL could otherwise sign in', 'allowedUsers');
             auth.github = g;
           }
           json.auth = auth;
         }
-        if (patch.local) json.local = { ...obj('local'), ...patch.local };
         if (patch.ask) {
           // Legacy single-model blocks become { models } (the schema's preprocess reads both); other keys are kept.
           const cur = obj('ask');
@@ -364,24 +385,175 @@ export function registerSetupRoutes(app: FastifyInstance, d: SetupDeps): void {
       d.log?.info('settings saved to config.json');
       // The embedding block hot-reloads: apply it to the open projects now (the rest pick it up on their next read).
       if (patch.embedding) void d.local.registry.opened().then((rs) => rs.forEach((r) => r.index?.refreshEmbedding()), () => undefined);
-      return { configVersion: version, restartRequired: !!(patch.git?.backend || patch.git?.cliPath || patch.database) };
+      // Git backend and database switch live; a change that cannot be applied is rolled back (file and server).
+      const gitChange = !!(patch.git?.backend || patch.git?.cliPath);
+      const applied: ('git' | 'database')[] = [];
+      try {
+        if (gitChange && d.apply?.git) {
+          await d.apply.git();
+          applied.push('git');
+        }
+        if (patch.database && d.apply?.database) {
+          await d.apply.database();
+          applied.push('database');
+        }
+      } catch (e) {
+        d.config.restore(before);
+        if (applied.includes('git')) await d.apply?.git?.().catch(() => undefined);
+        const what = applied.includes('git') || !gitChange || !d.apply?.git ? 'database' : 'git backend';
+        throw new AdminError(400, 'apply_failed', `The new ${what} setting could not be applied, so nothing changed: ${probes.scrub((e as Error).message)}`, what === 'database' ? 'database' : 'git');
+      }
+      const restartRequired = (gitChange && !d.apply?.git) || (!!patch.database && !d.apply?.database);
+      return { configVersion: version, applied, restartRequired };
     }),
   );
 
+  /**
+   * The server address (`server.publicUrl`): the URL people and agents use. Bind and proxy trust follow from it unless
+   * given (Advanced): a localhost URL listens on 127.0.0.1 without proxy trust; any other URL is expected behind a
+   * reverse proxy on this machine (127.0.0.1, X-Forwarded-* trusted). Applies on the restart that follows
+   * (POST /ui/setup/restart). The GitHub App's callback is derived from it.
+   */
   app.put(
-    '/ui/setup/mode',
+    '/ui/setup/server',
     wrap(async (req) => {
       const b = z
-        .object({ configVersion: z.string().min(1), mode: z.enum(['local', 'server']), publicUrl: z.string().url().optional(), bind: z.string().min(1).optional(), trustProxy: z.boolean().optional() })
+        .object({ configVersion: z.string().min(1), publicUrl: z.string().url(), bind: z.string().min(1).max(100).optional(), trustProxy: z.boolean().optional() })
         .strict()
         .parse(req.body);
-      if (b.mode === 'server' && !b.publicUrl && !d.config.parsed().server.publicUrl) throw new AdminError(400, 'invalid_input', 'server mode needs the public URL (https://…)', 'publicUrl');
+      const u = new URL(b.publicUrl);
+      if (!/^https?:$/.test(u.protocol) || u.pathname !== '/' || u.search || u.hash) throw new AdminError(400, 'invalid_input', 'use the bare address, e.g. https://mandate.example.com', 'publicUrl');
       const version = d.config.patch(b.configVersion, (json) => {
-        const server = (json.server as Record<string, unknown>) ?? {};
-        json.server = { ...server, mode: b.mode, ...(b.publicUrl ? { publicUrl: b.publicUrl } : {}), ...(b.bind ? { bind: b.bind } : {}), ...(b.trustProxy !== undefined ? { trustProxy: b.trustProxy } : {}) };
+        const derived = serverAddress(u.origin);
+        json.server = { ...((json.server as Record<string, unknown>) ?? {}), ...derived, ...(b.bind ? { bind: b.bind } : {}), ...(b.trustProxy !== undefined ? { trustProxy: b.trustProxy } : {}) };
+        const server = json.server as Record<string, unknown>;
+        delete server.mode; // older settings: there is one setup (GitHub sign-in)
+        delete server.users;
+        delete server.host;
       });
-      d.log?.warn(`deployment mode set to ${b.mode}; restart Mandate to apply`);
-      return { configVersion: version, restartRequired: true };
+      d.log?.warn(`server address set to ${u.origin}; it applies when Mandate restarts`);
+      let url: string | null = null;
+      try {
+        url = d.nextPublicUrl?.() ?? null;
+      } catch {
+        /* unknown until restart */
+      }
+      return { configVersion: version, restartRequired: true, url, restart: { kind: d.restarter?.kind() ?? 'manual', command: d.restarter?.command() ?? 'mandate restart' } };
+    }),
+  );
+
+  /* -------------------------------------------------------------- one-click GitHub App (manifest flow) */
+
+  const APP_COOKIE = 'mandate_ghapp';
+  /**
+   * Start: the browser POSTs `manifest` to `action` (a form, so GitHub shows "Create GitHub App"). The state is bound
+   * to this browser with a signed, short-lived cookie: the redirect back is a cross-site navigation, where the
+   * SameSite=Strict setup cookie is not sent, so this cookie (Lax, path-scoped) proves it is the same admin.
+   */
+  app.post(
+    '/ui/setup/github/manifest',
+    wrap(async (req, reply) => {
+      const b = z
+        .object({
+          /** `user` (the signed-in GitHub account) or an organization login. */
+          owner: z.union([z.literal('user'), z.string().regex(/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/, 'an organization login')]),
+          /** Installable on other accounts / organizations (needed for a personal app used with org repos). */
+          public: z.boolean().optional(),
+          name: z.string().trim().min(1).max(34).optional(),
+        })
+        .strict()
+        .parse(req.body);
+      const base = requestOrigin(req, d.trustProxy) ?? d.publicUrl;
+      const org = b.owner === 'user' ? null : b.owner;
+      const state = randomBytes(24).toString('base64url');
+      // The wizard runs on the server: the origin it was opened on is the address people and agents use.
+      const explicit = d.config.parsed().auth.github?.callbackUrl;
+      const host = (() => {
+        try {
+          return new URL(base).hostname.replace(/[^a-z0-9-]/gi, '-').slice(0, 18);
+        } catch {
+          return 'local';
+        }
+      })();
+      // App names are unique on GitHub: a short random suffix (the user may rename it on GitHub's page).
+      const name = b.name ?? `Mandate ${host} ${randomBytes(2).toString('hex')}`.slice(0, 34);
+      const manifest = {
+        name,
+        url: base,
+        description: 'Mandate: specifications for coding agents (sign-in and repository access).',
+        redirect_url: `${base}/auth/github/app/created`,
+        callback_urls: [...new Set([`${base}/auth/github/callback`, ...(explicit ? [explicit] : [])])].slice(0, 10),
+        setup_url: `${base}/?github=installed`,
+        setup_on_update: true,
+        request_oauth_on_install: false,
+        public: b.public ?? !org,
+        default_permissions: { contents: 'write', metadata: 'read', ...(org || (d.config.parsed().auth.github?.allowedOrgs.length ?? 0) > 0 ? { members: 'read' } : {}) },
+        default_events: [],
+      };
+      const action = `${gh.webBase}${org ? `/organizations/${encodeURIComponent(org)}/settings/apps/new` : '/settings/apps/new'}?state=${encodeURIComponent(state)}`;
+      const cookie = d.auth.store.sign({ state, base, exp: Date.now() + 3600_000 });
+      reply.header('Set-Cookie', `${APP_COOKIE}=${cookie}; HttpOnly; SameSite=Lax; Path=/auth/github/app; Max-Age=3600${secure}`);
+      reply.header('Cache-Control', 'no-store');
+      return { action, manifest: JSON.stringify(manifest), state };
+    }),
+  );
+
+  /** GitHub redirects here after "Create GitHub App": exchange the code, store the secrets, write the config. */
+  app.get('/auth/github/app/created', async (req, reply) => {
+    const q = req.query as { code?: string; state?: string };
+    const saved = d.auth.store.unsign<{ state: string; base?: string; exp: number }>(cookieOf(req, APP_COOKIE));
+    const back = (qs: string) => {
+      reply.header('Set-Cookie', `${APP_COOKIE}=; HttpOnly; SameSite=Lax; Path=/auth/github/app; Max-Age=0`);
+      reply.header('Cache-Control', 'no-store');
+      return reply.redirect(`${d.setup.complete() ? '/settings?section=github&' : '/setup?'}${qs}`);
+    };
+    if (!d.hostOk(req)) return fail(reply, 403, 'forbidden', 'forbidden host');
+    if (!saved || saved.exp <= Date.now() || typeof q.state !== 'string' || q.state !== saved.state) return back('github=state_mismatch');
+    if (typeof q.code !== 'string' || !q.code) return back('github=cancelled');
+    try {
+      const c = await gh.convertManifest(q.code);
+      const cur = d.config.parsed().auth.github;
+      const secretEnv = cur?.clientSecretEnv ?? 'MANDATE_GITHUB_CLIENT_SECRET';
+      const webhookEnv = 'MANDATE_GITHUB_WEBHOOK_SECRET';
+      const keyFile = path.join(d.home, 'github-app.pem');
+      // Secrets: secrets.env (0600) and a 0600 key file; never config, logs or responses.
+      setSecret(d.secretsFile, secretEnv, c.clientSecret);
+      if (c.webhookSecret) setSecret(d.secretsFile, webhookEnv, c.webhookSecret);
+      writePrivate(keyFile, c.pem.endsWith('\n') ? c.pem : `${c.pem}\n`);
+      refreshSecrets();
+      d.config.patch(d.config.version(), (json) => {
+        const auth = (json.auth as Record<string, unknown>) ?? {};
+        const g = { ...((auth.github as Record<string, unknown>) ?? {}) };
+        delete g.callbackUrl; // the app was registered with <address>/auth/github/callback
+        // The address the wizard was opened on becomes the server address (bind / proxy trust derived from it).
+        if (saved.base) json.server = { ...((json.server as Record<string, unknown>) ?? {}), ...serverAddress(saved.base) };
+        json.auth = {
+          ...auth,
+          github: {
+            ...g,
+            clientId: c.clientId,
+            clientSecretEnv: secretEnv,
+            app: { id: c.id, slug: c.slug, ...(c.owner ? { owner: c.owner } : {}), ownerType: c.ownerType, ...(c.htmlUrl ? { htmlUrl: c.htmlUrl } : {}), privateKeyPath: keyFile, ...(c.webhookSecret ? { webhookSecretEnv: webhookEnv } : {}) },
+          },
+        };
+      });
+      d.log?.info(`GitHub App created: ${c.slug} (id ${c.id}); secrets saved to secrets.env and ${keyFile}`);
+      return back(`github=created&app=${encodeURIComponent(c.slug)}${c.owner ? `&owner=${encodeURIComponent(c.owner)}` : ''}`);
+    } catch (e) {
+      d.log?.warn(`GitHub App creation failed: ${probes.scrub((e as Error).message)}`);
+      return back(`github=${e instanceof GithubError && e.status === 404 ? 'expired' : 'failed'}`);
+    }
+  });
+
+  // Restart this server (a new public URL / bind address). Admin / setup session, same-origin writes only.
+  app.post(
+    '/ui/setup/restart',
+    wrap(async (_req, _reply, who) => {
+      const kind = d.restarter?.kind() ?? 'manual';
+      const command = d.restarter?.command() ?? 'mandate restart';
+      const restarting = !!d.restarter?.trigger();
+      d.log?.warn(restarting ? `restart requested from the UI (${who.kind === 'user' ? who.login : 'setup session'}): restarting (${kind})` : `restart requested from the UI, but this server is not supervised: run ${command}`);
+      return { restarting, kind, command };
     }),
   );
 
@@ -389,8 +561,20 @@ export function registerSetupRoutes(app: FastifyInstance, d: SetupDeps): void {
     '/ui/setup/secret',
     wrap(async (req) => {
       const b = z.object({ name: z.string().regex(SECRET_NAME_RE, 'an environment variable name like MY_API_KEY'), value: z.string().min(1).max(4096).nullable() }).strict().parse(req.body);
+      const dbUrl = d.apply?.database && d.apply.databaseUrlEnv?.() === b.name;
+      const prev = dbUrl && existsSync(d.secretsFile) ? (parseDotenv(readFileSync(d.secretsFile, 'utf8')).get(b.name) ?? null) : null;
       setSecret(d.secretsFile, b.name, b.value);
       d.log?.info(`secret ${b.name} ${b.value === null ? 'removed' : 'set'} in secrets.env`);
+      // The running database's URL changed: switch to it now (a failure restores the previous value).
+      if (dbUrl) {
+        try {
+          await d.apply!.database!();
+        } catch (e) {
+          setSecret(d.secretsFile, b.name, prev);
+          throw new AdminError(400, 'apply_failed', `The new database URL could not be used, so nothing changed: ${probes.scrub((e as Error).message)}`, 'database');
+        }
+        return { name: b.name, set: !!process.env[b.name], applied: ['database'] };
+      }
       return { name: b.name, set: !!process.env[b.name] };
     }),
   );
@@ -402,7 +586,7 @@ export function registerSetupRoutes(app: FastifyInstance, d: SetupDeps): void {
     return apiKey || (env && SECRET_NAME_RE.test(env) ? process.env[env] : undefined) || undefined;
   };
 
-  if (d.mode === 'server') {
+  {
     app.post(
       '/ui/setup/test/github',
       wrap(async (req) => {
@@ -439,7 +623,6 @@ export function registerSetupRoutes(app: FastifyInstance, d: SetupDeps): void {
         .object({ urlEnv: z.string().regex(SECRET_NAME_RE).optional(), ssl: z.enum(['disable', 'require', 'verify-full']).nullable().optional(), extensionsSchema: z.string().regex(/^[a-z_][a-z0-9_]{0,40}$/).nullable().optional(), createExtensions: z.boolean().optional() })
         .strict()
         .parse(req.body ?? {});
-      if (d.mode !== 'server') throw new AdminError(400, 'invalid_input', 'the database backend is a server-mode setting', 'database');
       refreshSecrets();
       const cfg = d.config.parsed().database;
       const r = resolveDatabase({ ...cfg, driver: 'postgres', path: undefined, sslRootCertPath: undefined, ...(b.urlEnv ? { urlEnv: b.urlEnv } : {}), ...(b.ssl !== undefined ? { ssl: b.ssl ?? undefined } : {}) }, process.env, d.home);
@@ -529,17 +712,31 @@ export function registerSetupRoutes(app: FastifyInstance, d: SetupDeps): void {
         .object({
           url: z.string().trim().min(1).max(500),
           backend: z.enum(['cli', 'embedded']),
-          auth: z.object({ sshKeyPath: z.string().max(1000).nullable().optional(), passphrase: z.string().max(1000).optional(), useAgent: z.boolean().optional(), username: z.string().max(200).nullable().optional(), token: z.string().max(1000).optional() }).strict().optional(),
+          auth: z.object({ method: z.enum(GIT_AUTH_METHODS).optional(), sshKeyPath: z.string().max(1000).nullable().optional(), passphrase: z.string().max(1000).optional(), useAgent: z.boolean().optional(), username: z.string().max(200).nullable().optional(), token: z.string().max(1000).optional() }).strict().optional(),
         })
         .strict()
         .parse(req.body);
       if (/^[a-z]+:\/\/[^/@\s]*:[^/@\s]*@/i.test(b.url)) throw new AdminError(400, 'invalid_input', 'no credentials in the URL', 'url');
       const f = d.config.parsed();
+      const a = b.auth ?? {};
+      if (a.method === 'app') {
+        // GitHub App: an installation token minted for the URL's repo (clear error + install URL when not installed).
+        const gh = githubRepoOf(b.url, new URL(process.env.MANDATE_GITHUB_URL || 'https://github.com').host);
+        if (!gh) throw new AdminError(400, 'invalid_input', 'the GitHub App method needs a GitHub repository URL (https://github.com/<owner>/<repo>.git)', 'url');
+        const tokens = appTokensFor(d.config.file);
+        if (!tokens.available()) return { ok: false, message: 'No GitHub App with a private key is configured yet: create it in the GitHub step first.' };
+        const url = `${(process.env.MANDATE_GITHUB_URL || 'https://github.com').replace(/\/+$/, '')}/${gh.owner}/${gh.repo}.git`;
+        try {
+          await tokens.token(gh.owner, gh.repo);
+        } catch (e) {
+          return { ok: false, message: (e as Error).message };
+        }
+        return probes.testGitEmbedded(url, { type: 'github-app', owner: gh.owner, repo: gh.repo, token: () => tokens.token(gh.owner, gh.repo) });
+      }
       if (b.backend === 'cli') {
         const r = await probes.testGitSystem(b.url, f.git.cliPath);
         return { ok: r.ok, message: r.message };
       }
-      const a = b.auth ?? {};
       const keyPath = a.sshKeyPath === undefined ? f.git.auth.sshKeyPath : a.sshKeyPath;
       let auth: Parameters<typeof probes.testGitEmbedded>[1];
       if (keyPath && !a.useAgent) auth = { type: 'ssh', privateKeyPath: d.browser.resolve(keyPath), passphrase: a.passphrase ?? keyOf(undefined, f.git.auth.sshPassphraseEnv), username: 'git' };
@@ -561,11 +758,23 @@ export function registerSetupRoutes(app: FastifyInstance, d: SetupDeps): void {
   app.post(
     '/ui/setup/complete',
     wrap(async (_req, reply, who) => {
+      // The setup-link holder becomes the first admin on their GitHub sign-in (single-use claim, identity from GitHub).
+      if (who.kind === 'setup') {
+        const nonce = new SetupAdminClaim(d.home).issue();
+        reply.header('Set-Cookie', `${ADMIN_CLAIM_COOKIE}=${d.auth.store.sign({ n: nonce })}; HttpOnly; SameSite=Lax; Path=/auth/github; Max-Age=3600${secure}`);
+      }
       d.setup.markComplete();
-      // Local mode: the setup link holder is on this machine; sign them in so "Open Mandate" just works.
-      if (d.mode === 'local' && who.kind === 'setup') await localSession(reply);
       d.log?.info('setup completed');
-      return { next: d.mode === 'local' ? 'local' : 'github' };
+      // A new server address (saved with the GitHub App) applies on a restart: a supervised server restarts itself.
+      let next: string | null = null;
+      try {
+        next = d.nextPublicUrl?.() ?? null;
+      } catch {
+        /* unknown */
+      }
+      const restarting = !!next && next !== d.publicUrl && (d.restarter?.kind() ?? 'manual') !== 'manual';
+      if (restarting) setTimeout(() => d.restarter?.trigger(), 300).unref?.();
+      return { next: 'github', restarting };
     }),
   );
 
@@ -587,49 +796,43 @@ export function registerSetupRoutes(app: FastifyInstance, d: SetupDeps): void {
     wrap(async (req) => ({ path: d.browser.mkdir(z.object({ path: z.string().min(1).max(1000) }).strict().parse(req.body).path) })),
   );
 
-  /* -------------------------------------------------------------- local projects */
 
-  if (d.mode === 'local') {
-    app.post(
-      '/ui/projects/local',
-      wrap(async (req, reply) => {
-        const deps: LocalProjectDeps = { ...d.local, browser: d.browser, baseDir: d.config.parsed().local.baseDir };
-        if (String(req.headers.accept ?? '').includes('application/x-ndjson')) {
-          reply.hijack();
-          const res = reply.raw;
-          res.writeHead(200, { 'Content-Type': 'application/x-ndjson', 'Cache-Control': 'no-store' });
-          const line = (o: unknown) => res.write(`${JSON.stringify(o)}\n`);
-          try {
-            line({ project: await createLocalProject(deps, req.body, (step, status) => line({ step, status })) });
-          } catch (e) {
-            line({ error: e instanceof AdminError ? { code: e.code, message: e.message, ...(e.path ? { path: e.path } : {}), ...(e.hint ? { hint: e.hint } : {}) } : { code: 'internal', message: probes.scrub((e as Error).message) } });
-          }
-          res.end();
-          return reply;
-        }
-        return reply.code(201).send({ project: await createLocalProject(deps, req.body) });
-      }),
-    );
-  }
 }
 
-/** /auth/status additions: mode, setup state, admin flags. */
-export function setupStatus(d: Pick<SetupDeps, 'mode' | 'legacyMode' | 'publicUrl' | 'setup' | 'auth' | 'source' | 'repoAuth'>) {
+/**
+ * The GitHub callback's first-admin hook: a valid, unused claim from this browser makes `login` an admin
+ * (`auth.github.allowedUsers`). Consumed once; the login comes from GitHub, never from the browser.
+ */
+export function adminClaimHook(d: Pick<SetupDeps, 'home' | 'auth' | 'config' | 'log'>) {
+  return async (req: FastifyRequest, login: string): Promise<boolean> => {
+    const v = d.auth.store.unsign<{ n?: string }>(cookieOf(req, ADMIN_CLAIM_COOKIE));
+    if (!v?.n || !new SetupAdminClaim(d.home).consume(v.n)) return false;
+    d.config.patch(d.config.version(), (json) => {
+      const auth = (json.auth as Record<string, unknown>) ?? {};
+      const g = { ...((auth.github as Record<string, unknown>) ?? {}) };
+      const users = (g.allowedUsers as string[] | undefined) ?? [];
+      if (!users.some((u) => u.toLowerCase() === login.toLowerCase())) g.allowedUsers = [...users, login];
+      json.auth = { ...auth, github: g };
+    });
+    d.log?.info(`first admin: ${login}`);
+    return true;
+  };
+}
+
+/** /auth/status additions: setup state, admin flags. */
+export function setupStatus(d: Pick<SetupDeps, 'publicUrl' | 'setup' | 'auth' | 'source' | 'repoAuth'>) {
   return (req: FastifyRequest, user: { login: string } | null) => {
     const v = d.auth.store.unsign<{ h: string; exp: number }>(cookieOf(req, SETUP_COOKIE));
     const h = d.setup.tokenHash();
     const setupAccess = !!v && !!h && v.h === h && v.exp > Date.now();
     const complete = d.setup.complete();
     return {
-      mode: d.mode,
-      legacy: d.legacyMode,
-      publicUrl: d.mode === 'server' ? d.publicUrl : null,
+      legacy: !d.repoAuth,
+      publicUrl: d.publicUrl,
       setup: { complete, inSetupMode: !complete },
       setupAccess,
       isAdmin: (!!user && d.auth.isAdmin?.(user.login) !== false) || setupAccess,
       repoAuth: !!d.repoAuth,
-      // Local mode needs no GitHub app: "configured" is about sign-in being possible.
-      ...(d.mode === 'local' ? { configured: true, missing: [] } : {}),
     };
   };
 }

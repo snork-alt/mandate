@@ -1,6 +1,8 @@
 /**
  * GitHub sign-in for the web UI (OAuth web flow with `state` + PKCE S256) and the small GitHub REST client the
- * project setup uses. The `auth` block of config.json and the client secret (env / secrets.env) are re-read on
+ * project setup uses. Sign-in works with a GitHub App (default for new setups, created with the one-click manifest
+ * flow: user tokens expire and refresh, repos are visible where the app is installed) or an existing OAuth App
+ * (`auth.github.clientId` + `clientSecretEnv` without `app`). The `auth` block of config.json and the client secret (env / secrets.env) are re-read on
  * change, so the first-run setup page turns into the login page without a restart.
  * Scopes: sign-in asks only for what the allow-list needs (`read:org` when `allowedOrgs` is set, else none);
  * "New project" upgrades to `repo` (private repos) or `public_repo` incrementally.
@@ -11,13 +13,22 @@ import { statSync } from 'node:fs';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { authConfigSchema, readRawConfig, type AuthConfig } from '../config.js';
 import { refreshSecrets } from '../secrets.js';
-import { cookieOf, originOk, sessionForMode, SESSION_COOKIE, type AuthOptions } from './http.js';
+import { cookieOf, originOk, sessionFor, SESSION_COOKIE, type AuthOptions } from './http.js';
 import type { SessionUser } from './sessions.js';
 
 export const DEFAULT_CALLBACK_URL = 'http://localhost:5173/auth/github/callback';
 const OAUTH_COOKIE = 'mandate_oauth';
+/** Single-use first-admin claim, set by the setup wizard's last step (see SetupAdminClaim). */
+export const ADMIN_CLAIM_COOKIE = 'mandate_admin_claim';
 const OAUTH_TTL_MS = 10 * 60_000;
 export const UPGRADE_SCOPES = ['repo', 'public_repo'] as const;
+
+export interface GithubAppInfo {
+  id: number;
+  slug: string;
+  owner?: string;
+  ownerType?: 'User' | 'Organization';
+}
 
 export interface GithubSettings {
   clientId: string;
@@ -25,7 +36,12 @@ export interface GithubSettings {
   allowedUsers: string[];
   allowedOrgs: string[];
   callbackUrl: string;
+  /** Set for a GitHub App (else an OAuth App). */
+  app?: GithubAppInfo;
 }
+
+/** Where a user installs the GitHub App on more accounts / repositories. */
+export const appInstallUrl = (web: string, slug: string) => `${web}/apps/${encodeURIComponent(slug)}/installations/new`;
 
 export interface AuthState {
   configured: boolean;
@@ -40,13 +56,14 @@ export interface AuthState {
 export class AuthConfigSource {
   private stamp = '';
   private cfg: AuthConfig;
+  private liveCallbackUrl: string | null = null;
 
   constructor(
     private readonly configPath: string | null,
     initial: AuthConfig,
     private readonly env: NodeJS.ProcessEnv = process.env,
     private readonly log?: { warn(m: string): void },
-    /** `<publicUrl>/auth/github/callback` (server mode); the dev default otherwise. */
+    /** `<publicUrl>/auth/github/callback`; the dev default otherwise. */
     private readonly defaultCallbackUrl: string = DEFAULT_CALLBACK_URL,
     /** false with repo-based permissions: anyone may sign in and sees only the projects whose repo they can read. */
     readonly allowListRequired = true,
@@ -61,7 +78,11 @@ export class AuthConfigSource {
       const stamp = `${st.ino}:${st.size}:${st.mtimeMs}`;
       if (stamp === this.stamp) return;
       this.stamp = stamp;
-      const raw = readRawConfig(this.configPath).auth ?? {};
+      const json = readRawConfig(this.configPath);
+      const raw = json.auth ?? {};
+      // A new server address (saved by the setup wizard / Settings) moves the default callback without a restart.
+      const pub = (json.server as { publicUrl?: unknown } | undefined)?.publicUrl;
+      this.liveCallbackUrl = typeof pub === 'string' && /^https?:\/\//.test(pub) ? `${pub.replace(/\/+$/, '')}/auth/github/callback` : null;
       const r = authConfigSchema.safeParse(raw);
       if (r.success) this.cfg = r.data;
       else this.log?.warn(`auth config invalid (keeping the previous one): ${r.error.issues.map((i) => `auth.${i.path.join('.')}: ${i.message}`).join('; ')}`);
@@ -80,7 +101,7 @@ export class AuthConfigSource {
     this.reload();
     if (this.env === process.env) refreshSecrets();
     const g = this.cfg.github;
-    const callbackUrl = g?.callbackUrl ?? this.defaultCallbackUrl;
+    const callbackUrl = g?.callbackUrl ?? this.liveCallbackUrl ?? this.defaultCallbackUrl;
     const missing: string[] = [];
     if (!g) missing.push('auth.github');
     if (!g?.clientId) missing.push('auth.github.clientId');
@@ -94,7 +115,9 @@ export class AuthConfigSource {
       missing,
       callbackUrl,
       sessionTtlHours: this.cfg.sessionTtlHours,
-      github: configured ? { clientId: g!.clientId!, clientSecret: secret!, allowedUsers: g!.allowedUsers, allowedOrgs: g!.allowedOrgs, callbackUrl } : null,
+      github: configured
+        ? { clientId: g!.clientId!, clientSecret: secret!, allowedUsers: g!.allowedUsers, allowedOrgs: g!.allowedOrgs, callbackUrl, ...(g!.app ? { app: { id: g!.app.id, slug: g!.app.slug, ...(g!.app.owner ? { owner: g!.app.owner } : {}), ...(g!.app.ownerType ? { ownerType: g!.app.ownerType } : {}) } } : {}) }
+        : null,
     };
   }
 }
@@ -178,22 +201,102 @@ export class GithubClient {
     throw new GithubError(status, `GitHub ${what}: ${msg}`);
   }
 
-  /** Exchange the OAuth code (+ PKCE verifier). The secret travels only in this POST body. */
-  async exchangeCode(s: GithubSettings, code: string, verifier: string): Promise<{ token: string; scopes: string[] }> {
+  /**
+   * Exchange the OAuth code (+ PKCE verifier). The secret travels only in this POST body. GitHub App user tokens come
+   * with `expires_in` (8 h) and a rotating `refresh_token` (6 months).
+   */
+  async exchangeCode(s: GithubSettings, code: string, verifier: string): Promise<{ token: string; scopes: string[]; refreshToken?: string; expiresIn?: number; refreshExpiresIn?: number }> {
     const res = await this.ep.fetch(`${this.ep.web}/login/oauth/access_token`, {
       method: 'POST',
       headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'User-Agent': 'mandate' },
       body: JSON.stringify({ client_id: s.clientId, client_secret: s.clientSecret, code, redirect_uri: s.callbackUrl, code_verifier: verifier }),
     });
-    const j = (await res.json().catch(() => ({}))) as { access_token?: string; scope?: string; error?: string };
+    const j = (await res.json().catch(() => ({}))) as TokenResponse;
     if (!res.ok || !j.access_token) throw new GithubError(res.status, `GitHub token exchange failed${j.error ? `: ${j.error}` : ''}`);
-    return { token: j.access_token, scopes: (j.scope ?? '').split(/[ ,]+/).filter(Boolean) };
+    return { token: j.access_token, scopes: (j.scope ?? '').split(/[ ,]+/).filter(Boolean), ...refreshFields(j) };
+  }
+
+  /** Refresh a GitHub App user token (the refresh token rotates: the old pair stops working). */
+  async refreshUserToken(s: Pick<GithubSettings, 'clientId' | 'clientSecret'>, refreshToken: string): Promise<{ token: string; refreshToken?: string; expiresIn?: number; refreshExpiresIn?: number }> {
+    const res = await this.ep.fetch(`${this.ep.web}/login/oauth/access_token`, {
+      method: 'POST',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'User-Agent': 'mandate' },
+      body: JSON.stringify({ client_id: s.clientId, client_secret: s.clientSecret, grant_type: 'refresh_token', refresh_token: refreshToken }),
+    });
+    const j = (await res.json().catch(() => ({}))) as TokenResponse;
+    // GitHub answers 200 with `error: bad_refresh_token` for a rejected refresh token.
+    if (!res.ok || !j.access_token) throw new GithubError(j.error ? 400 : res.status, `GitHub token refresh failed${j.error ? `: ${j.error}` : ''}`);
+    return { token: j.access_token, ...refreshFields(j) };
+  }
+
+  /**
+   * One-click GitHub App creation: exchange the manifest code (1 hour, single use) for the app's credentials.
+   * Unauthenticated by design (the code is the credential). The result holds secrets: never log it.
+   */
+  async convertManifest(code: string): Promise<ManifestConversion> {
+    if (!/^[A-Za-z0-9_-]{1,200}$/.test(code)) throw new GithubError(400, 'GitHub manifest code: invalid');
+    const res = await this.ep.fetch(`${this.ep.api}/app-manifests/${encodeURIComponent(code)}/conversions`, {
+      method: 'POST',
+      headers: { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'mandate' },
+    });
+    const j = (await res.json().catch(() => ({}))) as Partial<{ id: number; slug: string; name: string; client_id: string; client_secret: string; webhook_secret: string | null; pem: string; html_url: string; owner: { login: string; type: string } | null; message: string }>;
+    if (res.status !== 201 || !j.id || !j.client_id || !j.client_secret || !j.pem || !j.slug) throw new GithubError(res.status, `GitHub app creation could not be completed: ${typeof j.message === 'string' ? j.message.slice(0, 200) : `HTTP ${res.status}`}`);
+    return {
+      id: j.id,
+      slug: j.slug,
+      name: j.name ?? j.slug,
+      clientId: j.client_id,
+      clientSecret: j.client_secret,
+      webhookSecret: j.webhook_secret ?? null,
+      pem: j.pem,
+      htmlUrl: j.html_url ?? null,
+      owner: j.owner?.login ?? null,
+      ownerType: j.owner?.type === 'Organization' ? 'Organization' : 'User',
+    };
+  }
+
+  /** GitHub App: the installations the user can access (user-to-server token). */
+  async installations(token: string): Promise<GithubInstallation[]> {
+    const out: GithubInstallation[] = [];
+    let next: string | null = '/user/installations?per_page=100';
+    for (let page = 0; next && page < 10; page++) {
+      const res: Response = await this.ep.fetch(next.startsWith('http') ? next : `${this.ep.api}${next}`, { headers: { Accept: 'application/vnd.github+json', Authorization: `Bearer ${token}`, 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'mandate' } });
+      const body = (await res.json().catch(() => null)) as { installations?: { id: number; account: { login: string; type?: string; avatar_url?: string } | null; repository_selection?: string }[] } | null;
+      if (res.status !== 200 || !body?.installations) this.fail(res.status, 'installations', body);
+      for (const i of body.installations) if (i.account) out.push({ id: i.id, account: i.account.login, accountType: i.account.type === 'Organization' ? 'Organization' : 'User', avatarUrl: i.account.avatar_url ?? null, selection: i.repository_selection === 'all' ? 'all' : 'selected' });
+      const m = /<([^>]+)>;\s*rel="next"/.exec(res.headers.get('link') ?? '');
+      next = m && m[1]!.startsWith(this.ep.api) ? m[1]! : null;
+    }
+    return out;
+  }
+
+  /** GitHub App: repositories of one installation the user can access (paginated, most recently pushed first). */
+  async installationRepos(token: string, installationId: number, q = ''): Promise<GithubRepo[]> {
+    const items: GithubRepo[] = [];
+    let next: string | null = `/user/installations/${installationId}/repositories?per_page=100`;
+    for (let page = 0; next && page < 10; page++) {
+      const res: Response = await this.ep.fetch(next.startsWith('http') ? next : `${this.ep.api}${next}`, { headers: { Accept: 'application/vnd.github+json', Authorization: `Bearer ${token}`, 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'mandate' } });
+      const body = (await res.json().catch(() => null)) as { repositories?: (RawRepo & { permissions?: { push?: boolean } })[] } | null;
+      if (res.status !== 200 || !body?.repositories) this.fail(res.status, `installation ${installationId} repos`, body);
+      items.push(...body.repositories.filter((x) => x.permissions?.push !== false).map(toRepo));
+      const m = /<([^>]+)>;\s*rel="next"/.exec(res.headers.get('link') ?? '');
+      next = m && m[1]!.startsWith(this.ep.api) ? m[1]! : null;
+    }
+    return filterRepos(items, q).sort((x, y) => (y.pushedAt ?? '').localeCompare(x.pushedAt ?? ''));
   }
 
   async user(token: string): Promise<SessionUser> {
     const r = await this.api<{ login: string; name?: string | null; avatar_url: string; id?: number }>(token, '/user');
     if (r.status !== 200) this.fail(r.status, 'user', r.body);
     return { login: r.body.login, ...(r.body.name ? { name: r.body.name } : {}), avatarUrl: r.body.avatar_url, ...(typeof r.body.id === 'number' ? { githubId: r.body.id } : {}) };
+  }
+
+  /** A GitHub account by login (Settings → Admins lookup); null when there is no such user. */
+  async userByLogin(token: string, login: string): Promise<{ login: string; name: string | null; avatarUrl: string | null; type: string } | null> {
+    const r = await this.api<{ login: string; name?: string | null; avatar_url?: string; type?: string }>(token, `/users/${encodeURIComponent(login)}`);
+    if (r.status === 404) return null;
+    if (r.status !== 200) this.fail(r.status, `user ${login}`, r.body);
+    return { login: r.body.login, name: r.body.name ?? null, avatarUrl: r.body.avatar_url ?? null, type: r.body.type ?? 'User' };
   }
 
   /** Active member of `org` (needs read:org for private memberships). */
@@ -297,6 +400,36 @@ export class GithubClient {
   }
 }
 
+type TokenResponse = { access_token?: string; scope?: string; error?: string; refresh_token?: string; expires_in?: number; refresh_token_expires_in?: number };
+const refreshFields = (j: TokenResponse) => ({
+  ...(j.refresh_token ? { refreshToken: j.refresh_token } : {}),
+  ...(typeof j.expires_in === 'number' && j.expires_in > 0 ? { expiresIn: j.expires_in } : {}),
+  ...(typeof j.refresh_token_expires_in === 'number' && j.refresh_token_expires_in > 0 ? { refreshExpiresIn: j.refresh_token_expires_in } : {}),
+});
+
+/** Credentials of a GitHub App created from a manifest (secrets: client secret, webhook secret, private key). */
+export interface ManifestConversion {
+  id: number;
+  slug: string;
+  name: string;
+  clientId: string;
+  clientSecret: string;
+  webhookSecret: string | null;
+  pem: string;
+  htmlUrl: string | null;
+  owner: string | null;
+  ownerType: 'User' | 'Organization';
+}
+
+export interface GithubInstallation {
+  id: number;
+  account: string;
+  accountType: 'User' | 'Organization';
+  avatarUrl: string | null;
+  /** The app sees every repo of the account, or a selection. */
+  selection: 'all' | 'selected';
+}
+
 export interface GithubOrg {
   login: string;
   name: string | null;
@@ -318,11 +451,16 @@ export interface AuthRouteOptions {
   source: AuthConfigSource;
   github?: GithubClient;
   log?: { warn(m: string): void; info(m: string): void };
-  /** GitHub sign-in routes exist only in server mode (default: always). */
+  /** GitHub sign-in routes exist only in a team (default: always). */
   githubEnabled?: boolean;
   /** After a successful sign-in (e.g. forget cached repo permissions). */
   onSignIn?: (login: string) => void;
-  /** Extra fields for /auth/status (setup state, mode, ...); they override the defaults. */
+  /**
+   * First-run setup: the person who finishes the setup wizard becomes the first admin on their GitHub sign-in (identity
+   * from GitHub, never typed). Returns true when this sign-in consumed the single-use setup claim.
+   */
+  claimAdmin?: (req: FastifyRequest, login: string) => Promise<boolean>;
+  /** Extra fields for /auth/status (setup state, users, ...); they override the defaults. */
   statusExtra?: (req: FastifyRequest, user: SessionUser | null) => Record<string, unknown>;
 }
 
@@ -363,7 +501,7 @@ export function registerAuthRoutes(app: FastifyInstance, o: AuthRouteOptions): v
 
   app.get('/auth/status', async (req, reply) => {
     const st = o.source.current();
-    const user = sessionForMode(await store.session(cookieOf(req, SESSION_COOKIE)), o.auth.mode);
+    const user = sessionFor(await store.session(cookieOf(req, SESSION_COOKIE)));
     reply.header('Cache-Control', 'no-store');
     return {
       authenticated: !!user,
@@ -389,7 +527,8 @@ export function registerAuthRoutes(app: FastifyInstance, o: AuthRouteOptions): v
     const state = b64(randomBytes(24));
     const verifier = b64(randomBytes(48));
     const challenge = b64(createHash('sha256').update(verifier).digest());
-    const scopes = signInScopes(st.github, q.scope);
+    // GitHub Apps ignore scopes (permissions come from the app and its installations).
+    const scopes = st.github.app ? [] : signInScopes(st.github, q.scope);
     // The UI's origin (dev: Vite :5173 proxying /auth) so the callback, which may land on another origin (the API
     // :4000 registered in the OAuth App), sends the user back to the UI. Cookies are per host, not per port.
     const uiOrigin = uiOriginOf(req, st.callbackUrl, o.auth.uiOrigins ?? []);
@@ -399,7 +538,7 @@ export function registerAuthRoutes(app: FastifyInstance, o: AuthRouteOptions): v
     url.searchParams.set('client_id', st.github.clientId);
     url.searchParams.set('redirect_uri', st.callbackUrl);
     url.searchParams.set('state', state);
-    url.searchParams.set('scope', scopes.join(' '));
+    if (!st.github.app) url.searchParams.set('scope', scopes.join(' '));
     url.searchParams.set('code_challenge', challenge);
     url.searchParams.set('code_challenge_method', 'S256');
     url.searchParams.set('allow_signup', 'false');
@@ -420,10 +559,13 @@ export function registerAuthRoutes(app: FastifyInstance, o: AuthRouteOptions): v
     if (!stateOk) return fail('state_mismatch');
     if (q.error || typeof q.code !== 'string' || !q.code) return fail('github_error');
     try {
-      const { token, scopes } = await gh.exchangeCode(st.github, q.code, saved.verifier);
+      const { token, scopes, refreshToken, expiresIn, refreshExpiresIn } = await gh.exchangeCode(st.github, q.code, saved.verifier);
       const user = await gh.user(token);
       const listed = st.github.allowedUsers.length > 0 || st.github.allowedOrgs.length > 0;
+      const claimed = (await o.claimAdmin?.(req, user.login)) ?? false;
+      if (claimed) o.log?.info(`setup: ${user.login} is the first admin (signed in from the setup wizard)`);
       const allowed =
+        claimed ||
         (!listed && !o.source.allowListRequired) ||
         st.github.allowedUsers.some((u) => u.toLowerCase() === user.login.toLowerCase()) ||
         (await (async () => {
@@ -434,7 +576,13 @@ export function registerAuthRoutes(app: FastifyInstance, o: AuthRouteOptions): v
         o.log?.warn(`sign-in refused for GitHub user ${user.login} (not in allowedUsers / allowedOrgs)`);
         return fail('not_allowed');
       }
-      await store.saveToken(user.login, token, scopes);
+      const now = Date.now();
+      await store.saveToken(user.login, token, scopes, {
+        ...(st.github.app ? { app: true } : {}),
+        ...(expiresIn ? { expiresAt: now + expiresIn * 1000 } : {}),
+        ...(refreshToken ? { refreshToken } : {}),
+        ...(refreshExpiresIn ? { refreshExpiresAt: now + refreshExpiresIn * 1000 } : {}),
+      });
       // User directory (avatars, names, noreply co-author addresses).
       userDirectory()?.record({ login: user.login, name: user.name ?? null, avatarUrl: user.avatarUrl, ...(user.githubId ? { id: user.githubId } : {}) });
       o.onSignIn?.(user.login);
@@ -443,6 +591,7 @@ export function registerAuthRoutes(app: FastifyInstance, o: AuthRouteOptions): v
       o.log?.info(`GitHub sign-in: ${user.login}`);
       reply.header('Set-Cookie', [
         `${OAUTH_COOKIE}=; HttpOnly; SameSite=Lax; Path=/auth/github; Max-Age=0`,
+        ...(claimed ? [`${ADMIN_CLAIM_COOKIE}=; HttpOnly; SameSite=Lax; Path=/auth/github; Max-Age=0`] : []),
         `${SESSION_COOKIE}=${cookie}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.floor(sessionTtlMs / 1000)}${secure(st.callbackUrl)}`,
       ]);
       return reply.redirect(`${ui}${saved.returnTo}`);

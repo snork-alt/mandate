@@ -32,7 +32,7 @@ Example: {}`,
       const canDecide = ui ? ctx.uiAccess === 'write' : ctx.access !== 'read';
       const user = principalUser(ctx);
       const override = await overrideEligibility({ ...ctx, commit: { agent: 'mandate-ui', ...(user ? { user } : {}), trailers: {} } });
-      return { canDecide, mode: ctx.settings?.mode ?? 'local', user: user ?? null, override };
+      return { canDecide, user: user ?? null, override };
     },
   }),
   defineTool({

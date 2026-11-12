@@ -1,5 +1,5 @@
 /**
- * Phase B: contributors (direct + propagated through causes, server mode only), co-author trailers, the user
+ * Phase B: contributors (direct + propagated through causes), co-author trailers (team), the user
  * directory, "changing" work-order progress (claim / branch / PR), blast radius on touched files, touched code of
  * reconciled work orders in "where it's used", and comment attribution.
  */
@@ -31,13 +31,13 @@ afterAll(async () => {
 const CHAT = new MemoryClientStore();
 const chatGet = CHAT.get.bind(CHAT);
 CHAT.get = async (p, id) => ({ ...((await chatGet(p, id)) ?? { flow: null, approval: null }), questions: 'chat' }) as never;
-const as = (login: string | null, mode: 'server' | 'local' = 'server'): ToolContext =>
+const as = (login: string | null, mode: 'team' | 'me' = 'team'): ToolContext =>
   ({
     storage: fx.storage,
     index: fx.index,
     reads: fx.reads,
     views: new DocViewService(fx.storage),
-    settings: memorySettings(mode, {}, 'test', CHAT),
+    settings: memorySettings({}, 'test', CHAT),
     clientName: `agent-of-${login ?? 'local'}`,
     ...(login ? { principal: { kind: 'user', login, project: 'test', via: 'oauth', tokenId: 't', tokenName: 'cli' } as Principal } : {}),
   }) as ToolContext;
@@ -120,17 +120,6 @@ describe('contributors', () => {
     expect(msg).not.toMatch(/Co-authored-by: frank/);
     const h = await call(as(null), 'history_get', { ref: `mandate://specs/${id}`, limit: 1 });
     expect(h.entries[0].coAuthors).toEqual(expect.arrayContaining(['alice', 'bob']));
-  });
-
-  it('local mode: no users, no contributors, no co-authors', async () => {
-    const lid = await newSpec(as(null, 'local'));
-    const f = (await call(as('alice', 'local'), 'feedback_create', { targets: [`mandate://specs/${lid}/sections/design`], kind: 'bug', body: 'b' })).ref;
-    await call(as('carol', 'local'), 'spec_section_update', { ref: `mandate://specs/${lid}/sections/design`, body: 'x', cause: f });
-    expect(git('log', '-1', '--format=%B')).not.toMatch(/Co-authored-by|Mandate-User/);
-    const r = await call(as(null, 'local'), 'contributors', { refs: [`mandate://specs/${lid}/sections/design`] });
-    const list = r.contributors[`mandate://specs/${lid}/sections/design`];
-    expect(list.length).toBeGreaterThan(0); // agents only
-    expect(list.every((c: { userRecorded: boolean }) => !c.userRecorded)).toBe(true);
   });
 
   it('users_resolve: directory entries, GitHub avatar fallback, service accounts', async () => {

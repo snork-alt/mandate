@@ -27,6 +27,11 @@ export interface McpTarget {
 export interface Server {
   /** The key itself: only for agents without env-var expansion, only at user scope. */
   key?: string;
+  /**
+   * Team without a personal token: no Authorization header, so the agent signs in itself (MCP OAuth: the server's 401
+   * points at its protected-resource metadata). Nothing secret is written.
+   */
+  oauth?: boolean;
   project: string;
   /** `mandate-<project>`. */
   name: string;
@@ -392,12 +397,24 @@ export const detectAgents = (ctx: Ctx) => AGENTS.filter((a) => a.detect(ctx));
 
 /** opencode's legacy shape needs `enabled` instead of `oauth`. */
 function entryFor(agent: AgentDef, s: Server, keyPath: string[]): unknown {
-  const e = agent.entry(s);
+  const e = oauthEntry(agent.entry(s), s) as Record<string, unknown>;
   if (agent.id === 'opencode' && keyPath.length === 2) {
-    const { oauth: _o, ...rest } = e as Record<string, unknown>;
+    const { oauth: _o, ...rest } = e;
     return { ...rest, enabled: true };
   }
   return e;
+}
+
+/** Agents whose MCP client signs in by itself (MCP OAuth), per their docs; the others need a personal token. */
+export const OAUTH_AGENTS = new Set(['claude-code', 'codex', 'cursor', 'vscode', 'gemini', 'windsurf', 'opencode']);
+
+/** An MCP OAuth entry: the same entry without the Authorization header (TOML: without bearer_token_env_var). */
+export function oauthEntry(e: unknown, s: Server): unknown {
+  if (!s.oauth) return e;
+  if (typeof e === 'string') return e.replace(/\nbearer_token_env_var = [^\n]*/, '');
+  const { headers: _h, ...rest } = e as Record<string, unknown>;
+  const { oauth: _o, ...auto } = rest; // opencode: without `oauth: false` it detects OAuth by itself
+  return auto;
 }
 
 /** New text with the server entry added / updated (`text` = the current content, for composing several edits). */
@@ -406,7 +423,7 @@ export function mcpUpsertText(agent: AgentDef, target: McpTarget, s: Server, tex
     const tableRe = new RegExp(`^\\[mcp_servers\\.${s.name.replace(/[-]/g, '\\-')}\\]`, 'm');
     const outside = removeBlock(text, s.name, 'hash') ?? '';
     if (tableRe.test(outside)) throw new Error(`${target.file} already defines [mcp_servers.${s.name}] outside Mandate's block; remove it or leave it as is`);
-    return upsertBlock(text, s.name, agent.entry(s) as string, 'hash');
+    return upsertBlock(text, s.name, oauthEntry(agent.entry(s), s) as string, 'hash');
   }
   const keyPath = agent.jsonPath!(s, text, target.file);
   return jsonSet(target.file, text, keyPath, entryFor(agent, s, keyPath));

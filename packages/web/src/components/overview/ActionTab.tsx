@@ -125,7 +125,7 @@ const GROUP_ICON: Partial<Record<DecisionKind, typeof IconGavel>> = {
 
 /** One decision: element title (links to it) + one muted line of why, age, then a consistent action cluster. */
 function DecisionRow({ d, overrideOk }: { d: Decision; overrideOk: boolean }) {
-  // Self-approvals are offered only to eligible users (admins / sole active user / local mode).
+  // Self-approvals are offered only to eligible users (admins / sole active user).
   const actions = decisionActions(d).filter((a) => !(a.dialog.type === "accept" && a.dialog.selfApproval && !overrideOk));
   const suggested = d.suggested ? d.options.find((x) => x.id === d.suggested)?.label : undefined;
   const why = d.context ?? d.question;

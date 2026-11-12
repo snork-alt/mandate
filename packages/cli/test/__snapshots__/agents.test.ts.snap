@@ -18,8 +18,6 @@ exports[`amp install / connect / uninstall > writes exactly these files, idempot
   "installed": [
     ".agents/skills/mandate-bootstrap/SKILL.md",
     ".agents/skills/mandate/SKILL.md",
-    ".config/amp/settings.json",
-    ".zshrc",
   ],
 }
 `;
@@ -48,7 +46,6 @@ exports[`claude-code install / connect / uninstall > writes exactly these files,
     ".claude/commands/mandate-flow.md",
     ".claude/skills/mandate-bootstrap/SKILL.md",
     ".claude/skills/mandate/SKILL.md",
-    ".zshrc",
   ],
 }
 `;
@@ -70,10 +67,8 @@ exports[`cline install / connect / uninstall > writes exactly these files, idemp
     "AGENTS.md",
   ],
   "installed": [
-    ".cline/data/settings/cline_mcp_settings.json",
     ".cline/skills/mandate-bootstrap/SKILL.md",
     ".cline/skills/mandate/SKILL.md",
-    ".zshrc",
   ],
 }
 `;
@@ -90,7 +85,6 @@ exports[`codex install / connect / uninstall > writes exactly these files, idemp
     ".codex/config.toml",
     ".codex/prompts/mandate-bootstrap.md",
     ".codex/prompts/mandate-flow.md",
-    ".zshrc",
   ],
 }
 `;
@@ -118,7 +112,6 @@ exports[`cursor install / connect / uninstall > writes exactly these files, idem
     ".cursor/commands/mandate-bootstrap.md",
     ".cursor/commands/mandate-flow.md",
     ".cursor/mcp.json",
-    ".zshrc",
   ],
 }
 `;
@@ -146,7 +139,6 @@ exports[`gemini install / connect / uninstall > writes exactly these files, idem
     ".gemini/commands/mandate-bootstrap.toml",
     ".gemini/commands/mandate-flow.toml",
     ".gemini/settings.json",
-    ".zshrc",
   ],
 }
 `;
@@ -159,7 +151,6 @@ exports[`goose install / connect / uninstall > writes exactly these files, idemp
   "installed": [
     ".agents/skills/mandate-bootstrap/SKILL.md",
     ".agents/skills/mandate/SKILL.md",
-    ".zshrc",
   ],
 }
 `;
@@ -181,8 +172,6 @@ exports[`junie install / connect / uninstall > writes exactly these files, idemp
   "installed": [
     ".agents/skills/mandate-bootstrap/SKILL.md",
     ".agents/skills/mandate/SKILL.md",
-    ".junie/mcp/mcp.json",
-    ".zshrc",
   ],
 }
 `;
@@ -212,7 +201,6 @@ exports[`opencode install / connect / uninstall > writes exactly these files, id
     ".config/opencode/commands/mandate-bootstrap.md",
     ".config/opencode/commands/mandate-flow.md",
     ".config/opencode/opencode.json",
-    ".zshrc",
   ],
 }
 `;
@@ -474,7 +462,6 @@ exports[`vscode install / connect / uninstall > writes exactly these files, idem
     ".agents/skills/mandate/SKILL.md",
     ".copilot/skills/mandate-bootstrap/SKILL.md",
     ".copilot/skills/mandate/SKILL.md",
-    ".zshrc",
     "Library/Application Support/Code/User/mcp.json",
   ],
 }
@@ -499,7 +486,6 @@ exports[`windsurf install / connect / uninstall > writes exactly these files, id
     ".agents/skills/mandate-bootstrap/SKILL.md",
     ".agents/skills/mandate/SKILL.md",
     ".codeium/windsurf/mcp_config.json",
-    ".zshrc",
   ],
 }
 `;
@@ -521,7 +507,6 @@ exports[`zed install / connect / uninstall > writes exactly these files, idempot
   "installed": [
     ".agents/skills/mandate-bootstrap/SKILL.md",
     ".agents/skills/mandate/SKILL.md",
-    ".zshrc",
   ],
 }
 `;

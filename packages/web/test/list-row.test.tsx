@@ -29,8 +29,8 @@ afterEach(() => {
   contributors = {};
 });
 
-const status = (mode: 'local' | 'server'): AuthStatus => ({ authenticated: true, user: null, configured: true, missing: [], callbackUrl: null, loginUrl: '/login', mode });
-const wrap = (mode: 'local' | 'server', ui: React.ReactNode) =>
+const status = (_where: 'computer' | 'server'): AuthStatus => ({ authenticated: true, user: null, configured: true, missing: [], callbackUrl: null, loginUrl: '/login' });
+const wrap = (mode: 'computer' | 'server', ui: React.ReactNode) =>
   render(
     <MantineProvider>
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
@@ -105,23 +105,23 @@ describe('ListRow slots', () => {
 
 describe('people column: never empty', () => {
   const REF = 'mandate://feedback/fb-0001';
-  it('server mode, legacy item (no contributors, no user): the agent avatar with a dashed ring', async () => {
+  it('team, legacy item (no contributors, no user): the agent avatar with a dashed ring', async () => {
     wrap('server', <RowPeople refUri={REF} fallback={{ agent: 'claude-code', verb: 'Filed' }} />);
     const a = await screen.findByTestId('agent-avatar');
     expect(a.getAttribute('data-legacy')).toBe('true');
     expect(a.getAttribute('data-agent')).toBe('claude-code');
     expect(a.textContent).toContain('CC');
   });
-  it('server mode, agent-only contributors (userRecorded: false): agent faces in the stack', async () => {
+  it('team, agent-only contributors (userRecorded: false): agent faces in the stack', async () => {
     contributors[REF] = [c('codex', { userRecorded: false })];
     wrap('server', <RowPeople refUri={REF} fallback={{ agent: 'claude-code' }} />);
     const stack = await screen.findByTestId('avatar-stack');
     expect(within(stack).getByTestId('agent-avatar').getAttribute('data-agent')).toBe('codex');
   });
-  it('local mode: the agent avatar without the dashed ring', async () => {
-    wrap('local', <RowPeople refUri={REF} fallback={{ agent: 'claude-code' }} />);
+  it('an older agent-only item shows the agent avatar (no user recorded)', async () => {
+    wrap('computer', <RowPeople refUri={REF} fallback={{ agent: 'claude-code' }} />);
     const a = await screen.findByTestId('agent-avatar');
-    expect(a.getAttribute('data-legacy')).toBeNull();
+    expect(a.getAttribute('data-legacy')).toBe('true');
   });
   it('feedback: the filer leads the stack', async () => {
     contributors[REF] = [c('bob'), c('alice')];

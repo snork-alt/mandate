@@ -141,7 +141,7 @@ function PersonalTokens({ projectId, url, access }: { projectId: string; url: st
   );
 }
 
-/** Server mode: agents sign in with GitHub (MCP OAuth) first; personal tokens second. */
+/** Team: agents sign in with GitHub (MCP OAuth) first; personal tokens second. */
 export function OAuthConnect({ projectId, url, access }: { projectId: string; url: string; access?: 'read' | 'write' }) {
   const guides = oauthGuides(projectId, url);
   return (

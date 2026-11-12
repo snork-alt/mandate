@@ -35,10 +35,10 @@ export interface ToolContext {
   project?: { id: string; name: string };
   /** Who is calling (agent key or the read-only web UI session); unset in-process (tests, the Ask agent's own calls). */
   principal?: Principal;
-  /** Access of the caller on this project ('read': write tools refused; server mode: from GitHub repo permissions). */
+  /** Access of the caller on this project ('read': write tools refused; team: from GitHub repo permissions). */
   access?: 'read' | 'write';
   /**
-   * Web UI sessions: the signed-in user's own access to the repository (server mode: GitHub push permission; local
+   * Web UI sessions: the signed-in user's own access to the repository (GitHub push permission; local-folder projects
    * mode: write). The session itself stays read-only except for the `uiAllowed` human-decision tools, which need 'write'.
    */
   uiAccess?: 'read' | 'write';
@@ -70,9 +70,9 @@ export interface ToolContext {
   clientName?: string;
   /** MCP clientInfo version of the caller. */
   clientVersion?: string;
-  /** Per-project agent settings (flow on/off, approval) and the server mode; unset in tests without a registry. */
+  /** Per-project agent settings (flow on/off, approval) and who uses the server; unset in tests without a registry. */
   settings?: ProjectSettings;
-  /** Local checkouts of code repos the server may read (work_order_touch_from_commits); unset = none (server mode). */
+  /** Local checkouts of code repos the server may read (work_order_touch_from_commits); unset = none (a team). */
   codeRepos?: (repo: string) => string | null;
   /**
    * IN-PROCESS ONLY (test fixtures, seeds): create tools accept explicit ids (storage/preset-ids.ts). Never set by the
@@ -96,7 +96,7 @@ export interface SessionState {
 
 export interface WriteMeta {
   agent: string;
-  /** Server mode: the user who triggered the write (from the authenticated principal, never from client input). */
+  /** The user who triggered the write (from the authenticated principal, never from client input). */
   user?: string;
   /** Canonical cause references of the write (`cause` input; `Caused-By:` trailer). */
   causes?: string[];
@@ -123,9 +123,9 @@ export const WRITE_FIELDS = {
 /** Trailers only the server sets (a tool's `trailers()` can never produce them). */
 const RESERVED_TRAILERS = new Set([USER_TRAILER, LEGACY_USER_TRAILER, 'Agent-Key', CAUSE_TRAILER, 'Agent', 'Branch', 'Co-authored-by'].map((k) => k.toLowerCase()));
 
-/** `Co-authored-by:` trailers for the causes' contributors: server mode, on unless MANDATE_CO_AUTHORS=0. */
+/** `Co-authored-by:` trailers for the causes' contributors (GitHub noreply addresses), unless MANDATE_CO_AUTHORS=0. */
 export function coAuthorsEnabled(ctx: Pick<ToolContext, 'settings'>): boolean {
-  return ctx.settings?.mode === 'server' && process.env.MANDATE_CO_AUTHORS !== '0';
+  return !!ctx.settings && process.env.MANDATE_CO_AUTHORS !== '0';
 }
 
 /** `login <noreply>` of the direct contributors of the causes (never the acting user; never private emails). */
@@ -152,15 +152,14 @@ async function coAuthorLines(ctx: ToolContext, causes: string[], actingUser: str
 }
 
 /**
- * The user who triggered a write: server mode only, from the authenticated principal (GitHub login, or
- * `service:<name>` for a service-account key). Local mode and shared keys: none (agent-only attribution).
+ * The user who triggered a write, from the authenticated principal only: the GitHub login, or `service:<name>` for a
+ * service-account key (never from client input).
  */
-export function principalUser(ctx: Pick<ToolContext, 'principal' | 'settings'>): string | undefined {
-  if (ctx.settings?.mode === 'local') return undefined;
+export function principalUser(ctx: Pick<ToolContext, 'principal'>): string | undefined {
   const p = ctx.principal;
   if (p?.kind === 'user') return p.login;
   // A human decision recorded from the web UI (uiAllowed tools): the signed-in user.
-  if (p?.kind === 'ui' && p.user.kind !== 'local') return p.user.login;
+  if (p?.kind === 'ui') return p.user.login;
   if (p?.kind === 'key' && p.service) return `${SERVICE_USER_PREFIX}${p.keyName}`;
   return undefined;
 }
@@ -189,7 +188,7 @@ export interface ToolDef<S extends z.ZodType = z.ZodType> {
   /**
    * Write tools a web UI session may call: pure HUMAN decisions (accept / reject feedback, approve a waiver, release a
    * stale claim, snooze an integrity warning), never document content. Same validation, gates, commits and activity
-   * as for agents; the commit is attributed to the signed-in user (server mode) via the `mandate-ui` agent. Needs the
+   * as for agents; the commit is attributed to the signed-in user via the `mandate-ui` agent. Needs the
    * user's own write access (`uiAccess`). Every other write tool stays refused for the UI session.
    */
   uiAllowed?: boolean;
@@ -324,7 +323,7 @@ const CONTRIBUTOR_TOOLS: Record<string, string | null> = {
   work_order_section_get: 'work-orders',
 };
 
-/** Add `contributors` (direct + via causes; server mode users, else agents) to a successful get result. */
+/** Add `contributors` (direct + via causes; users, else agents for older agent-only commits) to a successful get result. */
 async function withContributors(name: string, args: Record<string, unknown>, res: CallToolResult, ctx: ToolContext): Promise<CallToolResult> {
   const body = res.structuredContent as Record<string, unknown> | undefined;
   if (res.isError || !ctx.index || !body || 'contributors' in body) return res;
@@ -333,7 +332,7 @@ async function withContributors(name: string, args: Record<string, unknown>, res
   const kind = CONTRIBUTOR_TOOLS[name];
   const ref = /mandate:\/\//.test(raw) ? raw : kind ? `mandate://${kind}/${raw}` : raw;
   try {
-    const c = await ctx.index.contributors({ refs: [ref], depth: 2 }, { agentsOnly: ctx.settings?.mode === 'local' });
+    const c = await ctx.index.contributors({ refs: [ref], depth: 2 });
     const list = Object.values(c.contributors)[0] ?? [];
     return okResult({ ...body, contributors: list });
   } catch {
@@ -400,12 +399,12 @@ export async function callTool(def: AnyToolDef, rawArgs: unknown, ctx: ToolConte
   if (causes.length) trailers = { ...trailers, [CAUSE_TRAILER]: causes.join(', ') };
   // The key's name records which agent credential made the write (activity `source`); never the key itself.
   if (ctx.principal?.kind === 'key') trailers = { ...trailers, 'Agent-Key': ctx.principal.keyName };
-  // Server mode: the acting GitHub user (and which credential) is recorded on every write.
+  // Personal tokens / MCP OAuth: which credential of the acting user made the write.
   if (ctx.principal?.kind === 'user') trailers = { ...trailers, 'Agent-Key': `${ctx.principal.via === 'oauth' ? 'oauth' : 'token'}:${ctx.principal.tokenName}` };
-  // Attribution (server mode): the triggering user, from the principal only (`Agent-User` kept for compatibility).
+  // Attribution: the triggering user, from the principal only (`Agent-User` kept for compatibility).
   const user = principalUser(ctx);
   if (user) trailers = { ...trailers, [USER_TRAILER]: user, [LEGACY_USER_TRAILER]: user };
-  // Server mode: the users who contributed to the causes are co-authors (GitHub shows them when the repo is pushed).
+  // Team: the users who contributed to the causes are co-authors (GitHub shows them when the repo is pushed).
   if (user && causes.length && coAuthorsEnabled(ctx)) {
     const lines = await coAuthorLines(ctx, causes, user);
     if (lines.length) trailers = { ...trailers, 'Co-authored-by': lines.join('\nCo-authored-by: ') };

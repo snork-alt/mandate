@@ -81,7 +81,7 @@ export function UserCardBody({ user, agents, at, extra }: { user: string; agents
 }
 
 /**
- * One shared avatar (server mode only; renders nothing in local mode): round directory image or initials, a neutral
+ * One shared avatar (renders nothing without a known auth status): round directory image or initials, a neutral
  * badge for service accounts, a styled hover card (login, name, via agent, time) and click-to-filter where the view
  * has a user filter.
  */
@@ -257,13 +257,13 @@ export function AvatarStack({ contributors, max = 4, size = 'sm', form }: { cont
   );
 }
 
-/** Fetching wrapper: the contributors of `refUri` (batched), nothing in local mode or when there are none. */
+/** Fetching wrapper: the contributors of `refUri` (batched), nothing when there are none. */
 export function Contributors({ refUri, max, size, form }: { refUri: string; max?: number; size?: AvatarSize; form?: 'full' | 'compact' }) {
   const q = useContributors(refUri);
   return q.data?.length ? <AvatarStack contributors={q.data} max={max} size={size} form={form} /> : null;
 }
 
-/** "co-authored by <avatars> alice and bob" (Co-authored-by trailers), server mode only. */
+/** "co-authored by <avatars> alice and bob" (Co-authored-by trailers: team writes). */
 export function CoAuthors({ logins }: { logins?: string[] }) {
   const show = useShowUsers();
   if (!show || !logins?.length) return null;
@@ -280,7 +280,7 @@ export function CoAuthors({ logins }: { logins?: string[] }) {
   );
 }
 
-/** Document header: the stack, the full label and "N contributors" (server mode; nothing without contributors). */
+/** Document header: the stack, the full label and "N contributors" (nothing without contributors). */
 export function DocContributors({ refUri }: { refUri: string }) {
   const q = useContributors(refUri);
   const cs = q.data ?? [];
@@ -295,7 +295,7 @@ export function DocContributors({ refUri }: { refUri: string }) {
   );
 }
 
-/** Who to show when no contributor is known: the recorded user, else the coding agent (legacy items, local mode). */
+/** Who to show when no contributor is known: the recorded user, else the coding agent (older agent-only items). */
 export interface ActorFallback {
   user?: string;
   agent?: string;
@@ -305,8 +305,8 @@ export interface ActorFallback {
 }
 
 /**
- * A coding agent's avatar with a hover card. Server mode (`legacy`): dashed ring, "Created via <agent>; no user
- * recorded". Local mode: the same face without the dashed ring ("Created via <agent>").
+ * A coding agent's avatar with a hover card. `legacy`: dashed ring, "Created via <agent>; no user
+ * recorded".
  */
 export function AgentAvatar({ agent, size = 'xs', legacy, verb = 'Created', at }: { agent?: string; size?: AvatarSize; legacy?: boolean; verb?: string; at?: string }) {
   const px = avatarPx(size);
@@ -341,7 +341,7 @@ export function AgentAvatar({ agent, size = 'xs', legacy, verb = 'Created', at }
   );
 }
 
-/** One actor (activity feed, comments): the user's avatar in server mode, else the agent's (dashed when legacy). */
+/** One actor (activity feed, comments): the user's avatar, else the agent's (dashed when legacy). */
 export function ActorAvatar({ user, agent, size = 'xs', at, verb }: { user?: string; agent?: string; size?: AvatarSize; at?: string; verb?: string }) {
   const show = useShowUsers();
   if (show && user) return <UserAvatar user={user} size={size} agent={agent} at={at} />;
@@ -361,7 +361,7 @@ export function withFirst(cs: Contributor[], first?: ActorFallback): Contributor
 /**
  * The people column of every list row (fixed width, never empty): the contributors stack (most recent first; direct,
  * then via) with a hover card; without contributors the recorded user, else the coding agent (dashed ring in server
- * mode: legacy items without a `Mandate-User` trailer; plain in local mode). `first` (feedback: the filer) leads.
+ * mode: legacy items without a `Mandate-User` trailer). `first` (feedback: the filer) leads.
  */
 export function RowPeople({ refUri, fallback, first, max = 3 }: { refUri: string; fallback?: ActorFallback; first?: boolean; max?: number }) {
   const show = useShowUsers();

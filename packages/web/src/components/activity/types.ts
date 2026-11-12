@@ -8,7 +8,7 @@ export interface ActivityFilters {
   agents?: string[];
   /** Any of these event types or type prefixes (`spec`, `work_order.section_done`). */
   types?: string[];
-  /** Any of these users (server mode only; local mode records no users). */
+  /** Any of these users. */
   users?: string[];
 }
 

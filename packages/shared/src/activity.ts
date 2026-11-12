@@ -87,7 +87,7 @@ export interface ActivityEvent {
   branch?: string;
   /** Name of the agent key that made the write (`Agent-Key:` trailer); never the key itself. */
   source?: string;
-  /** Server mode: the GitHub user the agent acted as (`Mandate-User:` / legacy `Agent-User:` trailer); never in local mode. */
+  /** The user the agent acted as (`Mandate-User:` / legacy `Agent-User:` trailer): a GitHub login or service:<name>. */
   user?: string;
   /** Recorded causes of the write (`Caused-By:` trailer). */
   causes?: string[];
@@ -142,7 +142,7 @@ export const activityListInputSchema = z
     until: when.optional(),
     types: z.array(typePattern).min(1).max(20).optional(),
     agent: z.string().trim().min(1).max(200).optional(),
-    /** Server mode: events triggered by this user (GitHub login or service:<name>). */
+    /** Events triggered by this user (a GitHub login or service:<name>). */
     user: z.string().trim().min(1).max(200).optional(),
     /** Events touching this reference; a document matches its sections, work orders and feedback on it. */
     ref: refFilter.optional(),

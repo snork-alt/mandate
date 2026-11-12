@@ -3,7 +3,7 @@
  * - project_info: policy (admin), this client's preference and the effective setting (with the reason).
  * - flow_set: the calling client's preference (refused when the policy forbids it). project_flow_set: deprecated alias.
  * - flow_policy_set: the project policy (web UI admins only; agents are refused).
- * - flow_clients_list: my clients (every client for admins in server mode).
+ * - flow_clients_list: my clients (every client for team admins).
  */
 import { z } from 'zod';
 import { defineTool, type ToolContext } from '../define.js';
@@ -26,7 +26,6 @@ async function info(ctx: ToolContext) {
   const upload = uploadInfo(ctx);
   return {
     project: ctx.project ?? null,
-    mode: ctx.settings?.mode ?? 'local',
     policy,
     client: { id: c.id, label: c.label, flow: pref?.flow ?? null, approval: pref?.approval ?? null, questions: pref?.questions ?? null },
     effective: { flow: eff.flow, approval: eff.approval, questions: eff.questions },
@@ -101,7 +100,7 @@ Example: {"flowPolicy":"required"}`,
       const policy = await s.setPolicy(a);
       const fields = (['flowPolicy', 'approvalPolicy'] as const).filter((k) => before[k] !== policy[k]).map((k) => `${k === 'flowPolicy' ? 'flow policy' : 'approval policy'} ${policy[k]}`);
       const login = ctx.principal?.kind === 'ui' ? ctx.principal.user.login : undefined;
-      const e = flowChangedEvent(s.project, fields, { agent: 'mandate-ui', ...(s.mode === 'server' && login ? { user: login } : {}) }, (await ctx.storage.git.head().catch(() => null)) ?? '');
+      const e = flowChangedEvent(s.project, fields, { agent: 'mandate-ui', ...(login ? { user: login } : {}) }, (await ctx.storage.git.head().catch(() => null)) ?? '');
       if (e) ctx.activity?.emit(e);
       return { policy, changed: fields };
     },
@@ -110,15 +109,15 @@ Example: {"flowPolicy":"required"}`,
     name: 'flow_clients_list',
     title: 'Flow clients',
     kind: 'read',
-    description: `Agent clients seen on this project with their flow preference and effective setting (server mode: yours; admins may pass all: true).
+    description: `Agent clients seen on this project with their flow preference and effective setting (yours; team admins may pass all: true).
 Example: {}`,
     input: z.object({ all: z.boolean().default(false) }).strict(),
     run: async (a, ctx) => {
       const s = settingsOf(ctx);
       const me = clientIdentity(ctx);
       const login = ctx.principal?.kind === 'user' ? ctx.principal.login : ctx.principal?.kind === 'ui' ? ctx.principal.user.login : undefined;
-      if (a.all && s.mode === 'server' && !(ctx.principal?.kind === 'ui' && s.isAdmin(login))) throw new ToolError('forbidden', 'only Mandate admins can list every client', 'call without all to list yours', 'all');
-      const filter = s.mode === 'server' && !a.all && login ? { user: login } : {};
+      if (a.all && !(ctx.principal?.kind === 'ui' && s.isAdmin(login))) throw new ToolError('forbidden', 'only Mandate admins can list every client', 'call without all to list yours', 'all');
+      const filter = !a.all && login ? { user: login } : {};
       const policy = s.policy();
       const clients = (await s.clients.list(s.project, filter)).map((r) => {
         const eff = effective(policy, r);

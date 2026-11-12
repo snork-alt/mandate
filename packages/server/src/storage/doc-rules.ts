@@ -123,7 +123,7 @@ export class DocRules {
 
   /**
    * Accepted feedback named in the write's `Feedback:` trailers that approves a criteria removal: accepted (or applied)
-   * by someone other than the writer (server-mode user, else agent; case-insensitive). Throws `waiver_self_approved`
+   * by someone other than the writer (the user, else agent; case-insensitive). Throws `waiver_self_approved`
    * when the only accepted items were accepted by the writer.
    */
   private async approvingFeedback(ctx: WriteContext): Promise<StoredFeedback[]> {

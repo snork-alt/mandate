@@ -33,8 +33,8 @@ function metaOf(ctx: ToolContext, commits: string[], extra: Record<string, strin
   return { agent: c.agent, ...(c.branch ? { branch: c.branch } : {}), trailers: { ...c.trailers, ...extra }, onCommit: (sha) => commits.push(sha) };
 }
 const commitsOf = (commits: string[]) => ({ commit: commits.at(-1) ?? null, commits });
-/** The auditor: the agent identity plus, in server mode, the GitHub user it acts as. */
-// The user is the write's attributed user (server mode: login or service:<name>; local mode: none).
+/** The auditor: the agent identity plus the user it acts as. */
+// The user is the write's attributed user (a GitHub login or service:<name>).
 const auditor = (ctx: ToolContext) => ({ agent: ctx.commit!.agent, ...(ctx.commit!.user ? { user: ctx.commit!.user } : {}) });
 const result = async (ctx: ToolContext, id: string, commits: string[], extra: Record<string, unknown> = {}) => {
   const { audit } = await ctx.storage.auditService.get(id);

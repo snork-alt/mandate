@@ -14,7 +14,7 @@ export const activityTools = [
     title: 'Activity feed',
     kind: 'read',
     description: `Events derived from commits, newest first: spec.* / standard.* (incl. section.* with word-diff preview), work_order.*, feedback.*, verification.recorded, git.pulled, commit.
-Filters: since (sha, exclusive, or ISO date; pass the returned head to backfill), until, types (exact or patterns like spec.*, *.created), agent, user (server mode), ref (a doc also matches its sections, work orders, feedback), includeHeartbeats. Paginated.
+Filters: since (sha, exclusive, or ISO date; pass the returned head to backfill), until, types (exact or patterns like spec.*, *.created), agent, user, ref (a doc also matches its sections, work orders, feedback), includeHeartbeats. Paginated.
 Example: {"ref":"mandate://specs/login-sso","limit":20}`,
     input: activityListInputSchema,
     run: (a, ctx) => needBus(ctx).list(a),

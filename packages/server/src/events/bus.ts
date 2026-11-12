@@ -19,7 +19,7 @@ import { deriveCommitEvents } from './derive.js';
 export interface ActivityFilter {
   types?: string[];
   agent?: string;
-  /** Server mode: only events triggered by this user. */
+  /** Only events triggered by this user. */
   user?: string;
   ref?: string;
   includeHeartbeats?: boolean;

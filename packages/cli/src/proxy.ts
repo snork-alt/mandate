@@ -1,5 +1,5 @@
 /**
- * Reverse-proxy snippets for server mode. MCP and live updates use SSE (long-lived streamed responses): buffering
+ * Reverse-proxy snippets for a team Mandate. MCP and live updates use SSE (long-lived streamed responses): buffering
  * must be off and read timeouts long, or agents see stalled tool calls and the UI stops updating.
  */
 
@@ -62,5 +62,5 @@ server {
 `;
 }
 
-/** SSH tunnel to reach a server-mode install safely before HTTPS is set up. */
+/** SSH tunnel to reach a team install safely before HTTPS is set up. */
 export const sshTunnel = (port: number, target = 'user@your-server') => `ssh -N -L ${port}:localhost:${port} ${target}`;

@@ -9,7 +9,6 @@ import { OAuthStore } from '../../src/auth/mcp-oauth.js';
 import { AuthStore } from '../../src/auth/sessions.js';
 import { DbIdempotencyStore } from '../../src/db/idempotency.js';
 import { importLegacyJson, ServerState } from '../../src/db/state.js';
-import { LocalLoginTokens } from '../../src/setup/files.js';
 import { describeBackends, useBackendCleanup } from './backends.js';
 
 useBackendCleanup();
@@ -98,16 +97,6 @@ describeBackends('server state', (b) => {
     const t3 = await o.issue(c.client_id, 'Octo', 'specs');
     await o.revokeUser('octo');
     expect(await o.access(t3.access_token)).toBeNull();
-  });
-
-  it('local login tokens are single use and expire', async () => {
-    const st = await open();
-    const l = new LocalLoginTokens(home(), st);
-    const t = await l.issue();
-    const [x, y] = await Promise.all([l.consume(t), l.consume(t)]);
-    expect([x, y].sort()).toEqual([false, true]);
-    expect(await l.consume(await l.issue(-1))).toBe(false);
-    expect(await l.consume(undefined)).toBe(false);
   });
 
   it('idempotency results replay per project for 24 h', async () => {

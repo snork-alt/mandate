@@ -1,7 +1,7 @@
 /**
- * User directory (server mode): GitHub login -> name, avatar URL and numeric id, recorded at sign-in (`users.json` in
- * the Mandate home, 0600). Other committers (never signed in here) fall back to GitHub's public avatar URL, so the
- * browser never calls the GitHub API. The id gives the GitHub noreply address for `Co-authored-by:` trailers
+ * User directory: GitHub login -> name, avatar URL and numeric id, recorded at sign-in (`users.json` in the Mandate
+ * home, 0600). Other committers (never signed in here) fall back to GitHub's public avatar URL, so the browser never
+ * calls the GitHub API. The id gives the GitHub noreply address for `Co-authored-by:` trailers
  * (`<id>+<login>@users.noreply.github.com`); private emails are never stored.
  */
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';

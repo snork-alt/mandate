@@ -10,7 +10,6 @@ import { callTool } from '../mcp/client';
 
 export interface DecisionAccess {
   canDecide: boolean;
-  mode: 'local' | 'server';
   user: string | null;
   override: { ok: boolean; why: string };
 }

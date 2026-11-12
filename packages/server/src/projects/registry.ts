@@ -3,11 +3,12 @@
  * conversations, idempotency store and integrity state. Runtimes are opened lazily on first use and cached.
  */
 import type { ProjectSettings } from './settings.js';
-import { mandateHome, type AppConfig, type ProjectConfig, type RemoteConfig } from '../config.js';
+import { mandateHome, type AppConfig, type GitBackendConfig, type ProjectConfig, type RemoteConfig } from '../config.js';
 import { ConversationStore } from '../ask/agent.js';
 import type { AskModelOverride } from '../ask/model.js';
 import { ActivityBus } from '../events/index.js';
 import { createGitStore, SubdirGitStore, type GitStore } from '../git/index.js';
+import { SwappableGitStore } from '../git/SwappableGitStore.js';
 import { AutoPusher, type PushGate } from '../git/autopush.js';
 import { IndexService, watchCommits } from '../index/service.js';
 import type { EmbeddingProvider } from '../index/embed/index.js';
@@ -18,6 +19,7 @@ import type { ServerState } from '../db/state.js';
 import { projectWriteLock } from '../db/write-lock.js';
 import { indexDb } from '../db/pg-index/mirror.js';
 import type { PostgresDb } from '../db/postgres.js';
+import { unwrapDb } from '../db/swappable.js';
 import { createStorage, MemoryHeartbeats, migrateWorkOrders, SqliteHeartbeats, type HeartbeatStore, type Storage } from '../storage/index.js';
 import { wiringResolver } from '../storage/code-repos.js';
 import { DocReadService } from '../storage/read.js';
@@ -34,7 +36,18 @@ export interface ProjectRuntime {
   autoPush?: AutoPusher;
   /** Base tool context of this project (sessions add their own state and principal). */
   ctx: ToolContext;
+  /**
+   * Prepare another git backend for this project (Settings → Git backend): the new store is created and opened now;
+   * `commit` swaps it in under the project's write lock (in-flight reads finish on the old store, which is then
+   * closed). Null when the backend settings did not change.
+   */
+  prepareGit?(next: GitBackendConfig): Promise<PreparedSwap | null>;
   close(): Promise<void>;
+}
+
+export interface PreparedSwap {
+  commit(): Promise<void>;
+  abort(): void;
 }
 
 /** Public summary of a project (no secrets: the remote URL is shown without credentials). */
@@ -172,11 +185,53 @@ export class ProjectRegistry {
     return all.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []));
   }
 
+  /**
+   * Apply new git backend settings (config.json `git.backend` / `git.cliPath`) to every project without a restart.
+   * All-or-nothing: every opened project's new store is prepared (opened) first; any failure keeps every project on its
+   * current backend and throws. Projects opened later use the new settings. Returns the ids that switched.
+   */
+  async reconfigureGit(next: ProjectConfig[]): Promise<string[]> {
+    const byNext = new Map(next.map((p) => [p.id, p]));
+    const before = new Map(this.byId);
+    for (const [id, cfg] of this.byId) {
+      const n = byNext.get(id);
+      if (n) this.byId.set(id, { ...cfg, git: n.git });
+    }
+    const prepared: { id: string; swap: PreparedSwap }[] = [];
+    try {
+      for (const rt of await this.opened()) {
+        const n = byNext.get(rt.config.id);
+        const swap = n && rt.prepareGit ? await rt.prepareGit(n.git) : null;
+        if (swap) prepared.push({ id: rt.config.id, swap });
+      }
+    } catch (e) {
+      for (const p of prepared) p.swap.abort();
+      for (const [id, cfg] of before) if (this.byId.has(id)) this.byId.set(id, cfg);
+      throw e;
+    }
+    for (const p of prepared) await p.swap.commit();
+    return prepared.map((p) => p.id);
+  }
+
+  /** Close every opened runtime and open it again (after the server-state database switched). */
+  async reopen(): Promise<string[]> {
+    const ids = [...this.runtimes.keys()];
+    for (const id of ids) {
+      const rt = this.runtimes.get(id);
+      this.runtimes.delete(id);
+      await rt?.then((r) => r.close()).catch(() => undefined);
+    }
+    await Promise.allSettled(ids.filter((id) => this.byId.has(id)).map((id) => this.open(id)));
+    return ids;
+  }
+
   async close(): Promise<void> {
     for (const r of await this.opened()) await r.close().catch(() => undefined);
     this.runtimes.clear();
   }
 }
+
+const gitSignature = (g: GitBackendConfig) => JSON.stringify([g.backend, g.cliPath ?? null, g.cliEnv ?? null]);
 
 export function redactUrl(url: string): string {
   return url.replace(/\/\/[^/@]*@/, '//***@');
@@ -205,15 +260,19 @@ export interface OpenerOptions {
   settings?: (p: ProjectConfig) => ProjectSettings;
   /** Server-state database: durable idempotency results live there (else a JSON file next to the index). */
   serverState?: ServerState;
-  /** Postgres: publish each project's index to its schema (`mandate_<id>`, or prefixed tables) and query it there. */
-  pgIndex?: { schemaPerProject: boolean | 'prefix' };
+  /**
+   * Postgres: publish each project's index to its schema (`mandate_<id>`, or prefixed tables) and query it there. A
+   * function is read at every open (the database can switch at runtime).
+   */
+  pgIndex?: { schemaPerProject: boolean | 'prefix' } | (() => { schemaPerProject: boolean | 'prefix' } | undefined);
 }
 
 /** The standard opener: git store, storage, index, activity feed and tool context from the app config. */
-export function projectOpener(app: Pick<AppConfig, 'embedding' | 'ask'>, o: OpenerOptions = {}): ProjectOpener {
+export function projectOpener(app: Pick<AppConfig, 'embedding' | 'ask'> & { publicUrl?: string }, o: OpenerOptions = {}): ProjectOpener {
   return async (p) => {
     const remote = p.remote ?? (p.github ? o.githubRemote?.(p) : undefined);
-    const repoGit = createGitStore({ ...p, ...(remote ? { remote } : {}) });
+    // Behind a switch so the backend can change at runtime (prepareGit).
+    const repoGit = new SwappableGitStore(createGitStore({ ...p, ...(remote ? { remote } : {}) }));
     // A project in a folder of a shared repo: storage paths are relative to the folder.
     const git: GitStore = p.github?.path ? new SubdirGitStore(repoGit, p.github.path) : repoGit;
     try {
@@ -240,7 +299,8 @@ export function projectOpener(app: Pick<AppConfig, 'embedding' | 'ask'>, o: Open
     }
     let index: IndexService | null = null;
     try {
-      const pgDb = o.pgIndex && o.serverState?.db.driver === 'postgres' ? indexDb(o.serverState.db as PostgresDb, p.id, o.pgIndex.schemaPerProject) : null;
+      const pgIndex = typeof o.pgIndex === 'function' ? o.pgIndex() : o.pgIndex;
+      const pgDb = pgIndex && o.serverState?.db.driver === 'postgres' ? indexDb(unwrapDb(o.serverState.db) as PostgresDb, p.id, pgIndex.schemaPerProject) : null;
       index = new IndexService({ git, storage, index: p.index, embedding: app.embedding, ...(pgDb ? { postgres: { db: pgDb, projectId: p.id } } : {}), ...(o.provider !== undefined ? { provider: o.provider } : {}), ...(o.log ? { log: o.log as never } : {}) });
       const idx = index;
       watchCommits(git, (why) => idx.schedule(why));
@@ -296,14 +356,14 @@ export function projectOpener(app: Pick<AppConfig, 'embedding' | 'ask'>, o: Open
       ...(idempotency ? { idempotency } : {}),
       ...(o.askModel ? { askModel: o.askModel } : {}),
       ...(o.settings ? { settings: o.settings(p) } : {}),
-      // Local mode only: code repos wired to this project with `mandate connect` (work_order_touch_from_commits).
-      ...(o.settings?.(p).mode !== 'server' ? { codeRepos: wiringResolver(mandateHome(), p.id) } : {}),
+      // Mandate on this computer only (a loopback URL): code repos wired with `mandate connect` (work_order_touch_from_commits).
+      ...(/^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(app.publicUrl ?? 'http://localhost') ? { codeRepos: wiringResolver(mandateHome(), p.id) } : {}),
     };
     if (index && o.startIndex !== false) {
       o.log?.info(`project '${p.id}': data dir ${p.dataDir}; index ${p.index.path}`);
       index.start().catch((e: Error) => o.log?.error(`project '${p.id}': index sync failed: ${e.message}`));
     }
-    return {
+    const rt: ProjectRuntime = {
       config: p,
       git,
       storage,
@@ -311,6 +371,30 @@ export function projectOpener(app: Pick<AppConfig, 'embedding' | 'ask'>, o: Open
       activity,
       autoPush,
       ctx,
+      async prepareGit(nextGit) {
+        if (gitSignature(nextGit) === gitSignature(rt.config.git)) return null;
+        const store = createGitStore({ ...rt.config, git: nextGit, ...(remote ? { remote } : {}) });
+        const closeStore = () => (store as { close?: () => void }).close?.();
+        try {
+          await store.open();
+          await store.head();
+        } catch (e) {
+          closeStore();
+          throw new Error(`project '${p.id}': the git backend "${nextGit.backend}"${nextGit.backend === 'cli' ? ` (${nextGit.cliPath ?? 'git'})` : ''} cannot open ${p.dataDir}: ${(e as Error).message}`);
+        }
+        return {
+          abort: closeStore,
+          async commit() {
+            // The write lock drains in-flight writes; reads already running finish on the old store (closed after).
+            await storage.lock.run(async () => {
+              void repoGit.swap(store);
+            });
+            rt.config = { ...rt.config, git: nextGit };
+            o.log?.info(`project '${p.id}': git backend now ${nextGit.backend}`);
+            integrity.scheduleSync();
+          },
+        };
+      },
       async close() {
         autoPush.stop();
         storage.integrity.stop();
@@ -319,5 +403,6 @@ export function projectOpener(app: Pick<AppConfig, 'embedding' | 'ask'>, o: Open
         heartbeats.close?.();
       },
     };
+    return rt;
   };
 }

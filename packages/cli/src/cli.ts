@@ -14,12 +14,12 @@ import { c, fail, Prompter, stdout, type Out } from './ui.js';
 export const HELP = `${c.bold('mandate')} ${c.dim(`v${PKG_VERSION}`)} — specifications for coding agents
 
 ${c.bold('Get started')}
-  npx ${PKG_NAME} install        set up Mandate (local by default) and open it
+  npx ${PKG_NAME} install        set up Mandate (GitHub sign-in) and open the wizard
   ${BIN} connect                 in a code repo: link it to a Mandate project for your agents
 
 ${c.bold('Commands')}
   agents [--json]                  coding agents: detected, supported (MCP / skills / commands), installed
-  install [--mode local|server] [--yes] [--public-url URL] [--port N] [--bind ADDR]
+  install [--yes] [--public-url URL] [--port N] [--bind ADDR]
           [--behind-proxy|--no-behind-proxy] [--no-service] [--no-open] [--no-agents]
           [--agents a,b] [--agents-only] [--no-global] [--dry-run]
   connect [--project <id>] [--url <server>] [--agents a,b] [--remove] [--dry-run]

@@ -198,7 +198,7 @@ export interface Approval {
 /**
  * Approval policy (user decision): the feedback behind a waiver, exemption or criteria removal must be filed AND accepted
  * by someone other than its writer (`waiver_self_approved`), unless the acceptance carries an approval override
- * (feedback_accept override: true + overrideReason; only the sole active user, an admin, or local mode). The switch
+ * (feedback_accept override: true + overrideReason; only the sole active user or an admin). The switch
  * exists for tests only.
  */
 export const waiverPolicy = { acceptorMustDiffer: true };
@@ -216,7 +216,7 @@ export function approval(a: Approval, m: Model): WaiverState {
   if (!ok) return { effective: false, reason: 'not_accepted', feedback: a.feedback };
   // An approval override (recorded, warned on by integrity) lets the accepter approve its own waiver.
   if (fb.approvalOverride && a.by) return { effective: true, feedback: a.feedback };
-  // MW-2: principals, not client strings: the user (server mode) else the agent identity, trimmed and case-folded.
+  // MW-2: principals, not client strings: the user else the agent identity, trimmed and case-folded.
   const author = m.feedbackAuthor?.(fb.id) ?? fb.createdByUser ?? fb.createdBy ?? null;
   if (!a.by || !author || samePrincipal(author, a.by)) return { effective: false, reason: 'same_author', feedback: a.feedback };
   // The acceptance must come from someone other than the writer of the waiver as well.

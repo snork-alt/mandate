@@ -154,7 +154,7 @@ export const EXAMPLE_QUERIES: { question: string; query: string }[] = [
   },
   { question: 'Sections blocked by another section (depends_on links)', query: 'MATCH (s:Section)-[:DEPENDS_ON]->(b:Section) RETURN s.ref AS blocked, b.ref AS blocker' },
   { question: 'Spec dependency cycles (derived document-level spec_depends_on)', query: 'MATCH p = (a:Spec)-[:SPEC_DEPENDS_ON*1..5]->(a) RETURN a.ref, length(p) AS hops LIMIT 10' },
-  { question: 'Work orders acting on feedback, with who filed it (server mode)', query: 'MATCH (w:WorkOrder)-[:ACTS_ON]->(f:Feedback) OPTIONAL MATCH (f)-[:FILED_BY]->(u:User) RETURN w.ref, f.ref, u.login' },
+  { question: 'Work orders acting on feedback, with who filed it', query: 'MATCH (w:WorkOrder)-[:ACTS_ON]->(f:Feedback) OPTIONAL MATCH (f)-[:FILED_BY]->(u:User) RETURN w.ref, f.ref, u.login' },
   { question: 'Spec sections a work order covers (through its sections)', query: 'MATCH (w:WorkOrder {ref: $ref})-[:HAS_SECTION]->(ws:Section)-[c:COVERS]->(s:Section) RETURN ws.ref, c.status, s.ref' },
   {
     question: 'Acceptance criteria without a passing verification, for specs using security-baseline',

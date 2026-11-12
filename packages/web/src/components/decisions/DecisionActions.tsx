@@ -167,7 +167,7 @@ const ICON: Record<DialogRequest['type'], ReactNode> = {
   snooze: <IconMoonStars size={14} />,
 };
 
-/** Why direct actions are unavailable (server mode without write access), or null. */
+/** Why direct actions are unavailable (no write access to the repository), or null. */
 export function useActionBlock(): string | null {
   const d = useDecisionDialogs();
   if (!d) return 'Unavailable here';

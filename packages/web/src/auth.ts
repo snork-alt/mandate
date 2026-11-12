@@ -1,6 +1,6 @@
 /**
- * Web UI auth (always on): the UI signs in with GitHub OAuth (server-set HttpOnly cookie) and stays read-only; coding
- * agents use per-project bearer keys. Until GitHub sign-in is configured, the UI shows the setup page.
+ * Web UI auth (always on): the UI signs in with GitHub (server-set HttpOnly cookie) and stays read-only; coding agents
+ * sign in per user (MCP OAuth or personal tokens). Until GitHub sign-in is configured, the UI shows the setup wizard.
  */
 import { createContext, useContext } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -9,8 +9,7 @@ export interface AuthUser {
   login: string;
   name?: string;
   avatarUrl: string;
-  /** `local`: signed in with a one-time link from `getmandate open`. */
-  kind?: 'github' | 'local';
+  kind?: 'github';
 }
 
 export interface AuthStatus {
@@ -27,17 +26,12 @@ export interface AuthStatus {
   setup?: { complete: boolean; inSetupMode: boolean };
   /** This browser holds a valid setup cookie (from `getmandate setup-url`). */
   setupAccess?: boolean;
-  /**
-   * `local`: this machine (projects folder, one-time local sign-in link, no GitHub); `server`: a remote server (GitHub
-   * sign-in with an allow-list, projects from GitHub repos).
-   */
-  mode?: 'local' | 'server';
-  /** Public URL of a server-mode instance (agents' MCP URLs). */
+  /** Public URL (agents' MCP URLs; http://localhost:<port> on this computer). */
   publicUrl?: string | null;
-  /** Pre-mode config with GitHub sign-in (behaves like server mode on localhost). */
+  /** An older OAuth App install: the sign-in allow-list decides (no per-repo permissions). */
   legacy?: boolean;
   isAdmin?: boolean;
-  /** Explicit server mode: per-project access comes from GitHub repo permissions (read / push). */
+  /** Per-project access comes from GitHub repo permissions (read / push). */
   repoAuth?: boolean;
 }
 
@@ -102,6 +96,3 @@ export const useAuth = () => useContext(AuthContext);
 
 /** CLI hints: the published package and, in development, the workspace script. */
 export const cli = (args: string) => ({ npx: `npx getmandate ${args}`, dev: `npm run mandate -- ${args}` });
-
-/** Local mode = this machine, no GitHub. Legacy configs (GitHub, no mode) behave like server mode. */
-export const isLocalMode = (s: AuthStatus | null | undefined) => s?.mode === 'local';

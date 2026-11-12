@@ -5,7 +5,7 @@
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx watch --include dev-restart.signal src/index.ts --restart-signal=dev-restart.signal",
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -41,5 +41,6 @@
     "@types/pg": "8.23.1",
     "fast-check": "^4.10.2",
     "tsx": "^4.23.15"
-  }
+  },
+  "license": "FSL-1.1-ALv2"
 }

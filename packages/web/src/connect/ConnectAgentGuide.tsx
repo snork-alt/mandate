@@ -6,6 +6,7 @@ import { redirectToLogin, useAuth } from '../auth';
 import { copyText } from '../lib/copy';
 import { Recommended } from '../setup/widgets';
 import { OAuthConnect } from './OAuthConnect';
+import { InstallOneLiner } from './InstallOneLiner';
 import { agentGuides, urlReachNote, connectCommand, devApiPort, FIRST_PROMPT, genericSnippet, keyEnvVar, maskKey, mcpUrlFor, type Snippet } from './snippets';
 
 /** `GET /ui/p/<id>/connect` (signed-in UI session only). */
@@ -15,9 +16,9 @@ export interface ConnectInfo {
   key: { id: string; name: string; value: string; masked?: string; createdAt: string } | null;
   keysFile: string | null;
   cli: { create: string; list: string; revoke: string };
-  /** Server mode (`oauth`): agents sign in with GitHub or use personal tokens; `key` is null. */
+  /** A team (`oauth`): agents sign in with GitHub or use personal tokens; `key` is null. */
   auth?: 'oauth' | 'key';
-  /** Absolute public MCP URL (server mode). */
+  /** Absolute public MCP URL (team). */
   mcpUrl?: string;
   access?: 'read' | 'write';
 }
@@ -32,11 +33,11 @@ export async function fetchConnect(projectId: string): Promise<ConnectInfo> {
   return (await res.json()) as ConnectInfo;
 }
 
-/** The project's MCP URL as agents reach it: the public URL in server mode, the API port in development. */
+/** The project's MCP URL as agents reach it: a team's public URL, the API port in development. */
 export function useMcpUrl(mcpPath: string | undefined): string {
   const auth = useAuth();
   if (!mcpPath) return '';
-  if (auth?.mode === 'server' && auth.publicUrl) return `${auth.publicUrl.replace(/\/+$/, '')}${mcpPath}`;
+  if (auth?.publicUrl && !/^https?:\/\/(localhost|127\.0\.0\.1)(:|$)/.test(auth.publicUrl)) return `${auth.publicUrl.replace(/\/+$/, '')}${mcpPath}`;
   return mcpUrlFor(window.location, mcpPath, devApiPort());
 }
 
@@ -86,7 +87,13 @@ export function ConnectAgentGuide({ projectId, compact }: { projectId: string; c
         {(info.error as Error)?.message ?? 'Cannot load the connection details'}
       </Alert>
     );
-  if (d.auth === 'oauth') return <OAuthConnect projectId={projectId} url={url} access={d.access} />;
+  if (d.auth === 'oauth')
+    return (
+      <div className="cg" data-testid="connect-guide">
+        <InstallOneLiner projectId={projectId} mcpUrl={url} />
+        <OAuthConnect projectId={projectId} url={url} access={d.access} />
+      </div>
+    );
   const key = d.key?.value ?? '<key>';
   const shown = d.key ? (revealed ? key : d.key.masked || maskKey(key)) : '<key>';
   const real = { project: projectId, url, key };
@@ -97,6 +104,7 @@ export function ConnectAgentGuide({ projectId, compact }: { projectId: string; c
 
   return (
     <div className="cg" data-testid="connect-guide">
+      <InstallOneLiner projectId={projectId} mcpUrl={url} />
       <div className="cg-grid">
         <TextInput
           label="MCP URL"
@@ -113,9 +121,9 @@ export function ConnectAgentGuide({ projectId, compact }: { projectId: string; c
           <TextInput
             label={
               <Group gap={6} component="span">
-                <IconKey size={13} /> Key{' '}
+                <IconKey size={13} /> Your personal token{' '}
                 <Text span size="xs" c="dimmed">
-                  ({d.key.name})
+                  (key {d.key.name}; your agents act as you)
                 </Text>
               </Group>
             }
@@ -145,7 +153,7 @@ export function ConnectAgentGuide({ projectId, compact }: { projectId: string; c
           </Alert>
         )}
       </div>
-      {auth?.mode === 'server' && (
+      {auth?.publicUrl && !/^https?:\/\/(localhost|127\.0\.0\.1)(:|$)/.test(auth.publicUrl) && (
         <Text size="xs" className="np-muted">
           {urlReachNote(url, true)}
         </Text>
@@ -155,9 +163,8 @@ export function ConnectAgentGuide({ projectId, compact }: { projectId: string; c
         <div className="cg-rec-head">
           <IconTerminal2 size={16} />
           <Text fw={600} size="sm">
-            Connect with the Mandate CLI
+            Or, in a repo on this machine, the Mandate CLI
           </Text>
-          <Recommended />
         </div>
         <Text size="sm" className="np-muted">
           Run it in the code repository your agent works in. It registers this MCP server with the coding agents it finds (Claude Code, Codex, Cursor, …), installs the Mandate skill and slash

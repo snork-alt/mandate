@@ -4,9 +4,11 @@ import path from 'node:path';
 import type { GitCommitInfo, GitFileStatus, GitStatus } from '@mandate/shared';
 import type { RemoteConfig } from '../config.js';
 import { CatFile } from './cli/CatFile.js';
-import { checkGitCli, GitCliError, runGit, type RunResult } from './cli/exec.js';
+import { checkGitCli, GitCliError, redact, runGit, type RunResult } from './cli/exec.js';
 import type { EsGitStoreOptions } from './EsGitStore.js';
 import type { CommitDiff, CommitOptions, FileCommit, GitStore } from './GitStore.js';
+import { commitAuthor, type Identity } from './author.js';
+import { onAuthFailure, resolveRemoteAuth, scrubbed } from './remote-auth.js';
 
 export interface CliGitStoreOptions extends EsGitStoreOptions {
   /** git binary (default `git` on PATH). */
@@ -168,9 +170,13 @@ export class CliGitStore implements GitStore {
     return (await this.git(args, { read: true, ...o })).stdout.toString('utf8');
   }
 
-  /** `-c`/env for network commands: SSH key or HTTPS token from config, else the user's own git setup. */
-  private networkOpts(): { config: string[]; env: Record<string, string>; secrets: (string | undefined)[]; network: true } {
-    const auth = this.remote?.auth;
+  /**
+   * `-c`/env for network commands: SSH key, HTTPS token or GitHub App installation token (minted / cached just before),
+   * else the user's own git setup. Tokens reach git only through the credential helper below, which reads them from
+   * the child's environment: never argv, the remote URL, config files or logs.
+   */
+  private async networkOpts(): Promise<{ config: string[]; env: Record<string, string>; secrets: (string | undefined)[]; network: true }> {
+    const auth = await resolveRemoteAuth(this.remote?.auth);
     const config: string[] = [];
     const env: Record<string, string> = {};
     const secrets: (string | undefined)[] = [];
@@ -192,6 +198,16 @@ export class CliGitStore implements GitStore {
     }
     // ssh-agent / no auth: defer to the user's ssh config, agent and credential helpers.
     return { config, env, secrets, network: true };
+  }
+
+  /** A network command: a rejected App token is dropped from the cache; secrets never survive in the error. */
+  private async net<T>(secrets: (string | undefined)[], fn: () => Promise<T>): Promise<T> {
+    try {
+      return await fn();
+    } catch (e) {
+      onAuthFailure(this.remote?.auth, e);
+      throw scrubbed(e, secrets);
+    }
   }
 
   private objects(): CatFile {
@@ -307,6 +323,11 @@ export class CliGitStore implements GitStore {
     if (this.remote) {
       const { code } = await this.git(['config', '--get', `remote.${REMOTE_NAME}.url`], { read: true, okCodes: [1] });
       if (code === 1) await this.git(['remote', 'add', '--', REMOTE_NAME, this.remote.url]);
+      // GitHub App remotes: keep `origin` on the plain HTTPS URL (an older clone may point at git@github.com:...).
+      else if (this.remote.auth?.type === 'github-app') {
+        const cur = (await this.out(['config', '--get', `remote.${REMOTE_NAME}.url`])).trim();
+        if (cur !== this.remote.url) await this.git(['remote', 'set-url', '--', REMOTE_NAME, this.remote.url]);
+      }
     }
     await this.afterOpen();
   }
@@ -315,8 +336,8 @@ export class CliGitStore implements GitStore {
     if (!this.remote) throw new Error('No remote configured');
     const parent = path.dirname(this.dir);
     await mkdir(parent, { recursive: true });
-    const net = this.networkOpts();
-    await this.git(['clone', '--quiet', '--no-recurse-submodules', '--', this.remote.url, this.dir], { ...net, cwd: parent });
+    const net = await this.networkOpts();
+    await this.net(net.secrets, () => this.git(['clone', '--quiet', '--no-recurse-submodules', '--', this.remote!.url, this.dir], { ...net, cwd: parent }));
     await this.afterOpen();
     // Cloning an empty remote: point HEAD at the configured branch (as EsGitStore does).
     if (!(await this.head())) await this.git(['symbolic-ref', 'HEAD', `refs/heads/${this.branch}`]);
@@ -485,8 +506,13 @@ export class CliGitStore implements GitStore {
 
   /* ------------------------------------------------------------------ writes */
 
-  private identity(who = this.author): string[] {
-    return ['user', 'author', 'committer'].flatMap((k) => ['-c', `${k}.name=${who.name}`, '-c', `${k}.email=${who.email}`]);
+  /** Committer = Mandate (`git.author`); author = `author` when given (the triggering user), else Mandate too. */
+  private identity(author: Identity = this.author): string[] {
+    const who = this.author;
+    return [
+      ...['user', 'committer'].flatMap((k) => ['-c', `${k}.name=${who.name}`, '-c', `${k}.email=${who.email}`]),
+      ...['-c', `author.name=${author.name}`, '-c', `author.email=${author.email}`],
+    ];
   }
 
   /** `git commit` of the current index with the message stored byte-for-byte (trailers included). */
@@ -498,7 +524,7 @@ export class CliGitStore implements GitStore {
       env.GIT_COMMITTER_DATE = stamp;
     }
     await this.git(['commit', '--quiet', '--no-verify', '--allow-empty', '--allow-empty-message', '--cleanup=verbatim', '--no-edit', '--file=-'], {
-      config: this.identity(options.author),
+      config: this.identity(commitAuthor(message, options.author) ?? this.author),
       env,
       input: message,
     });
@@ -525,7 +551,8 @@ export class CliGitStore implements GitStore {
   async fetch(): Promise<void> {
     if (!this.remote) return;
     this.ensureOpen();
-    await this.git(['fetch', '--quiet', '--no-recurse-submodules', '--', REMOTE_NAME], this.networkOpts());
+    const net = await this.networkOpts();
+    await this.net(net.secrets, () => this.git(['fetch', '--quiet', '--no-recurse-submodules', '--', REMOTE_NAME], net));
   }
 
   private async isAncestor(a: string, b: string): Promise<boolean> {
@@ -584,10 +611,13 @@ export class CliGitStore implements GitStore {
       if (!(await this.head())) return; // nothing to push yet
       const branch = (await this.currentBranch()) ?? this.branch;
       // Explicit non-forcing refspec: the data repo is append-only, rejected pushes are errors.
-      const res = await this.git(['push', '--porcelain', '--no-verify', '--', REMOTE_NAME, `refs/heads/${branch}:refs/heads/${branch}`], {
-        ...this.networkOpts(),
-        okCodes: [1],
-      });
+      const net = await this.networkOpts();
+      const res = await this.net(net.secrets, () =>
+        this.git(['push', '--porcelain', '--no-verify', '--', REMOTE_NAME, `refs/heads/${branch}:refs/heads/${branch}`], {
+          ...net,
+          okCodes: [1],
+        }),
+      );
       const rejections = res.stdout
         .toString()
         .split('\n')
@@ -597,7 +627,12 @@ export class CliGitStore implements GitStore {
           return `${refs.split(':')[1] ?? refs}: ${summary}`;
         });
       if (rejections.length) throw new Error(`Push rejected: ${rejections.join(', ')}`);
-      if (res.code !== 0) throw new GitCliError(`git push failed: ${res.stderr.trim()}`, 'git push', res.code, res.stderr);
+      if (res.code !== 0) {
+        const stderr = redact(res.stderr.toString().trim(), net.secrets);
+        const err = new GitCliError(`git push failed: ${stderr}`, 'git push', res.code, stderr);
+        onAuthFailure(this.remote?.auth, err);
+        throw err;
+      }
     });
   }
 }

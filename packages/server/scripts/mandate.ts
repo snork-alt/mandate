@@ -1,6 +1,6 @@
 /**
  * `npm run mandate -- key create <project> [--name <name>] [--service <name>]` | `key list` | `key revoke <key-id>`
- *   (`--service <name>`: a named service account for CI, the only kind of shared key server mode accepts; its writes
+ *   (`--service <name>`: a named service account for CI, the only kind of project key a team accepts; its writes
  *   are attributed to `service:<name>`)
  * `npm run mandate -- doctor [project]`: who wrote recently (user / agent / credential), unattributed and service writes.
  * `npm run mandate -- session create <github-login> [--ttl-minutes 60]`: a web UI session for headless checks (prints the
@@ -20,7 +20,7 @@ import { projectIntegrity } from '../src/storage/doctor.js';
 import path from 'node:path';
 import { AuthStore, loadServerSecret, writeSecretJson } from '../src/auth/sessions.js';
 import { SESSION_COOKIE } from '../src/auth/http.js';
-import { LocalLoginTokens, SetupState } from '../src/setup/files.js';
+import { preconfigured, SetupState } from '../src/setup/files.js';
 import { openConfiguredState, type ServerState } from '../src/db/state.js';
 import { DEFAULT_DATABASE_CONFIG, openServerDb, redactUrl, resolveDatabase, SqliteDb } from '../src/db/index.js';
 import { copyServerState } from '../src/db/copy.js';
@@ -50,22 +50,18 @@ async function run(argv: string[], env: NodeJS.ProcessEnv, out: (s: string) => v
     // The UI URL: server.publicUrl, or MANDATE_UI_URL (development: http://localhost:5173, the Vite proxy).
     const ui = (env.MANDATE_UI_URL || config.publicUrl).replace(/\/+$/, '');
     if (group === 'setup-url') {
-      const setup = new SetupState(config.home, () => config.legacyMode || (config.mode === 'server' && !!config.auth.github?.clientId));
+      const setup = new SetupState(config.home, () => preconfigured(config));
       const token = setup.token();
       if (!token) {
         out('Setup is already complete; change settings in the web UI (Settings).');
         return 0;
       }
       out(`${ui}/auth/setup?token=${token}`);
-      out(config.mode === 'server' ? '# one-time setup link: open it over HTTPS, or through an SSH tunnel (ssh -L 4000:localhost:4000 <server>) until HTTPS works' : '# one-time setup link (works on this machine only)');
+      out('# one-time setup link: on this machine, or over HTTPS / an SSH tunnel (ssh -L 4000:localhost:4000 <server>)');
       return 0;
     }
-    if (config.mode !== 'local') {
-      out(`\`open\` signs you in in local mode only; this server uses GitHub sign-in: ${ui}`);
-      return 1;
-    }
-    out(`${ui}/auth/local?token=${await new LocalLoginTokens(config.home, await stateOf(config)).issue()}`);
-    out('# one-time sign-in link, valid 5 minutes, this machine only');
+    // Sign-in is always GitHub: `open` prints the UI address.
+    out(ui);
     return 0;
   }
   if (group === 'doctor') {
@@ -88,16 +84,12 @@ async function run(argv: string[], env: NodeJS.ProcessEnv, out: (s: string) => v
           return { id: id!, author: author!, date: date!, message: message ?? '' };
         });
     };
-    const w = await recentWriters({ log } as never, config.mode, 500);
-    out(`mode: ${config.mode}${config.legacyMode ? ' (legacy: shared project keys still accepted)' : ''}; project ${id}; last ${w.scanned} commits`);
-    if (config.mode === 'local') out('local mode: writes are attributed to the coding agent only (no user).');
-    if (config.legacyMode) out('legacy install (auth.github without server.mode): treated as server mode for agent auth; set "server": { "mode": "server" } in config.json to make it explicit.');
-    if (config.mode === 'server') {
-      // Agent configs on this machine that still send a shared project key (refused in server mode).
-      for (const f of sharedKeyConfigs(env)) out(`warning: ${f.file} uses a shared project key (${f.masked}); this server refuses it. Re-run \`mandate connect\` (MCP sign-in, or a personal token from the Connect dialog); CI: mandate key create <project> --service <name>`);
-    }
-    else out(`unattributed (no user): ${w.unattributed}; service accounts: ${w.service}`);
-    for (const r of w.writers.slice(0, 30)) out(`${(r.user ?? (config.mode === 'server' ? '(no user)' : '-')).padEnd(24)} via ${(r.agent ?? '?').padEnd(28)} ${(r.source ?? '').padEnd(22)} ${String(r.commits).padStart(5)} commits  last ${r.last}`);
+    const w = await recentWriters({ log } as never, 500);
+    out(`GitHub sign-in${config.legacyAuth ? ' (OAuth App, sign-in allow-list)' : ''}; project ${id}; last ${w.scanned} commits`);
+    // Agent configs on this machine that still send a project key (refused: per-user access).
+    for (const f of sharedKeyConfigs(env)) out(`warning: ${f.file} uses a shared project key (${f.masked}); this server refuses it. Re-run \`mandate connect\` (MCP sign-in, or a personal token from the Connect dialog); CI: mandate key create <project> --service <name>`);
+    out(`unattributed (no user): ${w.unattributed}; service accounts: ${w.service}`);
+    for (const r of w.writers.slice(0, 30)) out(`${(r.user ?? '(no user)').padEnd(24)} via ${(r.agent ?? '?').padEnd(28)} ${(r.source ?? '').padEnd(22)} ${String(r.commits).padStart(5)} commits  last ${r.last}`);
     const report = await projectIntegrity({ dataDir: p.dataDir, branch: p.branch, git: p.git, github: p.github }).catch((e: Error) => (out(`integrity: cannot lint (${e.message})`), null));
     if (report) {
       const warnings = report.issues.filter((i) => i.severity === 'warning').length;

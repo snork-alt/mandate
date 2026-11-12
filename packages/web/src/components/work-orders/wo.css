@@ -80,6 +80,8 @@
 .wo-tree-sec:hover { text-decoration: underline; }
 .wo-touched-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .wo-touched-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; }
+/* Extra spans (more ranges, renamed-from path) truncate instead of wrapping one character per line. */
+.wo-touched-chip > .mono { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* git */
 .wo-git { display: flex; flex-direction: column; gap: 10px; font-size: 13px; }

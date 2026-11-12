@@ -7,7 +7,7 @@ import { APP_NAME } from '../components/Logo';
 import { UiApiError } from '../lib/ui';
 import { goTo } from '../project';
 import { useSetupState, type SetupState } from './api';
-import { AskSection, configChangedMessage, GitSection, GithubSection, ModeSection, ProjectsFolderSection, SearchSection, ServerInfo, type Saver, type SectionProps } from './sections';
+import { AccessSection, AskSection, configChangedMessage, GitSection, GithubSection, SearchSection, ServerInfo, AddressSection, type Saver, type SectionProps } from './sections';
 import { SetupShell } from './SetupWizard';
 import { AgentFlowSection } from './AgentFlowSection';
 import { WritersSection } from './WritersSection';
@@ -21,28 +21,18 @@ interface Entry {
   instant?: boolean;
 }
 
-const sectionsFor = (s: SetupState): Entry[] =>
-  s.config.server.mode === 'local'
-    ? [
-        { id: 'mode', label: 'Mode', Section: ModeSection, instant: true },
-        { id: 'folder', label: 'Projects folder', Section: ProjectsFolderSection },
-        { id: 'git', label: 'Git', Section: GitSection },
-        { id: 'ask', label: 'Ask models', Section: AskSection },
-        { id: 'search', label: 'Semantic search', Section: SearchSection },
-        { id: 'flow', label: 'Agent flow', Section: AgentFlowSection, instant: true },
-        { id: 'writers', label: 'Recent writers', Section: WritersSection, instant: true },
-      ]
-    : [
-        { id: 'mode', label: 'Mode', Section: ModeSection, instant: true },
-        { id: 'github', label: 'GitHub sign-in', Section: GithubSection },
-        { id: 'git', label: 'Git', Section: GitSection },
-        { id: 'ask', label: 'Ask models', Section: AskSection },
-        { id: 'search', label: 'Semantic search', Section: SearchSection },
-        { id: 'flow', label: 'Agent flow', Section: AgentFlowSection, instant: true },
-        { id: 'writers', label: 'Recent writers', Section: WritersSection, instant: true },
-        // Advanced: the server-state backend (SQLite default, Postgres for several instances).
-        { id: 'database', label: 'Database (advanced)', Section: DatabaseSection },
-      ];
+const sectionsFor = (_s: SetupState): Entry[] => [
+  { id: 'github', label: 'GitHub', Section: GithubSection },
+  { id: 'access', label: 'Who may sign in', Section: AccessSection },
+  { id: 'git', label: 'Git', Section: GitSection },
+  { id: 'ask', label: 'Ask models', Section: AskSection },
+  { id: 'search', label: 'Semantic search', Section: SearchSection },
+  { id: 'flow', label: 'Agent flow', Section: AgentFlowSection, instant: true },
+  { id: 'writers', label: 'Recent writers', Section: WritersSection, instant: true },
+  // Advanced: the server address (proxies, domains) and the server-state backend (SQLite default, Postgres).
+  { id: 'address', label: 'Server address (advanced)', Section: AddressSection, instant: true },
+  { id: 'database', label: 'Database (advanced)', Section: DatabaseSection },
+];
 
 function SettingsCard({ entry, state }: { entry: Entry; state: SetupState }) {
   const qc = useQueryClient();
@@ -90,7 +80,7 @@ function SettingsCard({ entry, state }: { entry: Entry; state: SetupState }) {
   );
 }
 
-/** `/settings`: the setup sections, editable later (admins). Shows only what applies to the current mode. */
+/** `/settings`: the setup sections, editable later (admins). */
 export function SettingsPage() {
   const auth = useAuth();
   const state = useSetupState();

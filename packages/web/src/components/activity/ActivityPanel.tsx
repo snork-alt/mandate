@@ -213,5 +213,5 @@ function defaultBody(e: ActivityEvent): ReactNode {
   ) : null;
 }
 
-/** "<user> via <agent>" (server mode only), else "via <agent>"; local mode never names a user. */
+/** "<user> via <agent>", else "via <agent>" (older agent-only commits). */
 export const actorLabel = (e: { agent?: string; user?: string }, showUsers = false) => attributionText(e, showUsers);

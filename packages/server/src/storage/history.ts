@@ -46,7 +46,7 @@ export function toHistoryEntry(c: FileCommit): HistoryEntry {
   };
 }
 
-/** Who made a commit: the user (server mode trailers only) and the agent (else the commit author). */
+/** Who made a commit: the user (`Mandate-User` trailer) and the agent (else the commit author). */
 export function attributionOf(e: HistoryEntry): Attribution {
   return { ...(e.user ? { user: e.user } : {}), agent: e.agent ?? e.author, at: e.date, commit: e.commit };
 }

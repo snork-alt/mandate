@@ -15,6 +15,7 @@ import type { ResolvedDatabase } from './config.js';
 import { openServerDb } from './index.js';
 import { migrate, type Migration } from './migrate.js';
 import { SqliteDb } from './sqlite.js';
+import { SwappableDb } from './swappable.js';
 import type { Db, Dialect, Queryable } from './types.js';
 
 const schemaV1 = (d: Dialect) => {
@@ -139,11 +140,38 @@ export function useServerState(home: string, state: ServerState | Promise<Server
 export async function openConfiguredState(database: ResolvedDatabase, home: string): Promise<ServerState> {
   const db = await openServerDb(database);
   try {
-    return await ServerState.open(db, { home });
+    // Behind a switch: Settings → Database applies without a restart (switchServerDatabase).
+    return await ServerState.open(new SwappableDb(db), { home });
   } catch (e) {
     await db.close().catch(() => undefined);
     throw e;
   }
+}
+
+/**
+ * Hot switch of the server-state database (Settings → Database): open the new adapter and verify it (a query plus the
+ * migrations and the one-time legacy import), then swap it in (new writes wait while in-flight ones drain) and close
+ * the old one. Any failure before the swap closes the new adapter and leaves the old one in place. Server state is not
+ * copied between backends (people sign in again; `mandate db copy` copies it).
+ */
+export async function switchServerDatabase(state: ServerState, open: () => Promise<Db>, opts: { home?: string; drainTimeoutMs?: number } = {}): Promise<void> {
+  if (!(state.db instanceof SwappableDb)) throw new Error('this server state cannot switch databases at runtime');
+  const next = await open();
+  try {
+    await next.get('SELECT 1 AS ok');
+    await ServerState.open(next, opts.home ? { home: opts.home } : {});
+  } catch (e) {
+    await next.close().catch(() => undefined);
+    throw e;
+  }
+  let old: Db;
+  try {
+    old = await state.db.swap(next, opts.drainTimeoutMs);
+  } catch (e) {
+    await next.close().catch(() => undefined);
+    throw e;
+  }
+  await old.close().catch(() => undefined);
 }
 
 /** Close and forget every per-home state (tests). */

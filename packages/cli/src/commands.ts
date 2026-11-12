@@ -4,10 +4,11 @@ import { closeSync, existsSync, openSync, readFileSync, readSync, statSync, watc
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { bool, str, type Args } from './args.js';
+import { supervise } from './supervisor.js';
 import { BIN, configFile, envFile, keysFile, logFile, PKG_NAME, PKG_ROOT, PKG_VERSION, SERVER_ENTRY, type Ctx } from './context.js';
 import { currentService, platformService, serviceSpec, type ServiceManager } from './service.js';
-import { health, localSignInUrl, setupState, setupUrl, waitHealthy } from './serverlink.js';
-import { readSettings, type CurrentSettings } from './settings.js';
+import { health, setupState, setupUrl, waitHealthy } from './serverlink.js';
+import { readSettings, savePort, type CurrentSettings } from './settings.js';
 import { c, fail, info, ok, spinner, warn, type Out } from './ui.js';
 import { AGENTS, detectAgents, envVarFor } from './agents.js';
 import { listProjects, rcFiles } from './wiring.js';
@@ -38,7 +39,16 @@ export function openBrowser(ctx: Ctx, url: string): boolean {
 
 export async function cmdStart(ctx: Ctx, a: Args, out: Out): Promise<number> {
   const port = str(a, 'port');
-  if (port) ctx.env.MANDATE_PORT = port;
+  if (port) {
+    const n = Number(port);
+    if (!Number.isInteger(n) || n < 1 || n > 65535) {
+      out.err(fail(`invalid --port ${port}`));
+      return 1;
+    }
+    // Saved so every later command (setup-url, open, status) and service restarts use the same port.
+    savePort(ctx, n);
+    ctx.env.MANDATE_PORT = port;
+  }
   // Expired bootstrap notes are removed on every start.
   try {
     cleanRuns(ctx);
@@ -50,14 +60,14 @@ export async function cmdStart(ctx: Ctx, a: Args, out: Out): Promise<number> {
       out.err(fail(`no bundled server at ${SERVER_ENTRY} (run from source? use npm run dev)`));
       return 1;
     }
-    process.env.MANDATE_PORT = ctx.env.MANDATE_PORT ?? process.env.MANDATE_PORT;
+    if (ctx.env.MANDATE_PORT) process.env.MANDATE_PORT = ctx.env.MANDATE_PORT;
     process.env.MANDATE_HOME = ctx.mandateHome;
     process.env.MANDATE_VERSION ??= PKG_VERSION;
     process.env.NODE_ENV ??= 'production';
     const s = readSettings(ctx);
     out.log(info(`Mandate ${PKG_VERSION} in the foreground on ${s.url} ${c.dim('(Ctrl-C to stop)')}`));
-    await import(SERVER_ENTRY);
-    return -1; // keep running
+    // The server runs as a child so it can restart itself (exit 75 after an address change); output stays on this terminal.
+    return supervise({ node: process.execPath, entry: SERVER_ENTRY, env: process.env, log: (m) => out.log(info(m)) });
   }
   const s = readSettings(ctx);
   const svc = service(ctx);
@@ -118,7 +128,7 @@ export interface Status {
   serverVersion: string | null;
   running: boolean;
   service: string;
-  mode: string;
+
   url: string;
   port: number;
   bind: string;
@@ -137,7 +147,6 @@ export async function getStatus(ctx: Ctx): Promise<Status> {
     serverVersion: h?.version ?? null,
     running: !!h?.ok,
     service: svc.kind === 'process' ? 'none (detached process / foreground)' : `${svc.kind} (${svc.installed() ? 'installed' : 'not installed'})`,
-    mode: s.mode,
     url: s.url,
     port: s.port,
     bind: s.bind,
@@ -158,7 +167,7 @@ export async function cmdStatus(ctx: Ctx, a: Args, out: Out): Promise<number> {
   out.log(c.bold('Mandate'));
   row('state', st.running ? c.green('● running') : c.red('○ stopped'));
   row('version', `${st.version}${st.serverVersion && st.serverVersion !== st.version ? c.yellow(` (server ${st.serverVersion}; run ${BIN} restart)`) : ''}`);
-  row('mode', st.mode === 'server' ? 'server (GitHub sign-in)' : 'local (this machine)');
+  row('sign-in', 'GitHub');
   row('url', st.url);
   row('listen', `${st.bind}:${st.port}`);
   row('service', st.service);
@@ -197,11 +206,10 @@ export async function cmdLogs(ctx: Ctx, a: Args, out: Out): Promise<number> {
 
 /* ------------------------------------------------------------------ open / setup-url */
 
-/** The URL to open: the setup wizard while setup is pending, else a local one-time sign-in link (local mode). */
-export async function entryUrl(ctx: Ctx, s: CurrentSettings): Promise<{ url: string; kind: 'setup' | 'signin' | 'ui' }> {
+/** The URL to open: the setup wizard while setup is pending, else the UI (sign-in is GitHub). */
+export async function entryUrl(ctx: Ctx, s: CurrentSettings): Promise<{ url: string; kind: 'setup' | 'ui' }> {
   const setup = setupUrl(ctx, s);
   if (setup) return { url: setup, kind: 'setup' };
-  if (s.mode === 'local') return { url: await localSignInUrl(ctx, s), kind: 'signin' };
   return { url: s.url, kind: 'ui' };
 }
 
@@ -212,8 +220,8 @@ export async function cmdOpen(ctx: Ctx, a: Args, out: Out): Promise<number> {
     return 1;
   }
   const e = await entryUrl(ctx, s);
-  const what = e.kind === 'setup' ? 'setup wizard' : e.kind === 'signin' ? 'one-time sign-in link (5 min)' : 'Mandate';
-  if (s.mode === 'server' && e.kind === 'setup') {
+  const what = e.kind === 'setup' ? 'setup wizard' : 'Mandate';
+  if (s.publicUrl && e.kind === 'setup') {
     printTunnel(s, e.url, out, str(a, 'ssh'));
     return 0;
   }
@@ -300,7 +308,7 @@ export async function cmdDoctor(ctx: Ctx, a: Args, out: Out): Promise<number> {
   try {
     const { readConfigFile } = await import('../../server/src/config.js');
     readConfigFile(configFile(ctx), { ...ctx.env, MANDATE_HOME: ctx.mandateHome });
-    add('config', 'ok', `${configFile(ctx)} (${s.mode} mode)`);
+    add('config', 'ok', `${configFile(ctx)} (${s.url}; GitHub sign-in)`);
   } catch (e) {
     add('config', 'fail', (e as Error).message.split('\n').slice(0, 3).join(' '), `fix ${configFile(ctx)}`);
   }
@@ -323,9 +331,8 @@ export async function cmdDoctor(ctx: Ctx, a: Args, out: Out): Promise<number> {
     add('server', 'fail', busy ? `port ${s.port} answers but not as Mandate` : `not reachable on ${s.localUrl}`, busy ? `free port ${s.port} or set server.port in ${configFile(ctx)}` : `${BIN} start, then ${BIN} logs`);
   }
 
-  if (s.mode === 'server') {
-    if (!s.publicUrl) add('public URL', 'fail', 'server.publicUrl is not set', `${BIN} install --mode server --public-url https://…`);
-    else {
+  if (s.publicUrl) {
+    {
       const { serverChecks } = await import('../../server/src/setup/probes.js');
       for (const ch of await serverChecks(s.publicUrl)) add(ch.label, ch.ok ? (ch.level === 'warning' ? 'warn' : 'ok') : ch.level === 'warning' ? 'warn' : 'fail', ch.detail, ch.fix);
     }

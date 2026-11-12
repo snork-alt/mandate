@@ -31,5 +31,6 @@
   },
   "engines": {
     "node": ">=22"
-  }
+  },
+  "license": "FSL-1.1-ALv2"
 }

@@ -2,7 +2,6 @@
  * Setup state under `~/.mandate` (every file 0600):
  * - `setup-token`: one-time token for the first-run wizard (`getmandate setup-url`), deleted when setup completes.
  * - `setup.json`: `{ completed: true, completedAt }`.
- * Hashed one-time local sign-in tokens (`getmandate open`, 5 minutes) live in the server-state database (`login_tokens`).
  * Plus the config writer (config.json: atomic, 0600, unknown keys kept, optimistic concurrency) and the
  * secrets.env writer (write-only values; never returned, logged or put in config).
  */
@@ -11,7 +10,6 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, wri
 import path from 'node:path';
 import { fileConfigSchema, migrateLegacyConfig, readRawConfig, type FileConfig } from '../config.js';
 import { refreshSecrets } from '../secrets.js';
-import { stateForHome, type ServerState } from '../db/state.js';
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 
@@ -31,6 +29,9 @@ const safeEq = (a: string, b: string) => {
 };
 
 /* ------------------------------------------------------------------ setup state */
+
+/** The config already counts as set up: GitHub sign-in has a client id (an older OAuth App install, or the App). */
+export const preconfigured = (c: { auth: { github?: { clientId?: string | undefined } | undefined } }) => !!c.auth.github?.clientId;
 
 export class SetupState {
   constructor(
@@ -82,32 +83,43 @@ export class SetupState {
   }
 }
 
-/* ------------------------------------------------------------------ local one-time sign-in tokens */
+/* ------------------------------------------------------------------ first-admin claim */
 
-export class LocalLoginTokens {
-  private readonly state: Promise<ServerState>;
-  constructor(
-    readonly home: string,
-    state?: ServerState | Promise<ServerState>,
-  ) {
-    this.state = state ? Promise.resolve(state) : stateForHome(home);
+/**
+ * The first admin is whoever finishes the setup wizard and then signs in with GitHub: the wizard (setup-link holder
+ * only) issues a single-use nonce (`admin-claim`, hashed, 1 hour), set as an HttpOnly cookie; the GitHub callback
+ * consumes it after GitHub verified the identity and adds that login to `auth.github.allowedUsers`. Nobody else can
+ * claim it: no setup link, no nonce; and a nonce works once.
+ */
+export class SetupAdminClaim {
+  constructor(readonly home: string) {}
+  private get file() {
+    return path.join(this.home, 'admin-claim');
   }
 
-  /** A new one-time token (5 minutes). */
-  async issue(ttlMs = 5 * 60_000): Promise<string> {
-    const st = await this.state;
-    const t = randomBytes(32).toString('base64url');
-    await st.db.run(`DELETE FROM ${st.t('login_tokens')} WHERE exp <= ?`, [Date.now()]);
-    await st.db.run(`INSERT INTO ${st.t('login_tokens')} (hash, exp) VALUES (?, ?)`, [sha(t), Date.now() + ttlMs]);
-    return t;
+  /** A new claim (replaces any earlier one). */
+  issue(ttlMs = 3600_000): string {
+    const nonce = randomBytes(32).toString('base64url');
+    writePrivate(this.file, `${JSON.stringify({ h: sha(nonce), exp: Date.now() + ttlMs })}\n`);
+    return nonce;
   }
 
-  /** Consume: true once per token (an atomic delete, so two instances cannot both accept it). */
-  async consume(presented: string | undefined): Promise<boolean> {
-    if (!presented) return false;
-    const st = await this.state;
-    const r = await st.db.get<{ exp: number }>(`DELETE FROM ${st.t('login_tokens')} WHERE hash = ? RETURNING exp`, [sha(presented)]);
-    return !!r && Number(r.exp) > Date.now();
+  /** Consume: true once for the current, unexpired nonce (the file is removed first, so it never works twice). */
+  consume(nonce: string | undefined): boolean {
+    if (!nonce || !existsSync(this.file)) return false;
+    let saved: { h?: string; exp?: number };
+    try {
+      saved = JSON.parse(readFileSync(this.file, 'utf8')) as { h?: string; exp?: number };
+    } catch {
+      return false;
+    }
+    if (!saved.h || saved.h.length !== sha(nonce).length || !timingSafeEqual(Buffer.from(saved.h), Buffer.from(sha(nonce)))) return false;
+    rmSync(this.file, { force: true });
+    return (saved.exp ?? 0) > Date.now();
+  }
+
+  pending(): boolean {
+    return existsSync(this.file);
   }
 }
 
@@ -154,6 +166,11 @@ export class ConfigFile {
     fileConfigSchema.parse(migrateLegacyConfig(json) ?? json);
     writePrivate(this.file, `${JSON.stringify(json, null, 2)}\n`);
     return this.version();
+  }
+
+  /** Put back an earlier `text()` (a saved change that could not be applied); null (no file before) leaves it. */
+  restore(text: string | null): void {
+    if (text !== null) writePrivate(this.file, text);
   }
 }
 

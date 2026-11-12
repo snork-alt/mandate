@@ -13,7 +13,7 @@ export interface ProjectSummary {
   counts: { specs: number; standards: number; components: number; workOrders: number; feedback: number };
   lastActivity: { at: string; summary: string; agent?: string } | null;
   /** GitHub storage (null for local-only projects); `reconnect` = the stored GitHub grant no longer works. */
-  /** Server mode: what the signed-in user may do (from GitHub repo access). */
+  /** Team: what the signed-in user may do (from GitHub repo access). */
   access?: 'read' | 'write';
   github?: { repo: string; path: string | null; connectedBy: string; status: 'ok' | 'reconnect' } | null;
 }

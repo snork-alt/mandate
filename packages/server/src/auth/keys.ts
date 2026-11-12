@@ -20,7 +20,7 @@ const keySchema = z
     key: z.string().regex(/^mnd_[a-z0-9-]+_[A-Za-z0-9_-]{43,}$/),
     createdAt: z.string(),
     lastUsedAt: z.string().optional(),
-    /** Named service account (CI): accepted in server mode, writes attributed to `service:<name>`. */
+    /** Named service account (CI): accepted by a team, writes attributed to `service:<name>`. */
     service: z.boolean().optional(),
   })
   .strict();

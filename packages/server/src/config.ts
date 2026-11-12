@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
 import { refreshSecrets } from './secrets.js';
+import { AppInstallationTokens, githubRepoOf } from './auth/app-tokens.js';
 import { DEFAULT_DATABASE_CONFIG, databaseConfigSchema, resolveDatabase, type ResolvedDatabase } from './db/config.js';
 
 /**
@@ -15,7 +16,26 @@ import { DEFAULT_DATABASE_CONFIG, databaseConfigSchema, resolveDatabase, type Re
 export type RemoteAuth =
   | { type: 'ssh'; privateKeyPath: string; publicKeyPath?: string; passphrase?: string; username?: string }
   | { type: 'ssh-agent'; username?: string }
-  | { type: 'https'; username: string; token: string };
+  | { type: 'https'; username: string; token: string }
+  | GithubAppRemoteAuth;
+
+/**
+ * `git.auth.method: 'app'`: HTTPS with a short-lived GitHub App installation token, minted in memory on use
+ * (see auth/app-tokens.ts). The token never lands in config, the remote URL, argv or logs.
+ */
+export interface GithubAppRemoteAuth {
+  type: 'github-app';
+  owner: string;
+  repo: string;
+  /** A valid installation token (cached until shortly before expiry). Throws AppNotInstalledError with the install URL. */
+  token: () => Promise<string>;
+  /** Forget the cached token (the remote rejected it). */
+  invalidate?: () => void;
+}
+
+/** `git.auth.method`: 'app' = GitHub App installation tokens over HTTPS; 'ssh' = SSH key / agent (or `tokenEnv`). */
+export const GIT_AUTH_METHODS = ['app', 'ssh'] as const;
+export type GitAuthMethod = (typeof GIT_AUTH_METHODS)[number];
 
 export interface RemoteConfig {
   url: string;
@@ -216,6 +236,12 @@ export const projectIdSchema = z.string().max(40).regex(PROJECT_ID_RE, 'kebab-ca
 
 const gitAuthSchema = z
   .object({
+    /**
+     * 'app': push / fetch over HTTPS with the GitHub App's installation token (no SSH key). 'ssh': SSH key / agent.
+     * Unset: 'app' for the embedded backend when a GitHub App is configured and no SSH key / token is set, else 'ssh'
+     * (system git then keeps using your own git credentials).
+     */
+    method: z.enum(GIT_AUTH_METHODS).optional(),
     sshKeyPath: z.string().min(1).nullable().default(null),
     sshPassphraseEnv: envName,
     username: z.string().min(1).nullable().default(null),
@@ -226,6 +252,7 @@ const gitAuthSchema = z
 /** Per-project auth override: only the fields given (no null defaults that would mask the global block). */
 const gitAuthOverrideSchema = z
   .object({
+    method: z.enum(GIT_AUTH_METHODS).optional(),
     sshKeyPath: z.string().min(1).nullable().optional(),
     sshPassphraseEnv: envName.unwrap().optional(),
     username: z.string().min(1).nullable().optional(),
@@ -280,6 +307,23 @@ export const githubAuthSchema = z
     allowedOrgs: z.array(z.string().trim().regex(/^[A-Za-z0-9-]{1,39}$/, 'a GitHub organization login')).default([]),
     /** Must be served by the origin that serves the UI (dev: the Vite proxy, http://localhost:5173/auth/github/callback). */
     callbackUrl: z.string().url().optional(),
+    /**
+     * Set when sign-in uses a GitHub App (created with the one-click manifest flow) instead of an OAuth App: its user
+     * tokens expire and refresh, and they only see repositories where the app is installed. Secrets (client secret,
+     * webhook secret, private key) never live here: secrets.env and a 0600 key file.
+     */
+    app: z
+      .object({
+        id: z.number().int().positive(),
+        slug: z.string().regex(/^[a-z0-9][a-z0-9-]{0,99}$/, 'a GitHub App slug'),
+        owner: z.string().regex(/^[A-Za-z0-9-]{1,39}$/, 'a GitHub login').optional(),
+        ownerType: z.enum(['User', 'Organization']).optional(),
+        htmlUrl: z.string().url().optional(),
+        privateKeyPath: z.string().min(1).optional(),
+        webhookSecretEnv: envName.unwrap().optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 export const authConfigSchema = z
@@ -312,14 +356,13 @@ export const fileConfigSchema = z
       .object({
         port: z.number().int().positive().max(65535).default(4000),
         host: z.string().min(1).default('127.0.0.1'),
-        /**
-         * `local` (this machine: projects folder, local one-time sign-in, no GitHub) or `server` (remote: GitHub
-         * sign-in with an allow-list, GitHub repos). Unset: `server` when `auth.github` exists (legacy installs), else `local`.
-         */
+        /** Deprecated (ignored): Mandate always uses GitHub sign-in. Accepted so older configs still load. */
+        users: z.enum(['me', 'team']).optional(),
+        /** Deprecated (ignored): Mandate always uses GitHub sign-in. Accepted so older configs still load. */
         mode: z.enum(['local', 'server']).optional(),
         /** Address to listen on (alias of `host`, written by the getmandate CLI). */
         bind: z.string().min(1).optional(),
-        /** Public URL (server mode: `https://mandate.example.com`); default http://localhost:<port>. */
+        /** Public URL (a server: `https://mandate.example.com`); default http://localhost:<port> (this computer). */
         publicUrl: z.string().url().optional(),
         /** Behind a reverse proxy: trust X-Forwarded-Proto / -Host. */
         trustProxy: z.boolean().default(false),
@@ -359,7 +402,7 @@ export const fileConfigSchema = z
     auth: authConfigSchema.default({ sessionTtlHours: 168 }),
     /** Server state (and, later, the index) backend: SQLite (default) or Postgres (`urlEnv` names the URL's env var). */
     database: databaseConfigSchema.default(DEFAULT_DATABASE_CONFIG),
-    /** Local mode: the projects folder (each project a git repo in it; pushed with the user's git credentials). */
+    /** Deprecated (local-folder projects are no longer created); kept so older configs load. */
     local: z
       .object({ baseDir: z.string().min(1).default('~/mandate') })
       .strict()
@@ -408,13 +451,16 @@ export interface AppConfig {
   database: ResolvedDatabase;
   /** Sign-in config at startup (the server re-reads the file's `auth` block on change). */
   auth: AuthConfig;
-  /** Deployment mode (see `server.mode`); `legacyMode`: inferred from an existing `auth.github` without `server.mode`. */
-  mode: 'local' | 'server';
-  legacyMode: boolean;
+  /**
+   * An older install signing in with an OAuth App and an allow-list, without a setup marker (`auth.github` with
+   * allowedUsers / allowedOrgs, no `app`, `server.mode` or `server.users`): it keeps the allow-list as the gate (no
+   * per-repo permissions) and admin rights for every signed-in user, exactly as before.
+   */
+  legacyAuth: boolean;
   /** Where the UI is reached (`server.publicUrl`, default http://localhost:<port>). */
   publicUrl: string;
   trustProxy: boolean;
-  /** Local mode projects folder (absolute). */
+  /** Projects folder for new local-folder projects (absolute). */
   localBaseDir: string;
   /** `~/.mandate/projects.json`: the server-owned project registry. */
   projectsPath: string;
@@ -699,7 +745,18 @@ export function loadConfig(rawEnv: NodeJS.ProcessEnv = process.env): AppConfig {
     const token = (isDefault ? env.MANDATE_GIT_TOKEN : undefined) ?? (a.tokenEnv ? env[a.tokenEnv] : undefined);
     const username = (isDefault ? (env.MANDATE_SSH_USERNAME ?? env.MANDATE_GIT_USERNAME) : undefined) ?? a.username ?? undefined;
     let auth: RemoteAuth | undefined;
-    if (sshKeyPath) {
+    let url = remoteUrl;
+    const method = gitAuthMethod({ explicit: ((isDefault ? env.MANDATE_GIT_AUTH_METHOD : undefined) ?? a.method) as GitAuthMethod | undefined, backend, appConfigured: !!file.auth.github?.app?.privateKeyPath, sshKeyPath, tokenEnv: a.tokenEnv ?? (isDefault ? env.MANDATE_GIT_TOKEN : undefined) });
+    if (method instanceof Error) throw new ConfigError(configPath, [`git.auth.method${isDefault ? '' : ` (project '${p.id}')`}: ${method.message}`]);
+    const ghRepo = remoteUrl ? githubRepoOf(remoteUrl, new URL(githubWeb(env)).host) : null;
+    if (method === 'app' && remoteUrl && !ghRepo && a.method) {
+      throw new ConfigError(configPath, [`git.auth.method "app"${isDefault ? '' : ` (project '${p.id}')`}: the remote ${redactRemote(remoteUrl)} is not a GitHub repository URL (https://github.com/<owner>/<repo>.git)`]);
+    }
+    if (method === 'app' && remoteUrl && ghRepo) {
+      url = `${githubWeb(env)}/${ghRepo.owner}/${ghRepo.repo}.git`;
+      const tokens = appTokensFor(configPath, env);
+      auth = { type: 'github-app', owner: ghRepo.owner, repo: ghRepo.repo, token: () => tokens.token(ghRepo.owner, ghRepo.repo), invalidate: () => tokens.invalidate(ghRepo.owner, ghRepo.repo) };
+    } else if (sshKeyPath) {
       auth = {
         type: 'ssh',
         privateKeyPath: resolvePath(sshKeyPath, path.dirname(configPath)),
@@ -726,7 +783,7 @@ export function loadConfig(rawEnv: NodeJS.ProcessEnv = process.env): AppConfig {
       ...(p.github ? { github: p.github } : {}),
       dataDir,
       branch,
-      ...(remoteUrl ? { remote: { url: remoteUrl, branch, auth } } : {}),
+      ...(url ? { remote: { url, branch, auth } } : {}),
       author,
       git: gitBackend,
       index,
@@ -740,8 +797,7 @@ export function loadConfig(rawEnv: NodeJS.ProcessEnv = process.env): AppConfig {
     configPath,
     port,
     host: env.MANDATE_HOST ?? file.server.bind ?? file.server.host,
-    mode: file.server.mode ?? (file.auth.github ? 'server' : 'local'),
-    legacyMode: !file.server.mode && !!file.auth.github,
+    legacyAuth: !file.server.users && !file.server.mode && !!file.auth.github && !file.auth.github.app && (file.auth.github.allowedUsers.length > 0 || file.auth.github.allowedOrgs.length > 0),
     publicUrl: (file.server.publicUrl ?? `http://localhost:${port}`).replace(/\/+$/, ''),
     trustProxy: file.server.trustProxy,
     localBaseDir: resolvePath(file.local.baseDir, home),
@@ -753,7 +809,7 @@ export function loadConfig(rawEnv: NodeJS.ProcessEnv = process.env): AppConfig {
     database: resolveDatabaseOrThrow(file.database, env, configPath),
     auth: file.auth,
     projectsPath,
-    warnings: [...registry.notices, ...(file.auth.required !== undefined ? ['auth.required is deprecated and ignored: sign-in is always on (GitHub for the web UI, keys for agents)'] : [])],
+    warnings: [...registry.notices, ...(file.auth.required !== undefined ? ['auth.required is deprecated and ignored: sign-in is always on (GitHub)'] : []), ...(file.server.users || file.server.mode ? ['server.users / server.mode are ignored: Mandate always signs in with GitHub (the setup wizard creates the GitHub App)'] : [])],
     dataDir: def.dataDir,
     branch: def.branch,
     remote: def.remote,
@@ -794,4 +850,41 @@ export function projectIndexPath(template: string, dataDir: string, projectId: s
   if (templated || isDefault) return p;
   const ext = path.extname(p);
   return `${p.slice(0, p.length - ext.length)}.${projectId}${ext}`;
+}
+
+/**
+ * Effective `git.auth.method`. Explicit wins. Unset: 'app' for the embedded backend when a GitHub App with a private
+ * key is configured and no SSH key / HTTPS token is set; otherwise 'ssh' (system git keeps the user's own credentials).
+ */
+export function gitAuthMethod(o: { explicit?: string; backend: GitBackend; appConfigured: boolean; sshKeyPath?: string | null; tokenEnv?: string | null }): GitAuthMethod | Error {
+  if (o.explicit !== undefined) return (GIT_AUTH_METHODS as readonly string[]).includes(o.explicit) ? (o.explicit as GitAuthMethod) : new Error(`expected app | ssh, got "${o.explicit}"`);
+  return o.backend === 'embedded' && o.appConfigured && !o.sshKeyPath && !o.tokenEnv ? 'app' : 'ssh';
+}
+
+/** GitHub web base (MANDATE_GITHUB_URL for GitHub Enterprise / tests). */
+const githubWeb = (env: NodeJS.ProcessEnv) => (env.MANDATE_GITHUB_CLONE_BASE || env.MANDATE_GITHUB_URL || 'https://github.com').replace(/\/+$/, '');
+
+const redactRemote = (u: string) => u.replace(/\/\/[^@/]*@/, '//***@');
+
+/** One installation-token cache per config file; the App (id, slug, key) is re-read from the file on every mint. */
+const appTokenCaches = new Map<string, AppInstallationTokens>();
+export function appTokensFor(configPath: string, env: NodeJS.ProcessEnv = process.env): AppInstallationTokens {
+  let t = appTokenCaches.get(configPath);
+  if (!t) {
+    t = new AppInstallationTokens({
+      app: () => {
+        try {
+          const app = authConfigSchema.safeParse(readRawConfig(configPath).auth ?? {}).data?.github?.app;
+          if (!app) return null;
+          return { id: app.id, slug: app.slug, ...(app.privateKeyPath ? { privateKeyPath: path.resolve(path.dirname(configPath), expandHome(app.privateKeyPath, os.homedir())) } : {}) };
+        } catch {
+          return null;
+        }
+      },
+      api: env.MANDATE_GITHUB_API_URL || undefined,
+      web: env.MANDATE_GITHUB_URL || undefined,
+    });
+    appTokenCaches.set(configPath, t);
+  }
+  return t;
 }

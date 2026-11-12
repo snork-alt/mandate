@@ -263,7 +263,7 @@ export class FeedbackService {
   }
 
   /**
-   * Who accepted an item: the principal (server-mode user, else agent, else commit author) of the first commit in which
+   * Who accepted an item: the principal (the user, else agent, else commit author) of the first commit in which
    * the item is `accepted` (or closed as applied without having been accepted). Derived from history; cached once known.
    */
   async acceptorOf(id: string): Promise<string | null> {
@@ -365,7 +365,7 @@ export class FeedbackService {
   }
 
   /**
-   * Update an item. Accepting stamps `acceptedBy` (the principal: server-mode user, else agent). `override` (feedback_accept
+   * Update an item. Accepting stamps `acceptedBy` (the principal: the user, else agent). `override` (feedback_accept
    * with override: eligibility checked by the caller) records `approvalOverride` and an `Approval-Override:` trailer.
    */
   async update(id: string, patch: UpdateFeedbackInput, meta: CommitMeta = {}, opts: { override?: string; acceptedBy?: string } = {}): Promise<Feedback> {

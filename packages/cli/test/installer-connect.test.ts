@@ -1,0 +1,69 @@
+/**
+ * What the one-line installer runs (`connect --url <server> --project <id>`): the MCP server entry per agent at user
+ * scope (through the adapter registry), skills and commands, a per-agent summary, idempotent updates, `--remove`;
+ * never a literal secret in a file an agent could commit.
+ */
+import { describe, expect, it } from 'vitest';
+import { existsSync, readFileSync } from 'node:fs';
+import path from 'node:path';
+import { run } from '../src/cli.js';
+import { capture, tempCtx, write } from './helpers.js';
+
+const envOf = (ctx: ReturnType<typeof tempCtx>) => ({ ...ctx.env, MANDATE_PORT: '4391' });
+const claudeJson = (ctx: ReturnType<typeof tempCtx>) => JSON.parse(readFileSync(path.join(ctx.home, '.claude.json'), 'utf8'));
+const codexToml = (ctx: ReturnType<typeof tempCtx>) => readFileSync(path.join(ctx.home, '.codex', 'config.toml'), 'utf8');
+
+describe('installer: connect --url (user scope)', () => {
+  it('GitHub sign-in (MCP OAuth) entries (no header, nothing secret), skills, commands and a summary; idempotent; --remove', async () => {
+    const ctx = tempCtx();
+    const out = capture();
+    const args = ['connect', '--yes', '--no-repo', '--url', 'https://mandate.example.com', '--project', 'web', '--agents', 'claude-code,codex,junie'];
+    expect(await run(args, envOf(ctx), out, ctx.dir)).toBe(0);
+    const entry = claudeJson(ctx).mcpServers['mandate-web'];
+    expect(entry).toEqual({ type: 'http', url: 'https://mandate.example.com/p/web/mcp' });
+    expect(codexToml(ctx)).toContain('url = "https://mandate.example.com/p/web/mcp"');
+    expect(codexToml(ctx)).not.toContain('bearer_token_env_var');
+    expect(existsSync(path.join(ctx.home, '.claude', 'skills', 'mandate', 'SKILL.md'))).toBe(true);
+    const text = out.text();
+    expect(text).toMatch(/Claude Code: MCP ✓ skills ✓ commands ✓/);
+    expect(text).toMatch(/Junie: MCP needs a personal token/);
+    expect(text).toContain('claude mcp list');
+    expect(text).toContain('codex mcp login mandate-web');
+    expect(existsSync(path.join(ctx.mandateHome, 'env.sh'))).toBe(false); // no token anywhere
+    // Idempotent: a second run updates in place (one entry).
+    expect(await run(args, envOf(ctx), capture(), ctx.dir)).toBe(0);
+    expect(Object.keys(claudeJson(ctx).mcpServers)).toEqual(['mandate-web']);
+    expect(codexToml(ctx).match(/\[mcp_servers\.mandate-web\]/g)).toHaveLength(1);
+    // --remove (the installer's --uninstall)
+    expect(await run([...args, '--remove'], envOf(ctx), capture(), ctx.dir)).toBe(0);
+    const f = path.join(ctx.home, '.claude.json');
+    expect(!existsSync(f) || claudeJson(ctx).mcpServers?.['mandate-web'] === undefined).toBe(true);
+    expect(existsSync(path.join(ctx.home, '.codex', 'config.toml')) ? codexToml(ctx) : '').not.toContain('mandate-web');
+  });
+
+  it('--auth token (agents that cannot sign in): entries reference $MANDATE_KEY_<P>; the token lives only in env.sh (0600), never echoed', async () => {
+    const ctx = tempCtx();
+    const out = capture();
+    const env = { ...envOf(ctx), MANDATE_KEY_WEB: 'mndp_web_secret_value_123' };
+    expect(await run(['connect', '--yes', '--no-repo', '--auth', 'token', '--url', 'https://mandate.example.com', '--project', 'web', '--agents', 'claude-code,codex,junie'], env, out, ctx.dir)).toBe(0);
+    expect(claudeJson(ctx).mcpServers['mandate-web'].headers).toEqual({ Authorization: 'Bearer ${MANDATE_KEY_WEB}' });
+    expect(codexToml(ctx)).toContain('bearer_token_env_var = "MANDATE_KEY_WEB"');
+    expect(readFileSync(path.join(ctx.home, '.claude.json'), 'utf8')).not.toContain('mndp_web_secret_value_123');
+    expect(codexToml(ctx)).not.toContain('mndp_web_secret_value_123');
+    expect(readFileSync(path.join(ctx.mandateHome, 'env.sh'), 'utf8')).toContain("MANDATE_KEY_WEB='mndp_web_secret_value_123'");
+    expect(out.text()).not.toContain('mndp_web_secret_value_123');
+    expect(out.text()).toMatch(/Junie: MCP ✓/); // no env-var expansion: the token in its user config (0600), never a repo
+  });
+
+  it('a key in the environment is not used without --auth token (no owner-token path)', async () => {
+    const ctx = tempCtx();
+    const repo = path.join(ctx.dir, 'repo');
+    write(path.join(repo, 'README.md'), 'x\n');
+    const env = { ...envOf(ctx), MANDATE_KEY_NOTES: 'mnd_notes_should_not_be_used' };
+    expect(await run(['connect', '--yes', '--repo', '--url', 'http://localhost:4391', '--project', 'notes', '--agents', 'claude-code'], env, capture(), repo)).toBe(0);
+    expect(claudeJson(ctx).mcpServers['mandate-notes']).toEqual({ type: 'http', url: 'http://localhost:4391/p/notes/mcp' });
+    const project = readFileSync(path.join(repo, '.mcp.json'), 'utf8');
+    expect(project).not.toMatch(/Authorization|mnd_/);
+    expect(existsSync(path.join(ctx.mandateHome, 'env.sh'))).toBe(false);
+  });
+});

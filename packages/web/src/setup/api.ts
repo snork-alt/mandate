@@ -14,10 +14,19 @@ export interface AskModelConfig {
   apiKeySet?: boolean;
 }
 
-export type ServerMode = 'local' | 'server';
+export interface GithubAppSettings {
+  id: number;
+  slug: string;
+  owner: string | null;
+  ownerType: 'User' | 'Organization' | null;
+  htmlUrl: string | null;
+  /** Install the app on more accounts / repositories. */
+  installUrl: string;
+  privateKeySet: boolean;
+}
 
 export interface SetupConfig {
-  /** Server mode only. */
+  /** GitHub sign-in (always). */
   github?: {
     clientId: string | null;
     clientSecretEnv: string;
@@ -25,11 +34,13 @@ export interface SetupConfig {
     allowedUsers: string[];
     allowedOrgs: string[];
     callbackUrl: string | null;
+    /** `app`: a GitHub App (one-click, the default); `oauth`: an existing OAuth App; null: not set up. */
+    kind?: 'app' | 'oauth' | null;
+    app?: GithubAppSettings | null;
     suggested?: { name: string; homepageUrl: string; callbackUrl: string };
   };
-  /** The projects folder (local mode). */
-  local: { baseDir: string };
-  server: { mode: ServerMode; publicUrl: string | null; bind: string; port: number; trustProxy: boolean };
+  /** The server address (`publicUrl` null: http://localhost:<port>). */
+  server: { publicUrl: string | null; bind: string; port: number; trustProxy: boolean };
   ask: {
     default: string | null;
     models: AskModelConfig[];
@@ -43,7 +54,7 @@ export interface SetupConfig {
   };
   embedding: EmbeddingSettings;
   git: GitConfig;
-  /** Server-state database (server mode, Advanced). Older servers omit it. */
+  /** Server-state database (Advanced). Older servers omit it. */
   database?: DatabaseSettings;
 }
 
@@ -129,7 +140,18 @@ export interface GitConfig {
   backend: 'embedded' | 'cli';
   cliPath?: string;
   author: { name: string; email: string };
-  auth: { sshKeyPath: string | null; sshPassphraseEnv: string | null; passphraseSet: boolean; username: string | null; tokenEnv: string | null; tokenSet: boolean };
+  auth: {
+    sshKeyPath: string | null;
+    sshPassphraseEnv: string | null;
+    passphraseSet: boolean;
+    username: string | null;
+    tokenEnv: string | null;
+    tokenSet: boolean;
+    /** Saved `git.auth.method` (null: default); older servers omit it. 'app': GitHub App tokens over HTTPS. */
+    method?: 'app' | 'ssh' | null;
+    /** The method in effect (or an error object for an invalid value). */
+    effectiveMethod?: 'app' | 'ssh' | Record<string, unknown>;
+  };
   autoPush: { enabled: boolean; debounceSeconds: number; intervalSeconds: number };
   /** The installed git CLI (version null when missing). */
   system: { version: string | null; userName: string | null; userEmail: string | null };
@@ -163,6 +185,8 @@ export const ASK_LIMITS = {
 export interface SetupState {
   complete: boolean;
   configVersion: string;
+  /** An older OAuth App install (sign-in allow-list, no per-repo permissions). */
+  legacy?: boolean;
   config: SetupConfig;
 }
 
@@ -175,7 +199,7 @@ export interface SetupCheck {
 }
 
 type DatabasePatch = Partial<Pick<DatabaseSettings, 'driver' | 'urlEnv' | 'schemaPerProject' | 'ssl' | 'prepare' | 'extensionsSchema'>> & { pool?: Partial<DatabaseSettings['pool']> };
-type GitPatch = { backend?: GitConfig['backend']; cliPath?: string; author?: GitConfig['author']; auth?: Partial<Pick<GitConfig['auth'], 'sshKeyPath' | 'sshPassphraseEnv' | 'username' | 'tokenEnv'>>; autoPush?: GitConfig['autoPush'] };
+type GitPatch = { backend?: GitConfig['backend']; cliPath?: string; author?: GitConfig['author']; auth?: Partial<Pick<GitConfig['auth'], 'sshKeyPath' | 'sshPassphraseEnv' | 'username' | 'tokenEnv'>> & { method?: 'app' | 'ssh' }; autoPush?: GitConfig['autoPush'] };
 export type ConfigPatch = Partial<{ [K in Exclude<keyof SetupConfig, 'git' | 'database'>]: Partial<NonNullable<SetupConfig[K]>> }> & { git?: GitPatch; database?: DatabasePatch };
 
 export interface FsEntry {
@@ -201,16 +225,51 @@ export interface FsInspect {
   enclosingRepo?: string | null;
 }
 
-export interface LocalProjectInput {
-  name: string;
-  description?: string;
-  mode: 'new' | 'existing';
-  path?: string;
-  remote?: string;
-  branch?: string;
+
+/** Settings the server switched live on save (no restart). */
+export type AppliedSetting = 'git' | 'database';
+/** How this server restarts: by its supervisor (service / foreground CLI), by `npm run dev`'s watcher, or by hand. */
+export type RestartKind = 'supervised' | 'dev' | 'manual';
+
+/** Fired after a save the server applied live (detail: AppliedSetting[]); the setup shell shows "Applied ✓". */
+export const APPLIED_EVENT = 'mandate:settings-applied';
+export function announceApplied(applied: AppliedSetting[] | undefined): void {
+  if (applied?.length) window.dispatchEvent(new CustomEvent<AppliedSetting[]>(APPLIED_EVENT, { detail: applied }));
 }
-export const LOCAL_STEPS = ['init', 'register', 'key'] as const;
-export type LocalStep = (typeof LOCAL_STEPS)[number];
+
+/** The running server's start time (null when /health is unreachable or does not report it). */
+export async function serverStartedAt(fetchFn: typeof fetch = fetch): Promise<number | null> {
+  try {
+    const r = await fetchFn('/health', { cache: 'no-store' });
+    const h = (await r.json()) as { startedAt?: number };
+    return typeof h.startedAt === 'number' ? h.startedAt : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Wait for the restarted server: /health answers with a start time other than `before`.
+ * Resolves false after `timeoutMs`.
+ */
+export async function waitForRestart(before: number | null, o: { timeoutMs?: number; intervalMs?: number; fetch?: typeof fetch; now?: () => number } = {}): Promise<boolean> {
+  const f = o.fetch ?? fetch;
+  const now = o.now ?? Date.now;
+  const deadline = now() + (o.timeoutMs ?? 30_000);
+  while (now() < deadline) {
+    try {
+      const r = await f('/health', { cache: 'no-store' });
+      if (r.ok) {
+        const h = (await r.json()) as { ok?: boolean; startedAt?: number };
+        if (h.ok && (before === null || h.startedAt !== before)) return true;
+      }
+    } catch {
+      /* down while restarting */
+    }
+    await new Promise((res) => setTimeout(res, o.intervalMs ?? 1000));
+  }
+  return false;
+}
 
 const opts = { noLoginRedirect: true };
 const get = <T,>(url: string) => uiRequest<T>('GET', url, undefined, opts);
@@ -220,8 +279,8 @@ const put = <T,>(url: string, body: unknown) => uiRequest<T>('PUT', url, body, o
 export const setupApi = {
   state: () => get<SetupState>('/ui/setup/state'),
   checks: () => get<{ checks: SetupCheck[] }>('/ui/setup/checks'),
-  patch: (configVersion: string, patch: ConfigPatch) => put<{ configVersion: string; restartRequired?: boolean }>('/ui/setup/config', { configVersion, patch }),
-  secret: (name: string, value: string | null) => put<{ name: string; set: boolean }>('/ui/setup/secret', { name, value }),
+  patch: (configVersion: string, patch: ConfigPatch) => put<{ configVersion: string; applied?: AppliedSetting[]; restartRequired?: boolean }>('/ui/setup/config', { configVersion, patch }),
+  secret: (name: string, value: string | null) => put<{ name: string; set: boolean; applied?: AppliedSetting[] }>('/ui/setup/secret', { name, value }),
   testGithub: (b: { clientId: string; clientSecret?: string }) => post<{ ok: boolean; message: string }>('/ui/setup/test/github', b),
   askModels: (b: { provider: AskProvider; baseUrl?: string; apiKeyEnv?: string; apiKey?: string }) =>
     post<{ ok: boolean; models: string[]; suggested: string | null; message: string }>('/ui/setup/ask/models', b),
@@ -235,8 +294,17 @@ export const setupApi = {
     post<{ candidates: { askModelId: string; label: string; apiKeyEnv: string; apiKeySet: boolean }[]; apiKeyEnvSet?: boolean }>('/ui/setup/embedding/keys', b),
   embeddingPreset: (model: string) => post<EmbeddingModelPreset>('/ui/setup/embedding/preset', { model }),
   embeddingEstimate: (b: { model: string; pricePerMTok?: number | null }) => post<EmbeddingEstimate>('/ui/setup/embedding/estimate', b),
-  setMode: (configVersion: string, mode: ServerMode, publicUrl?: string) => put<{ configVersion: string; restartRequired: boolean }>('/ui/setup/mode', { configVersion, mode, ...(publicUrl ? { publicUrl } : {}) }),
-  complete: () => post<{ next: 'github' | 'local' }>('/ui/setup/complete'),
+  /** The server address (applies on restart); listen address and proxy trust are derived unless given. */
+  setServer: (configVersion: string, publicUrl: string, o: { bind?: string; trustProxy?: boolean } = {}) =>
+    put<{ configVersion: string; restartRequired: boolean; url?: string | null; restart?: { kind: RestartKind; command: string } }>('/ui/setup/server', { configVersion, publicUrl, ...o }),
+  /** Settings → Admins: who a GitHub login is (avatar, name); 404 when there is no such user. */
+  githubUser: (login: string) => get<{ login: string; name: string | null; avatarUrl: string | null }>(`/ui/github/users/${encodeURIComponent(login)}`),
+  /** One-click GitHub App: the form to POST to GitHub (`manifest` field) for the account (`user`) or an organization. */
+  githubManifest: (b: { owner: 'user' | string; public?: boolean }) => post<{ action: string; manifest: string; state: string }>('/ui/setup/github/manifest', b),
+  /** Restart the server (a new address): a supervised server restarts itself; else `command` is what to run. */
+  restart: () => post<{ restarting: boolean; kind: RestartKind; command: string }>('/ui/setup/restart'),
+  /** `restarting`: a new server address (saved with the GitHub App) applies now; wait for it before signing in. */
+  complete: () => post<{ next: 'github'; restarting?: boolean }>('/ui/setup/complete'),
   databaseTest: (b: { urlEnv?: string; ssl?: DatabaseSettings['ssl']; extensionsSchema?: string | null; createExtensions?: boolean }) =>
     post<{ ok: boolean; message: string; details: DatabaseProbe | null }>('/ui/setup/database/test', b),
   fsList: (path?: string, o: { files?: boolean; hidden?: boolean } = {}) => {
@@ -251,8 +319,6 @@ export const setupApi = {
   gitPubkey: (path: string) => get<{ publicKey: string; fingerprint: string; publicKeyPath: string }>(`/ui/setup/git/pubkey?path=${encodeURIComponent(path)}`),
   fsMkdir: (path: string) => post<{ path: string }>('/ui/fs/mkdir', { path }),
   fsInspect: (path: string) => get<FsInspect>(`/ui/fs/inspect?path=${encodeURIComponent(path)}`),
-  createLocalProject: (b: LocalProjectInput, onEvent: (e: { step: LocalStep; status: 'start' | 'done' }) => void) =>
-    uiStream<{ project: ProjectSummary }, { step: LocalStep; status: 'start' | 'done' }>('/ui/projects/local', b, 'project', onEvent),
 };
 
 export const useSetupState = () => useQuery({ queryKey: ['setup', 'state'], queryFn: setupApi.state, staleTime: 0 });

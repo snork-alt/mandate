@@ -8,6 +8,38 @@ import { cleanupTempDirs, tempDir } from './helpers.js';
 
 afterAll(cleanupTempDirs);
 
+describe('older settings (one setup: GitHub sign-in)', () => {
+  const load = async (server: Record<string, unknown> | undefined, auth?: Record<string, unknown>) => {
+    const home = await tempDir();
+    const mh = path.join(home, '.mandate');
+    mkdirSync(mh, { recursive: true });
+    const file = path.join(mh, 'config.json');
+    const json = { ...(server ? { server } : {}), ...(auth ? { auth } : {}), embedding: { provider: 'none' } };
+    writeFileSync(file, JSON.stringify(json));
+    const cfg = loadConfig({ HOME: home, MANDATE_HOME: mh });
+    // Startup never rewrites config.json (user-owned); the old key is read as an alias.
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual(json);
+    return cfg;
+  };
+  const github = { github: { clientId: 'Ov23.x', allowedUsers: ['octo'] } };
+
+  it('older server.users / server.mode values still load (ignored, with a warning); nothing is rewritten', async () => {
+    for (const server of [{ users: 'me' }, { mode: 'local' }, { users: 'team' }, { mode: 'server', publicUrl: 'https://m.example.com' }]) {
+      const cfg = await load(server);
+      expect(cfg).toMatchObject({ legacyAuth: false });
+      expect(cfg.warnings.join('\n')).toMatch(/server.users \/ server.mode are ignored/);
+    }
+    expect((await load(undefined)).host).toBe('127.0.0.1');
+  });
+
+  it('an older OAuth App install (auth.github, no app, no mode) keeps its allow-list behaviour', async () => {
+    const cfg = await load(undefined, github);
+    expect(cfg).toMatchObject({ legacyAuth: true });
+    expect(cfg.auth.github).toMatchObject({ clientId: 'Ov23.x', clientSecretEnv: 'MANDATE_GITHUB_CLIENT_SECRET' });
+    expect((await load(undefined, { github: { ...github.github, app: { id: 1, slug: 'mandate-x' } } })).legacyAuth).toBe(false);
+  });
+});
+
 describe('config', () => {
   it('runs on defaults without creating config.json; seeds projects.json (existing ./data/repo kept as data dir)', async () => {
     const home = await tempDir();

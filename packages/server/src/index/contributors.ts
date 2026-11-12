@@ -1,6 +1,6 @@
 /**
- * Contributors of an element. Server mode: users from `Mandate-User` / `Agent-User` trailers, else the agent identity
- * (`userRecorded: false`, legacy commits); local mode: agents only.
+ * Contributors of an element: users from `Mandate-User` / `Agent-User` trailers, else the agent identity
+ * (`userRecorded: false`: older agent-only commits).
  * Direct: commits that changed the element or its sections, its comments and its verifications (roles from what the
  * commit did). Indirect ("via"): the direct contributors of its recorded causes (`caused_by`, `depth` hops; a
  * document's causes include its sections' causes), with the cause chain. A user who is both is direct, `alsoVia`.
@@ -16,7 +16,7 @@ interface Acc {
   /** Commit point of the last contribution (orders same-second commits). */
   lastSeq: number;
   agents: Set<string>;
-  /** A user recorded on the commits (false: the agent identity stands in, legacy / local mode). */
+  /** A user recorded on the commits (false: the agent identity stands in, older agent-only commits). */
   recorded: boolean;
   /** The user login, or the agent name when no user was recorded. */
   name: string;
@@ -142,15 +142,15 @@ function sources(ctx: GraphContext, uri: string, kind: string, seq: number | nul
 }
 
 /**
- * Direct contributors of an element. Server mode: keyed by user; commits without a recorded user fall back to the
- * agent (`userRecorded: false`). Local mode (`agentsOnly`): agents only.
+ * Direct contributors of an element, keyed by user; commits without a recorded user fall back to the agent
+ * (`userRecorded: false`).
  */
-function direct(ctx: GraphContext, uri: string, seq: number | null, agentsOnly = false): Map<string, Acc> {
+function direct(ctx: GraphContext, uri: string, seq: number | null): Map<string, Acc> {
   const kind = labelOf(ctx, uri, seq).kind;
   const { rows, role: roleFor, kindOf } = sources(ctx, uri, kind, seq);
   const out = new Map<string, Acc>();
   for (const r of rows) {
-    const recorded = agentsOnly ? undefined : userOfTrailers(parseJson<Record<string, string>>(r.trailers, {}));
+    const recorded = userOfTrailers(parseJson<Record<string, string>>(r.trailers, {}));
     const who = recorded ?? r.agent ?? r.author;
     if (!who) continue;
     // G-9 / P6: identities compare case-folded, the same key as the user / agent node (`mandate://users/<login>`).
@@ -176,10 +176,10 @@ function direct(ctx: GraphContext, uri: string, seq: number | null, agentsOnly =
 const toContributor = (_key: string, a: Acc, kind: 'direct' | 'via'): Contributor => ({ user: a.name, kind, userRecorded: a.recorded, roles: [...a.roles], count: a.shas.size, lastAt: a.lastAt, agents: [...a.agents] });
 
 /** Contributors of one element. */
-export function contributorsOf(ctx: GraphContext, uri: string, seq: number | null, depth: number, agentsOnly = false): Contributor[] {
+export function contributorsOf(ctx: GraphContext, uri: string, seq: number | null, depth: number): Contributor[] {
   const out = new Map<string, Contributor>();
   const order = new Map<Contributor, number>();
-  for (const [user, a] of direct(ctx, uri, seq, agentsOnly)) {
+  for (const [user, a] of direct(ctx, uri, seq)) {
     const c = toContributor(user, a, 'direct');
     out.set(user, c);
     order.set(c, a.lastSeq);
@@ -199,7 +199,7 @@ export function contributorsOf(ctx: GraphContext, uri: string, seq: number | nul
         const n = labelOf(ctx, cause, seq);
         const chain = [...h.chain, { uri: cause, kind: n.kind, label: n.label }];
         next.push({ uri: cause, chain });
-        for (const [user, a] of direct(ctx, cause, seq, agentsOnly)) {
+        for (const [user, a] of direct(ctx, cause, seq)) {
           const have = out.get(user);
           if (have?.kind === 'direct') {
             have.alsoVia = [...(have.alsoVia ?? []), ...chain.slice(-1)];
@@ -223,13 +223,13 @@ export function contributorsOf(ctx: GraphContext, uri: string, seq: number | nul
   return [...out.values()].sort((x, y) => (x.kind === y.kind ? y.lastAt.localeCompare(x.lastAt) || (order.get(y) ?? 0) - (order.get(x) ?? 0) : x.kind === 'direct' ? -1 : 1));
 }
 
-export async function contributors(ctx: GraphContext, input: ContributorsInput, opts: { agentsOnly?: boolean } = {}): Promise<ContributorsResponse> {
+export async function contributors(ctx: GraphContext, input: ContributorsInput): Promise<ContributorsResponse> {
   const inp = contributorsInputSchema.parse(input);
   const res: ContributorsResponse['contributors'] = {};
   for (const ref of inp.refs) {
     const r = await resolveRef(ctx, ref, inp.at);
     const uri = r.live[0] ?? r.node.uri;
-    res[r.node.uri] = contributorsOf(ctx, uri, r.seq, inp.depth, opts.agentsOnly);
+    res[r.node.uri] = contributorsOf(ctx, uri, r.seq, inp.depth);
   }
   return { contributors: res };
 }

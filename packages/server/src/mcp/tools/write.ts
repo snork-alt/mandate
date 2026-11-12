@@ -68,10 +68,10 @@ async function activeUsers(ctx: ToolContext): Promise<Set<string>> {
   }
   return out;
 }
-/** Who may self-approve (approval override): local mode (one person by nature), an admin, or the sole active user. */
+/** Who may self-approve (approval override): an admin, or the sole active user. */
 
 export async function overrideEligibility(ctx: ToolContext): Promise<{ ok: boolean; why: string }> {
-  if (!ctx.settings || ctx.settings.mode === 'local') return { ok: true, why: 'local mode' };
+  if (!ctx.settings) return { ok: true, why: 'no project settings' };
   const user = ctx.commit?.user;
   if (!user) return { ok: false, why: 'no authenticated user (shared key): self-approval needs a user principal' };
   if (ctx.settings.isAdmin(user)) return { ok: true, why: 'admin' };
@@ -632,7 +632,7 @@ const feedbackTools: AnyToolDef[] = [
     title: 'Accept feedback',
     kind: 'write',
     uiAllowed: true,
-    description: `Accept a feedback item: it will be acted on; it approves waivers / exemptions / criteria removals written by someone other than its filer and accepter. override: true + overrideReason lets it approve your own: only when the user explicitly says so (sole active user, admin or local mode; recorded); never to pass a gate. cause: an answered approval question records who approved.${COMMON}`,
+    description: `Accept a feedback item: it will be acted on; it approves waivers / exemptions / criteria removals written by someone other than its filer and accepter. override: true + overrideReason lets it approve your own: only when the user explicitly says so (sole active user or admin; recorded); never to pass a gate. cause: an answered approval question records who approved.${COMMON}`,
     input: feedbackAcceptInputSchema,
     run: async (a, ctx) => {
       const commits: string[] = [];

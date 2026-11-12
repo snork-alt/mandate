@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { run } from '../src/cli.js';
 import { configFile } from '../src/context.js';
+import { readSettings } from '../src/settings.js';
 import { parseArgs } from '../src/args.js';
 import { capture, tempCtx, write } from './helpers.js';
 
@@ -29,37 +30,48 @@ describe('mandate CLI', () => {
     const ctx = tempCtx();
     const out = capture();
     expect(await run(['status', '--json'], envOf(ctx), out, ctx.dir)).toBe(3);
-    expect(JSON.parse(out.text())).toMatchObject({ running: false, mode: 'local', port: 4391, setup: 'pending', projects: 0 });
+    expect(JSON.parse(out.text())).toMatchObject({ running: false, url: 'http://localhost:4391', port: 4391, setup: 'pending', projects: 0 });
   });
 
-  it('install --mode local --yes: config, projects folder, no GitHub mention', async () => {
+  it('install --yes (default http://localhost:<port>): loopback, no proxy snippets, no prompt, the GitHub App next; no modes', async () => {
     const ctx = tempCtx();
     const out = capture();
     expect(await run(['install', '--yes', '--no-service', '--no-open', '--no-agents'], envOf(ctx), out, ctx.dir)).toBe(0);
-    expect(JSON.parse(readFileSync(configFile(ctx), 'utf8')).server).toMatchObject({ mode: 'local', bind: '127.0.0.1', port: 4391 });
-    expect(existsSync(path.join(ctx.home, 'mandate'))).toBe(true);
-    expect(out.text()).not.toMatch(/github/i);
-    // Idempotent: a second run keeps the mode.
+    expect(JSON.parse(readFileSync(configFile(ctx), 'utf8')).server).toEqual({ bind: '127.0.0.1', port: 4391, trustProxy: false });
+    expect(out.text()).toContain('http://localhost:4391 → listening on 127.0.0.1:4391');
+    expect(out.text()).toMatch(/GitHub App/);
+    expect(out.text()).not.toContain('flush_interval');
+    expect(out.text()).not.toMatch(/\bmode\b|Just me|team|this computer/i);
+    // Idempotent: a second run keeps the choice.
     expect(await run(['install', '--yes', '--no-service', '--no-open', '--no-agents'], envOf(ctx), capture(), ctx.dir)).toBe(0);
+    expect(JSON.parse(readFileSync(configFile(ctx), 'utf8')).server.publicUrl).toBeUndefined();
   });
 
-  it('install --mode server: public URL, proxy snippets, http warning, tunnel guidance', async () => {
+  it('install --public-url: the address (proxy snippets, http warning, tunnel guidance)', async () => {
     const ctx = tempCtx('linux');
     const out = capture();
-    const code = await run(['install', '--yes', '--mode', 'server', '--public-url', 'http://mandate.example.com', '--no-behind-proxy', '--no-service', '--no-agents'], envOf(ctx), out, ctx.dir);
+    const code = await run(['install', '--yes', '--public-url', 'http://mandate.example.com', '--no-behind-proxy', '--no-service', '--no-agents'], envOf(ctx), out, ctx.dir);
     expect(code).toBe(0);
-    expect(JSON.parse(readFileSync(configFile(ctx), 'utf8')).server).toEqual({ mode: 'server', port: 4391, bind: '0.0.0.0', trustProxy: false, publicUrl: 'http://mandate.example.com' });
+    expect(JSON.parse(readFileSync(configFile(ctx), 'utf8')).server).toEqual({ port: 4391, bind: '0.0.0.0', trustProxy: false, publicUrl: 'http://mandate.example.com' });
     expect(out.text()).toMatch(/plain http/);
     expect(out.text()).toContain('flush_interval -1');
     expect(out.text()).toContain('proxy_buffering off;');
     const https = tempCtx('linux');
-    await run(['install', '--yes', '--mode', 'server', '--public-url', 'https://mandate.example.com', '--no-service', '--no-agents'], envOf(https), capture(), https.dir);
+    await run(['install', '--yes', '--public-url', 'https://mandate.example.com', '--no-service', '--no-agents'], envOf(https), capture(), https.dir);
     expect(JSON.parse(readFileSync(configFile(https), 'utf8')).server).toMatchObject({ bind: '127.0.0.1', trustProxy: true });
   });
 
-  it('server mode without a public URL fails clearly', async () => {
+  it('the older --for / --mode flags are accepted and ignored with a warning; old users / mode keys are dropped', async () => {
     const ctx = tempCtx();
-    await expect(run(['install', '--yes', '--mode', 'server', '--no-service'], envOf(ctx), capture(), ctx.dir)).rejects.toThrow(/public-url/);
+    write(configFile(ctx), `${JSON.stringify({ server: { mode: 'local', users: 'me' } })}\n`);
+    expect(readSettings(ctx)).toMatchObject({ configured: true });
+    const out = capture();
+    expect(await run(['install', '--yes', '--mode', 'local', '--for', 'me', '--no-service', '--no-open', '--no-agents'], envOf(ctx), out, ctx.dir)).toBe(0);
+    expect(out.text()).toMatch(/--mode is ignored/);
+    expect(out.text()).toMatch(/--for is ignored/);
+    const server = JSON.parse(readFileSync(configFile(ctx), 'utf8')).server;
+    expect(server.users).toBeUndefined();
+    expect(server.mode).toBeUndefined();
   });
 
   it('install --dry-run writes nothing', async () => {
@@ -79,14 +91,14 @@ describe('mandate CLI', () => {
     expect(out.text()).toMatch(/no keys|default/);
   });
 
-  it('connect --url (developer machine, remote server): public URL in configs, key only in env.sh, merged', async () => {
+  it('connect --url --auth token (developer machine): public URL in configs, the personal token only in env.sh, merged', async () => {
     const ctx = tempCtx();
     const repo = path.join(ctx.dir, 'repo');
     write(path.join(repo, 'README.md'), 'x\n');
     write(path.join(ctx.mandateHome, 'env.sh'), "export MANDATE_KEY_OTHER='mnd_other_keepme'\n");
     const env = { ...envOf(ctx), MANDATE_KEY_WEB: 'mnd_web_abcdefghijklmnop' };
     const out = capture();
-    expect(await run(['connect', '--yes', '--url', 'https://mandate.example.com', '--project', 'web', '--agents', 'claude-code,codex'], env, out, repo)).toBe(0);
+    expect(await run(['connect', '--yes', '--auth', 'token', '--url', 'https://mandate.example.com', '--project', 'web', '--agents', 'claude-code,codex'], env, out, repo)).toBe(0);
     const mcp = readFileSync(path.join(repo, '.mcp.json'), 'utf8');
     expect(mcp).toContain('https://mandate.example.com/p/web/mcp');
     expect(mcp).not.toContain('mnd_');

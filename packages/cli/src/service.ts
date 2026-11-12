@@ -32,7 +32,9 @@ export function serviceSpec(ctx: Ctx, entry: string, version: string, node = pro
 const xml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 export function launchdPlist(s: ServiceSpec): string {
-  const env: Record<string, string> = { HOME: s.home, MANDATE_HOME: s.mandateHome, MANDATE_VERSION: s.version, NODE_ENV: 'production', PATH: s.path };
+  // MANDATE_SUPERVISED: launchd restarts the server when it exits non-zero (KeepAlive.SuccessfulExit = false), so it
+  // may restart itself (exit 75) after a mode switch.
+  const env: Record<string, string> = { HOME: s.home, MANDATE_HOME: s.mandateHome, MANDATE_SUPERVISED: '1', MANDATE_VERSION: s.version, NODE_ENV: 'production', PATH: s.path };
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!-- Managed by Mandate (mandate install / mandate uninstall). -->
@@ -86,11 +88,14 @@ ExecStart=${sq(s.node)} ${sq(s.entry)}
 WorkingDirectory=${sq(s.mandateHome)}
 Environment=${sq(`HOME=${s.home}`)}
 Environment=${sq(`MANDATE_HOME=${s.mandateHome}`)}
+Environment=MANDATE_SUPERVISED=1
 Environment=${sq(`MANDATE_VERSION=${s.version}`)}
 Environment=NODE_ENV=production
 Environment=${sq(`PATH=${s.path}`)}
+# Exit 75 = "restart me" (the server asks for it after a mode switch); on-failure covers it, listed explicitly.
 Restart=on-failure
-RestartSec=3
+RestartForceExitStatus=75
+RestartSec=2
 StandardOutput=append:${s.log}
 StandardError=append:${s.log}
 
@@ -210,7 +215,10 @@ export function detached(ctx: Ctx, spec: () => ServiceSpec): ServiceManager {
       const s = spec();
       mkdirSync(path.dirname(s.log), { recursive: true });
       const fd = openSync(s.log, 'a');
-      const child = spawn(s.node, [s.entry], {
+      // Through the CLI's foreground supervisor (next to server.js) so the server can restart itself; else directly.
+      const cli = path.join(path.dirname(s.entry), 'cli.js');
+      const args = existsSync(cli) ? [cli, 'start', '--foreground'] : [s.entry];
+      const child = spawn(s.node, args, {
         detached: true,
         stdio: ['ignore', fd, fd],
         cwd: s.mandateHome,

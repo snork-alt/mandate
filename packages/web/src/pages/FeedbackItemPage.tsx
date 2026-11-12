@@ -263,8 +263,7 @@ export function FeedbackItemPage() {
 }
 
 /**
- * Who filed and last changed a feedback item: `createdBy` is the coding agent, `createdByUser` the user (server mode
- * only, server-set); the last edit comes from the newest history entry (its user / agent trailers).
+ * Who filed and last changed a feedback item: `createdBy` is the coding agent, `createdByUser` the user (server-set); the last edit comes from the newest history entry (its user / agent trailers).
  */
 export function feedbackAttribution(
   f: { createdAt: string; createdBy?: string; createdByUser?: string },

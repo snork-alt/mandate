@@ -14,15 +14,14 @@ import { StepIntro } from './widgets';
 import type { SectionProps } from './sections';
 import '../components/lineage/lineage.css';
 
-/** The writers table (pure; users are listed in server mode only). */
+/** The writers table (pure): user, coding agent and credential. */
 export function WritersTable({ data }: { data: WritersResponse }) {
-  const server = data.mode === 'server';
   return (
     <>
       <div className="writers-stats" data-testid="writers-stats">
         <span>{data.scanned} recent commits</span>
-        {server && <span data-warn={data.unattributed > 0 || undefined}>{data.unattributed} without a user</span>}
-        {server && <span>{data.service} by service accounts</span>}
+        <span data-warn={data.unattributed > 0 || undefined}>{data.unattributed} without a user</span>
+        <span>{data.service} by service accounts</span>
       </div>
       {data.writers.length === 0 ? (
         <Text size="sm" c="dimmed">
@@ -32,7 +31,7 @@ export function WritersTable({ data }: { data: WritersResponse }) {
         <table className="writers-table">
           <thead>
             <tr>
-              {server && <th>User</th>}
+              <th>User</th>
               <th>Coding agent</th>
               <th>Credential</th>
               <th style={{ textAlign: 'right' }}>Commits</th>
@@ -41,22 +40,20 @@ export function WritersTable({ data }: { data: WritersResponse }) {
           </thead>
           <tbody>
             {data.writers.map((w, i) => {
-              const flag = server && !w.user ? 'unattributed' : server && w.user && isServiceUser(w.user) ? 'service' : undefined;
+              const flag = !w.user ? 'unattributed' : isServiceUser(w.user) ? 'service' : undefined;
               return (
                 <tr key={`${w.user}|${w.agent}|${w.source}|${i}`} data-flag={flag}>
-                  {server && (
-                    <td>
-                      {w.user ? (
-                        <span className="attr-by">
-                          <UserAvatar user={w.user} size={16} />
-                          {!isServiceUser(w.user) && <span className="attr-user">{w.user}</span>}
-                          {isServiceUser(w.user) && <span className="attr-user">{serviceName(w.user)}</span>}
-                        </span>
-                      ) : (
-                        <span className="faint">unattributed</span>
-                      )}
-                    </td>
-                  )}
+                  <td>
+                    {w.user ? (
+                      <span className="attr-by">
+                        <UserAvatar user={w.user} size={16} />
+                        {!isServiceUser(w.user) && <span className="attr-user">{w.user}</span>}
+                        {isServiceUser(w.user) && <span className="attr-user">{serviceName(w.user)}</span>}
+                      </span>
+                    ) : (
+                      <span className="faint">unattributed</span>
+                    )}
+                  </td>
                   <td>{w.agent ?? <span className="faint">unknown</span>}</td>
                   <td className="mono">{w.source ?? <span className="faint">-</span>}</td>
                   <td style={{ textAlign: 'right' }}>{w.commits}</td>
@@ -89,11 +86,11 @@ export function WritersSection(_p: SectionProps) {
   return (
     <div className="su-section" data-testid="recent-writers">
       <StepIntro title="Recent writers">
-        Who wrote to a project recently: the signed-in user (server mode), the coding agent and the credential it used. Writes without a user and service-account writes are highlighted.
+        Who wrote to a project recently: the user, the coding agent and the credential it used. Writes without a user and service-account writes are highlighted.
       </StepIntro>
       {auth.data?.legacy && (
         <Alert color="yellow" variant="light" mb={8} data-testid="legacy-notice">
-          This install has GitHub sign-in but no explicit <code>server.mode</code>. It is treated as server mode for agent sign-in: shared project keys are refused, so coding agents connect with MCP sign-in or a personal token (Connect dialog), and CI uses a service account (<code>mandate key create &lt;project&gt; --service &lt;name&gt;</code>). Set <code>&quot;server&quot;: {'{'} &quot;mode&quot;: &quot;server&quot; {'}'}</code> in config.json to make it explicit.
+          This install signs in with an OAuth App and keeps its sign-in allow-list. Shared project keys are refused, so coding agents connect with MCP sign-in or a personal token (Connect dialog), and CI uses a service account (<code>mandate key create &lt;project&gt; --service &lt;name&gt;</code>). Create a GitHub App in Settings → GitHub to switch to per-repository access.
         </Alert>
       )}
       {items.length > 1 && (

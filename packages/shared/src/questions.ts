@@ -128,7 +128,7 @@ export const questionEventSchema = z.object({
   /** answered: per question id. */
   answers: z.record(z.string(), z.union([z.string(), z.array(z.string())])).optional(),
   notes: z.string().optional(),
-  /** answered: through the web UI or relayed by the agent from chat (local mode). */
+  /** answered: through the web UI or relayed by the agent from chat. */
   via: z.enum(['ui', 'chat']).optional(),
   reason: z.string().optional(),
   supersededBy: z.string().optional(),

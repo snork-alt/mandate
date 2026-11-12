@@ -1,6 +1,6 @@
 /** install (user scope) / connect (project scope) / uninstall: idempotent, reversible, never a raw key outside ~/.mandate. */
 import { describe, expect, it } from 'vitest';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { AGENTS, agentById } from '../src/agents.js';
 import { connectChanges } from '../src/connect.js';
@@ -10,7 +10,6 @@ import { envFile, keysFile } from '../src/context.js';
 import { repoSection, writeManifest } from '../src/wiring.js';
 import { capture, registerProjects, snapshotTree, tempCtx, write } from './helpers.js';
 
-const keysOf = (ctx: ReturnType<typeof tempCtx>) => (JSON.parse(readFileSync(keysFile(ctx), 'utf8')) as { keys: { key: string }[] }).keys.map((k) => k.key);
 
 function setupHome() {
   const ctx = tempCtx('darwin');
@@ -29,21 +28,15 @@ describe('install (user scope)', () => {
     const ctx = setupHome();
     const before = snapshotTree(ctx.home);
     const { changes, skipped } = userWiringChanges(ctx, AGENTS, 'http://localhost:4000');
-    expect(skipped).toEqual([expect.stringMatching(/^Zed: MCP config location is unverified/)]);
+    // Agents that cannot sign in with GitHub by themselves are skipped (personal token: connect --auth token).
+    expect(skipped.map((x) => x.split(':')[0]).sort()).toEqual(['Amp', 'Cline', 'JetBrains Junie', 'Zed']);
     applyChanges(changes, { dryRun: false, out: capture() });
-    const keys = keysOf(ctx);
-    expect(keys).toHaveLength(2);
-    // Keys only in ~/.mandate (keys.json, env.sh 0600).
-    // Agents without env-var expansion (Junie, Cline) hold the key in their own user-scope file; nothing else does.
-    const literalFiles = AGENTS.filter((a) => a.envSyntax === null && a.userMcp).map((a) => path.relative(ctx.home, a.userMcp!(ctx).file));
-    for (const [f, text] of Object.entries(snapshotTree(ctx.home))) {
-      if (f.startsWith('.mandate/') || literalFiles.includes(f)) continue;
-      for (const k of keys) expect(text, f).not.toContain(k);
-    }
-    const env = readFileSync(envFile(ctx), 'utf8');
-    expect(env).toContain('export MANDATE_KEY_WEB_APP=');
-    expect(statSync(envFile(ctx)).mode & 0o777).toBe(0o600);
-    expect(readFileSync(path.join(ctx.home, '.zshrc'), 'utf8')).toMatch(/^export EDITOR=vim\n\n# >>> mandate:begin env .*\n\[ -f "\$HOME\/\.mandate\/env\.sh" \] && \. "\$HOME\/\.mandate\/env\.sh"\n# <<< mandate:end env <<<\n$/);
+    // MCP OAuth: no key anywhere (no keys.json, no env.sh, no Authorization header).
+    expect(existsSync(keysFile(ctx))).toBe(false);
+    expect(existsSync(envFile(ctx))).toBe(false);
+    const claude = JSON.parse(readFileSync(path.join(ctx.home, '.claude.json'), 'utf8')).mcpServers;
+    expect(claude['mandate-web-app']).toEqual({ type: 'http', url: 'http://localhost:4000/p/web-app/mcp' });
+    expect(readFileSync(path.join(ctx.home, '.codex', 'config.toml'), 'utf8')).not.toContain('bearer_token_env_var');
     expect(JSON.parse(readFileSync(path.join(ctx.home, '.claude.json'), 'utf8')).mcpServers).toHaveProperty('other');
     expect(existsSync(path.join(ctx.home, '.claude', 'skills', 'mandate', 'SKILL.md'))).toBe(true);
     expect(existsSync(path.join(ctx.home, '.agents', 'skills', 'mandate', 'SKILL.md'))).toBe(true);

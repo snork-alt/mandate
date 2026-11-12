@@ -71,7 +71,7 @@ describe('migration of the old flow fields', () => {
     expect(ps[1].flow).toBeUndefined();
     expect(ps[2].flowPolicy).toBeUndefined();
     expect(await migrateFlowPolicies(store)).toEqual([]);
-    const s = projectSettings(store, 'c', 'local');
+    const s = projectSettings(store, 'c');
     expect(s.policy()).toEqual(P('optional'));
     expect(await s.setPolicy({ flowPolicy: 'required' })).toEqual(P('required'));
     expect(JSON.parse(readFileSync(file, 'utf8')).projects[2]).toMatchObject({ flowPolicy: 'required', approvalPolicy: 'optional' });
@@ -101,9 +101,9 @@ describeBackends('client preferences', (b) => {
   });
 });
 
-describe('MCP tools (seeded project, local mode)', () => {
+describe('MCP tools (seeded project)', () => {
   let fx: McpFixture;
-  const settings = memorySettings('local');
+  const settings = memorySettings();
   beforeAll(async () => {
     fx = await mcpFixture({ settings });
   }, 120_000);
@@ -111,7 +111,7 @@ describe('MCP tools (seeded project, local mode)', () => {
 
   it('project_info: policy, this client, effective and reason; the call records the client', async () => {
     const r = await fx.call('project_info', {});
-    expect(r.body).toMatchObject({ mode: 'local', policy: P('optional'), client: { id: 'mandate-test/default', label: 'mandate-test', flow: null, approval: null }, effective: { flow: 'on', approval: 'on' } });
+    expect(r.body).toMatchObject({ policy: P('optional'), client: { id: 'mandate-test/default', label: 'mandate-test', flow: null, approval: null }, effective: { flow: 'on', approval: 'on' } });
     expect(r.body.reason).toMatch(/default: on/);
     const seen = await settings.clients.list('test');
     expect(seen.map((c) => c.id)).toContain('mandate-test/default');
@@ -148,7 +148,7 @@ describe('MCP tools (seeded project, local mode)', () => {
 
 describe('server mode: tools and identity', () => {
   it('each GitHub user has their own preference; admins only list all', async () => {
-    const settings = memorySettings('server');
+    const settings = memorySettings();
     const as = (login: string, client = 'claude-code') =>
       ({ settings, clientName: client, storage: { git: { head: async () => null } }, principal: { kind: 'user', login, project: 'test', via: 'oauth', tokenId: 't', tokenName: 'oauth' } }) as unknown as ToolContext;
     await callTool(tool('flow_set'), { flow: 'off' }, as('ada'));
@@ -162,7 +162,7 @@ describe('server mode: tools and identity', () => {
 });
 
 describe('UI endpoints', () => {
-  async function server(mode: 'local' | 'server') {
+  async function server(_mode: 'team') {
     const home = tmp();
     const file = path.join(home, 'projects.json');
     writeFileSync(file, JSON.stringify({ version: 1, projects: [{ id: 'web', name: 'Web', dataDir: home, createdAt: 'x' }] }));
@@ -171,8 +171,8 @@ describe('UI endpoints', () => {
     const projects = new ProjectsStore(file);
     const registry = new ProjectRegistry([{ id: 'web', name: 'Web', dataDir: home } as never], async () => { throw new Error('not opened in tests'); });
     const app = Fastify();
-    const kind = mode === 'local' ? 'local' : 'github';
-    registerFlowRoutes(app, { mode, auth: { keys: new KeyStore(path.join(home, 'keys.json')), store, mode, isAdmin: (l) => l === 'admin' }, hostOk: () => true, registry, settings: (id) => projectSettings(projects, id, mode, clients, (l) => l === 'admin') });
+    const kind = 'github';
+    registerFlowRoutes(app, { auth: { keys: new KeyStore(path.join(home, 'keys.json')), store, isAdmin: (l) => l === 'admin' }, hostOk: () => true, registry, settings: (id) => projectSettings(projects, id, clients, (l) => l === 'admin') });
     await app.ready();
     const cookie = async (login: string) => `mandate_session=${await store.createSession({ login, avatarUrl: '', kind } as never)}`;
     const req = async (method: 'GET' | 'PUT', url: string, login: string, body?: unknown, origin = 'http://localhost') =>
@@ -182,10 +182,10 @@ describe('UI endpoints', () => {
     return { app, req, clients, projects };
   }
 
-  it('server mode: my clients only; others are read-only for admins; Origin and policy enforced', async () => {
-    const s = await server('server');
+  it('team: my clients only; others are read-only for admins; Origin and policy enforced', async () => {
+    const s = await server('team');
     const ada = (await s.req('GET', '/ui/flow', 'ada')).json();
-    expect(ada).toMatchObject({ mode: 'server', admin: false, projects: [{ id: 'web', policy: P('optional'), mine: [{ id: 'ada/claude-code', editable: true }] }] });
+    expect(ada).toMatchObject({ user: 'ada', admin: false, projects: [{ id: 'web', policy: P('optional'), mine: [{ id: 'ada/claude-code', editable: true }] }] });
     expect(ada.projects[0].all).toBeUndefined();
     expect((await s.req('PUT', '/ui/flow/web/clients/bob%2Fcodex', 'ada', { flow: 'off' })).statusCode).toBe(403);
     expect((await s.req('PUT', '/ui/flow/web/clients/ada%2Fclaude-code', 'ada', { flow: 'off' }, 'https://evil.example')).statusCode).toBe(403);
@@ -198,11 +198,4 @@ describe('UI endpoints', () => {
     expect(admin.projects[0].all.map((c: { id: string; editable: boolean; locked: { flow: boolean } }) => [c.id, c.editable, c.locked.flow]).sort()).toEqual([['ada/claude-code', false, true], ['bob/codex', false, true]]);
   });
 
-  it('local mode: every local client is mine and editable', async () => {
-    const s = await server('local');
-    const me = (await s.req('GET', '/ui/flow', 'matteo')).json();
-    expect(me).toMatchObject({ mode: 'local', admin: true });
-    expect(me.projects[0].mine.map((c: { id: string }) => c.id).sort()).toEqual(['ada/claude-code', 'bob/codex']);
-    expect((await s.req('PUT', '/ui/flow/web/clients/bob%2Fcodex', 'matteo', { approval: 'off' })).json().client).toMatchObject({ approval: 'off' });
-  });
 });

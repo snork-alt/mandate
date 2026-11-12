@@ -14,8 +14,8 @@ afterAll(async () => fx?.close());
 
 const tool = (n: string) => TOOLS.find((t) => t.name === n)!;
 const base = () => ({ storage: fx.storage, index: fx.index, reads: fx.reads, activity: fx.activity }) as unknown as ToolContext;
-const uiCtx = (uiAccess: 'read' | 'write', mode: 'local' | 'server' = 'server', login = 'ada') =>
-  ({ ...base(), settings: memorySettings(mode), clientName: 'mandate-web', principal: { kind: 'ui', user: { login, avatarUrl: '' } }, access: 'read', uiAccess }) as ToolContext;
+const uiCtx = (uiAccess: 'read' | 'write', mode: 'me' | 'team' = 'team', login = 'ada') =>
+  ({ ...base(), settings: memorySettings(), clientName: 'mandate-web', principal: { kind: 'ui', user: { login, avatarUrl: '' } }, access: 'read', uiAccess }) as ToolContext;
 const body = (r: { structuredContent?: unknown }) => r.structuredContent as Record<string, any>;
 
 describe('decisions_list', () => {
@@ -111,14 +111,14 @@ describe('UI allow-list (uiAllowed)', () => {
     if (typeof off === 'function') off();
   });
 
-  it('local mode: recorded as mandate-ui without a user', async () => {
+  it('recorded as mandate-ui by the signed-in user', async () => {
     const spec = (await fx.storage.specs.list()).find((s) => s.status !== 'archived' && s.sections.length)!;
     const ref = (await fx.call('feedback_create', { targets: [`mandate://specs/${spec.id}/sections/${spec.sections[0]!.id}`], kind: 'bug', body: 'L', agent: 't' })).body.ref as string;
-    const r = await callTool(tool('feedback_accept'), { ref }, uiCtx('write', 'local'));
+    const r = await callTool(tool('feedback_accept'), { ref }, uiCtx('write', 'team', 'ada'));
     expect(r.isError).toBeFalsy();
     const info = await fx.git.commitInfo((await fx.git.head())!);
     expect(info.message).toMatch(/Agent: mandate-ui/);
-    expect(info.message).not.toMatch(/Mandate-User/);
+    expect(info.message).toMatch(/^Mandate-User: ada$/m);
   });
 
   it('override needs a reason and eligibility', async () => {
@@ -126,9 +126,9 @@ describe('UI allow-list (uiAllowed)', () => {
     const ref = (await fx.call('feedback_create', { targets: [`mandate://specs/${spec.id}/sections/${spec.sections[0]!.id}`], kind: 'bug', body: 'O', agent: 't' })).body.ref as string;
     const noReason = await callTool(tool('feedback_accept'), { ref, override: true }, uiCtx('write'));
     expect(body(noReason).error.code).toBe('validation');
-    const notAdmin = { ...uiCtx('write'), settings: { ...memorySettings('server'), isAdmin: () => false } } as ToolContext;
+    const notAdmin = { ...uiCtx('write'), settings: { ...memorySettings(), isAdmin: () => false } } as ToolContext;
     const access = body(await callTool(tool('decision_access'), {}, notAdmin));
-    expect(access).toMatchObject({ canDecide: true, mode: 'server', user: 'ada' });
+    expect(access).toMatchObject({ canDecide: true, user: 'ada' });
     expect(typeof access.override.ok).toBe('boolean');
     const ok = await callTool(tool('feedback_accept'), { ref, override: true, overrideReason: 'sole reviewer today' }, uiCtx('write'));
     expect(ok.isError).toBeFalsy();

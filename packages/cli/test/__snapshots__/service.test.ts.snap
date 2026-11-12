@@ -19,6 +19,8 @@ exports[`service definitions > launchd plist 1`] = `
     <string>/Users/ada</string>
     <key>MANDATE_HOME</key>
     <string>/Users/ada/.mandate</string>
+    <key>MANDATE_SUPERVISED</key>
+    <string>1</string>
     <key>MANDATE_VERSION</key>
     <string>0.1.0</string>
     <key>NODE_ENV</key>
@@ -59,11 +61,14 @@ ExecStart=/usr/local/bin/node /usr/local/lib/node_modules/getmandate/dist/server
 WorkingDirectory=/home/ada/.mandate
 Environment=HOME=/home/ada
 Environment=MANDATE_HOME=/home/ada/.mandate
+Environment=MANDATE_SUPERVISED=1
 Environment=MANDATE_VERSION=0.1.0
 Environment=NODE_ENV=production
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
+# Exit 75 = "restart me" (the server asks for it after a mode switch); on-failure covers it, listed explicitly.
 Restart=on-failure
-RestartSec=3
+RestartForceExitStatus=75
+RestartSec=2
 StandardOutput=append:/home/ada/.mandate/logs/server.log
 StandardError=append:/home/ada/.mandate/logs/server.log
 

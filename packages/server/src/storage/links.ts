@@ -109,7 +109,7 @@ export class LinkService {
     const f = finder(withNext);
     const successors = liveSuccessors(m);
     // MW-2: the writer's principal: the server-resolved user (Mandate-User trailer, set from the authenticated
-    // principal only) in server mode, else the agent identity. Compared trimmed and case-folded (approval()).
+    // principal only), else the agent identity. Compared trimmed and case-folded (approval()).
     const actor = (ctx ? (userOfTrailers(ctx.meta.trailers) ?? actorOf(ctx.meta)) : 'local').trim();
     const sections = next.sections.map((s) => {
       const before = current?.sections.find((x) => x.id === s.id);

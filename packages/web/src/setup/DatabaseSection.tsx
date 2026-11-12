@@ -1,8 +1,8 @@
 /**
- * Settings → Database (server mode, advanced): SQLite (default: a file under ~/.mandate) or Postgres for state shared by
+ * Settings → Database (team, advanced): SQLite (default: a file under ~/.mandate) or Postgres for state shared by
  * several server instances. The connection URL is a write-only secret (secrets.env); config.json only names its
  * variable. "Test connection" checks the version, pgvector / pg_trgm (and the schema they live in, e.g. Supabase's
- * `extensions`), privileges, pooler mode and TLS. A change applies after a restart.
+ * `extensions`), privileges, pooler mode and TLS. Saving switches the running server to it (no restart).
  */
 import { Group, NumberInput, Select, Text, TextInput } from '@mantine/core';
 import { IconAlertTriangle, IconCheck, IconDatabase, IconServer2 } from '@tabler/icons-react';
@@ -39,7 +39,7 @@ export function DatabaseSection({ state, register, variant }: SectionProps) {
     return r;
   };
   const missing = probe ? Object.entries(probe.extensions).filter(([, e]) => !e.installed) : [];
-  const pending = cur.active !== cur.driver;
+  const switching = driver !== cur.active;
 
   return (
     <div className="su-section" data-testid="database-section">
@@ -76,17 +76,17 @@ export function DatabaseSection({ state, register, variant }: SectionProps) {
           )}
         </ChoiceCard>
       </div>
-      {pending && (
-        <Notice icon={<IconAlertTriangle size={16} />} tone="warn" title="Restart to apply">
-          This server runs on {cur.active === 'postgres' ? 'Postgres' : 'SQLite'}; the saved choice takes effect after a restart. Existing sessions and tokens are not copied between backends: people sign in again
-          and personal tokens are recreated.
+      {switching && (
+        <Notice icon={<IconAlertTriangle size={16} />} tone="warn" title={`Switch to ${driver === 'postgres' ? 'Postgres' : 'SQLite'}`} testId="db-switch-note">
+          This server runs on {cur.active === 'postgres' ? 'Postgres' : 'SQLite'}; saving switches it now, without a restart. Existing sessions and tokens are not copied between backends: people sign in
+          again and personal tokens are recreated (<code>mandate db copy</code> copies them).
         </Notice>
       )}
     </div>
   );
 }
 
-function ProbeDetails({ probe }: { probe: DatabaseProbe }) {
+export function ProbeDetails({ probe }: { probe: DatabaseProbe }) {
   return (
     <div className="np-stack" data-testid="db-probe">
       {probe.version && (

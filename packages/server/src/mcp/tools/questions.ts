@@ -1,8 +1,8 @@
 /**
  * Questions through Mandate: an agent asks the user (`question_ask`, AskUserQuestion shape + recommended), keeps
  * working, and picks the answer up later (`notifications/mandate/question_answered` to the asking session, or
- * `questions_list { mine, status: answered }`). The user answers in the web UI (`question_answer`, uiAllowed); in
- * local mode an agent may relay an answer the user gave explicitly in chat. Answered questions are proof: a write
+ * `questions_list { mine, status: answered }`). The user answers in the web UI (`question_answer`, uiAllowed); on
+ * agents never answer for the user. Answered questions are proof: a write
  * citing one as `cause` records who confirmed / approved (`questionProof`).
  */
 import {
@@ -41,7 +41,7 @@ const about = (q: Question, ref: string) => q.context.some((c) => c === ref || c
 /**
  * Validate the answered questions a write cites as cause, for a purpose. Returns the proof (question id and who
  * answered) or null when the write cites no question of that purpose. Throws when a cited question of the purpose is
- * not answered, or was answered by someone who may not confirm (server mode: a signed-in user, who needs push access to
+ * not answered, or was answered by someone who may not confirm (team: a signed-in user, who needs push access to
  * answer in the web UI; never an agent).
  */
 export async function questionProof(ctx: ToolContext, purposes: QuestionPurpose[]): Promise<{ id: string; by: string; user?: string } | null> {
@@ -52,7 +52,7 @@ export async function questionProof(ctx: ToolContext, purposes: QuestionPurpose[
     if (!purposes.includes(q.purpose)) continue;
     if (q.status !== 'answered' || !q.answer) throw new QuestionError('question_not_answered', `question ${id} is ${q.status}: only an answered question proves the user's ${q.purpose.replace('_', ' ')}`);
     const user = q.answer.by.user;
-    if (ctx.settings?.mode === 'server' && (!user || user.startsWith(SERVICE_USER_PREFIX) || q.answer.via !== 'ui')) {
+    if (ctx.settings && (!user || user.startsWith(SERVICE_USER_PREFIX) || q.answer.via !== 'ui')) {
       throw new QuestionError('question_ineligible', `question ${id} was not answered by a signed-in user with write access (answered by ${user ?? q.answer.by.agent})`, 403);
     }
     proof ??= { id, by: user ?? q.answer.by.agent, ...(user ? { user } : {}) };
@@ -128,12 +128,12 @@ Example: {"id":"ask-0001","reason":"decided by the spec"}`,
     title: 'Answer a question',
     kind: 'write',
     uiAllowed: true,
-    description: `Record the user's answer (the web UI does this). Agents: local mode only, and only to relay an answer the user gave you explicitly in chat; never answer for the user. answers: { <question id>: label | [labels] (multiSelect) | free text }.
+    description: `Record the user's answer (the web UI does this). Agents cannot answer (the user answers in the web UI); never answer for the user. answers: { <question id>: label | [labels] (multiSelect) | free text }.
 Example: {"id":"ask-0001","answers":{"q1":"30 days"}}`,
     input: questionAnswerInputSchema,
     run: async (a, ctx) => {
       const ui = ctx.principal?.kind === 'ui';
-      if (!ui && ctx.settings?.mode === 'server') throw new ToolError('forbidden', 'in server mode questions are answered by the user in the Mandate web UI', 'tell the user the question is waiting in Mandate (Action needed)');
+      if (!ui && ctx.settings) throw new ToolError('forbidden', 'questions are answered by the user in the Mandate web UI', 'tell the user the question is waiting in Mandate (Action needed)');
       const commits: string[] = [];
       const by = ui ? { agent: UI_AGENT, ...(principalUser(ctx) ? { user: principalUser(ctx)! } : {}) } : actor(ctx);
       return done(await ctx.storage.questionService.answer(a.id, a.answers, by, { ...(a.notes ? { notes: a.notes } : {}), via: ui ? 'ui' : 'chat' }, meta(ctx, commits)), commits);

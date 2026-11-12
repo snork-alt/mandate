@@ -52,9 +52,9 @@ export interface McpRouteOptions {
   auth: AuthOptions;
   /** Extra hostnames accepted in the Host header (DNS-rebinding protection; local hosts are always allowed). */
   allowedHosts?: string[];
-  /** Server mode: per-project access from GitHub repo permissions (users without access get 404). */
+  /** Team: per-project access from GitHub repo permissions (users without access get 404). */
   perms?: RepoPermissions;
-  /** Server mode: the public URL (401s point agents at the OAuth protected-resource metadata). */
+  /** Team: the public URL (401s point agents at the OAuth protected-resource metadata). */
   publicUrl?: string;
   /** Base URL agents reach this server at (upload URLs, UI links); default: from the request's Host. */
   baseUrl?: string;
@@ -98,7 +98,7 @@ export function registerMcp(app: FastifyInstance, opts: McpRouteOptions): McpHub
     }
     const p = auth.principal;
     let access: Access = p.kind === 'ui' ? 'read' : 'write';
-    // Local mode (no GitHub permissions): the signed-in local user may record decisions.
+    // No GitHub permissions (local-folder projects of older installs): the signed-in user may record decisions.
     let uiAccess: Access = p.kind === 'ui' ? 'write' : 'none';
     const login = loginOf(p);
     if (project !== null && login && opts.perms) {
@@ -286,7 +286,7 @@ function createProjectListServer(projects: ProjectRegistry, principal: Principal
     run: async () => {
       const login = loginOf(principal);
       const candidates = projects.list().map((p) => p.id).filter((id) => principal.kind === 'ui' || principal.project === id);
-      // Server mode: only projects the user can read (GitHub repo permissions); each item says read / write.
+      // Team: only projects the user can read (GitHub repo permissions); each item says read / write.
       const accessById = new Map<string, Access>();
       for (const id of candidates) accessById.set(id, login && perms ? await perms.access(login, projects.config(id)) : 'write');
       const ids = candidates.filter((id) => accessById.get(id) !== 'none');
@@ -375,7 +375,7 @@ function registerUiRoutes(app: FastifyInstance, opts: McpRouteOptions, hostOk: (
     };
   });
 
-  // Server mode: the signed-in user's personal agent tokens for a project (shown once at creation; hashed at rest).
+  // Team: the signed-in user's personal agent tokens for a project (shown once at creation; hashed at rest).
   if (opts.auth.agentTokens) {
     const tokens = opts.auth.agentTokens;
     app.get('/ui/p/:projectId/tokens', async (req, reply) => {

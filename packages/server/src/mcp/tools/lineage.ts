@@ -73,17 +73,17 @@ Example: {"ref":"mandate://code/app/src/auth/session.ts#L10-L40"}`,
     name: 'contributors',
     title: 'Contributors',
     kind: 'read',
-    description: `People who contributed to elements (server mode only; empty in local mode).
+    description: `People who contributed to elements (users; older agent-only commits count for their agent).
 Direct: wrote to the element, its sections, comments or verifications (roles, count, last time, agents). Indirect (kind via): contributed to a recorded cause within depth hops, with the chain; both = direct with alsoVia. Up to 100 refs.
 Example: {"refs":["mandate://standards/security-baseline/sections/r-mfa"],"depth":2}`,
     input: contributorsInputSchema,
-    run: (a, ctx) => needIndex(ctx).contributors(a, { agentsOnly: ctx.settings?.mode === 'local' }),
+    run: (a, ctx) => needIndex(ctx).contributors(a),
   }),
   defineTool({
     name: 'users_resolve',
     title: 'Resolve users',
     kind: 'read',
-    description: `Server-mode user directory: login -> name and avatar URL (service:<name> accounts have none). Used by the web UI for avatars.
+    description: `User directory: login -> name and avatar URL (service:<name> accounts have none). Used by the web UI for avatars.
 Example: {"logins":["octocat","service:ci"]}`,
     input: usersResolveInputSchema,
     run: async (a) => {
@@ -95,9 +95,9 @@ Example: {"logins":["octocat","service:ci"]}`,
     name: 'writers_recent',
     title: 'Recent writers',
     kind: 'read',
-    description: `Who wrote to this project recently: commits grouped by user (server mode: GitHub login or service:<name>; local mode: agent only), agent and credential, with unattributed and service-account counts.
+    description: `Who wrote to this project recently: commits grouped by user (GitHub login or service:<name>), agent and credential, with unattributed and service-account counts.
 Example: {"limit":500}`,
     input: writersInputSchema,
-    run: (a, ctx) => recentWriters(ctx.storage.git, ctx.settings?.mode ?? null, a.limit),
+    run: (a, ctx) => recentWriters(ctx.storage.git, a.limit),
   }),
 ];

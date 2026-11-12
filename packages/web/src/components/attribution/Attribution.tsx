@@ -8,10 +8,10 @@ import '../lineage/lineage.css';
 export { UserAvatar } from '../people/People';
 
 /**
- * "<avatar> user via agent" in server mode; only "via agent" in local mode (users are never shown there).
+ * "<avatar> user via agent"; only "via agent" for older agent-only commits.
  * Renders nothing when neither is known.
  */
-export function ByLine({ a, size = 14, showUsers, agentAvatar }: { a: Pick<Attribution, 'user' | 'agent'> | null | undefined; size?: number; showUsers?: boolean; /** Without a user: the agent's avatar (dashed in server mode: no user recorded), so every line has a face. */ agentAvatar?: boolean }) {
+export function ByLine({ a, size = 14, showUsers, agentAvatar }: { a: Pick<Attribution, 'user' | 'agent'> | null | undefined; size?: number; showUsers?: boolean; /** Without a user: the agent's avatar (dashed: no user recorded), so every line has a face. */ agentAvatar?: boolean }) {
   const ctxUsers = useShowUsers();
   const withUsers = showUsers ?? ctxUsers;
   if (!a || (!a.agent && !(withUsers && a.user))) return null;
@@ -39,7 +39,7 @@ export function ByLine({ a, size = 14, showUsers, agentAvatar }: { a: Pick<Attri
   );
 }
 
-/** " by user via agent" (server mode) / " via agent" (local mode). */
+/** " by user via agent" / " via agent" (no user recorded). */
 function Who({ a, showUsers }: { a?: Pick<Attribution, 'user' | 'agent'>; showUsers: boolean }) {
   if (!a || !(a.agent || (showUsers && a.user))) return null;
   return (

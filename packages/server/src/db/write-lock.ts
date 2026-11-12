@@ -18,13 +18,18 @@ export class ProjectWriteLock extends Mutex {
     super();
   }
 
-  /** Re-entrant like Mutex (a nested `run` in the same async context does not take the advisory lock again). */
+  /**
+   * Re-entrant like Mutex (a nested `run` in the same async context does not take the database lock again). Queued
+   * in-process first, then the database's lock on the project key (SQLite: a keyed in-process mutex; Postgres: the
+   * advisory lock). The database is looked up per acquisition, so one switched at runtime (SQLite ↔ Postgres) changes
+   * the lock without reopening the project, and writers queued across the switch stay serialized in-process.
+   */
   protected override acquire<T>(fn: () => Promise<T>): Promise<T> {
-    return this.db.withLock(projectLockKey(this.projectId), () => fn());
+    return super.acquire(() => this.db.withLock(projectLockKey(this.projectId), () => fn()));
   }
 }
 
-/** The write lock for a project: shared (advisory) when the database is shared between instances, else in-process. */
+/** The write lock for a project: in-process plus the database's lock on the project key (advisory on Postgres). */
 export function projectWriteLock(db: Db | undefined, projectId: string): Mutex {
-  return db?.caps.sharedLocks ? new ProjectWriteLock(db, projectId) : new Mutex();
+  return db ? new ProjectWriteLock(db, projectId) : new Mutex();
 }

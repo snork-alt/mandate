@@ -1,9 +1,10 @@
 /**
- * Server mode: per-project access from GitHub repo permissions, using the signed-in user's own token.
+ * Team: per-project access from GitHub repo permissions, using the signed-in user's own token.
  * `GET /repos/{owner}/{repo}` → `permissions { pull, triage, push, maintain, admin }` (covers org and team grants):
  * push / maintain / admin → write, pull / triage → read, otherwise (or 404 / 403) → none (the project is hidden: 404).
  * Cached per (user, project) for 5 minutes; a 401 marks the user's token revoked → none.
- * Projects without GitHub storage (e.g. a legacy local `default`) fall back to the sign-in allow-list: write.
+ * Local-folder projects of older installs (no GitHub repo): admins write, other signed-in users read (no allow-list
+ * check possible per repo); without an admin check (older OAuth App installs) every signed-in user writes, as before.
  */
 import type { ProjectConfig } from '../config.js';
 import { GithubClient } from './github.js';
@@ -20,6 +21,8 @@ export function accessOf(p: { pull?: boolean; triage?: boolean; push?: boolean; 
 
 export class RepoPermissions {
   private readonly cache = new Map<string, { access: Access; at: number }>();
+  /** Mandate admins (allowedUsers); set at startup. */
+  isAdmin?: (login: string) => boolean;
 
   constructor(
     private readonly store: AuthStore,
@@ -31,7 +34,7 @@ export class RepoPermissions {
   /** The user's access to a project (cached). */
   async access(login: string, project: ProjectConfig | undefined): Promise<Access> {
     if (!project) return 'none';
-    if (!project.github) return 'write'; // non-GitHub project in server mode: the sign-in allow-list is the gate
+    if (!project.github) return !this.isAdmin || this.isAdmin(login) ? 'write' : 'read'; // older local-folder project
     // Revoked / missing token: no access, checked before the cache (not cached: a new sign-in applies at once).
     const tok = await this.store.token(login);
     if (!tok) return 'none';

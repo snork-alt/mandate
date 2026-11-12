@@ -598,7 +598,7 @@ export class Indexer {
     const agentUri = buildNodeUri({ kind: 'agents', name: who });
     this.insertIdentity(agentUri, 'agent', who, seq);
     edge.run(uri, agentUri, 'authored_by', agent ? json({ trailer: true }) : null, seq);
-    // P6: the user (server mode, `Mandate-User` trailer) authored the commit too; local mode has no user nodes. The
+    // P6: the user (`Mandate-User` trailer) authored the commit too; older agent-only commits have no user node. The
     // feedback / work orders the commit creates are filed / created by that user.
     const user = userOfTrailers(trailers);
     if (user) {

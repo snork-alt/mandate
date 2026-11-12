@@ -92,8 +92,7 @@ function filesFor(id: string) {
   expect(userWiringChanges(ctx, [agent], 'http://localhost:4000').changes.filter(Boolean)).toEqual([]);
   expect(connectChanges(ctx, repo, 'web-app', 'http://localhost:4000', [agent]).changes.filter(Boolean)).toEqual([]);
   // No key in the repo, ever.
-  const key = JSON.parse(readFileSync(path.join(ctx.mandateHome, 'keys.json'), 'utf8')).keys[0].key as string;
-  for (const [f, t] of Object.entries(snapshotTree(repo))) expect(t, f).not.toContain(key);
+  for (const [f, t] of Object.entries(snapshotTree(repo))) expect(t, f).not.toMatch(/mnd_|mndp_/);
   // Uninstall (with the manifest entry connect would write) restores home and repo.
   write(path.join(ctx.mandateHome, 'wiring.json'), JSON.stringify({ version: 1, repos: [{ repo, project: 'web-app', agents: [id], at: 'now' }] }));
   applyChanges(uninstallChanges(ctx), { dryRun: false, out: capture() });
@@ -141,7 +140,8 @@ describe('shared locations and gating', () => {
     expect(skipped[0]).toMatch(/unverified/);
     const forced = { ...ctx, force: true };
     expect(commandChanges(forced, [junie]).filter(Boolean).length).toBe(COMMANDS.length);
-    expect(userWiringChanges(forced, [zed], 'http://localhost:4000').changes.filter(Boolean).some((c) => c!.file.endsWith('.config/zed/settings.json'))).toBe(true);
+    // Forced past the unverified location, Zed still cannot sign in with GitHub by itself: a personal token is needed.
+    expect(userWiringChanges(forced, [zed], 'http://localhost:4000').skipped[0]).toMatch(/cannot sign in by itself/);
   });
 });
 

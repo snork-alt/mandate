@@ -68,7 +68,7 @@ export function UserMenu() {
       <Menu.Dropdown>
         <Menu.Label>
           {user.name || user.login}
-          {user.kind === 'local' ? ' · this computer' : ` · @${user.login}`}
+          {` · @${user.login}`}
         </Menu.Label>
         {auth?.isAdmin && (
           <Menu.Item leftSection={<IconSettings size={14} />} onClick={() => goTo('/settings')} data-testid="menu-settings">

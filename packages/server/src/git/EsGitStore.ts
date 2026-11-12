@@ -13,6 +13,8 @@ import {
 import type { GitCommitInfo, GitFileStatus, GitStatus } from '@mandate/shared';
 import type { RemoteAuth, RemoteConfig } from '../config.js';
 import type { CommitDiff, CommitOptions, FileCommit, GitStore } from './GitStore.js';
+import { commitAuthor } from './author.js';
+import { onAuthFailure, resolveRemoteAuth, scrubbed } from './remote-auth.js';
 
 export interface EsGitStoreOptions {
   dir: string;
@@ -24,7 +26,7 @@ export interface EsGitStoreOptions {
 
 const REMOTE_NAME = 'origin';
 
-/** Map our config auth to an es-git (libgit2) credential. */
+/** Map our config auth to an es-git (libgit2) credential (a GitHub App token must be resolved first). */
 export function toCredential(auth: RemoteAuth | undefined): Credential | undefined {
   if (!auth) return undefined;
   switch (auth.type) {
@@ -40,6 +42,8 @@ export function toCredential(auth: RemoteAuth | undefined): Credential | undefin
       return { type: 'SSHKeyFromAgent', username: auth.username };
     case 'https':
       return { type: 'Plain', username: auth.username, password: auth.token };
+    case 'github-app':
+      throw new Error('a GitHub App remote needs its token resolved first (resolveRemoteAuth)');
   }
 }
 
@@ -63,8 +67,26 @@ export class EsGitStore implements GitStore {
     return this.repo;
   }
 
-  private get credential(): Credential | undefined {
-    return toCredential(this.remote?.auth);
+  /**
+   * Run a network operation with an in-memory credential (a GitHub App installation token is minted / taken from the
+   * cache just before); the secret is scrubbed from any error.
+   */
+  private async withCredential<T>(fn: (credential: Credential | undefined) => Promise<T>): Promise<T> {
+    const auth = await resolveRemoteAuth(this.remote?.auth);
+    const secrets = auth?.type === 'https' ? [auth.token] : auth?.type === 'ssh' ? [auth.passphrase] : [];
+    try {
+      return await fn(toCredential(auth));
+    } catch (e) {
+      onAuthFailure(this.remote?.auth, e);
+      throw scrubbed(e, secrets);
+    }
+  }
+
+  /** GitHub App remotes: keep `origin` on the plain HTTPS URL (an older clone may point at git@github.com:...). */
+  private alignRemoteUrl(): void {
+    if (this.remote?.auth?.type !== 'github-app') return;
+    const r = this.r.findRemote(REMOTE_NAME);
+    if (r && r.url() !== this.remote.url) this.r.config().setString(`remote.${REMOTE_NAME}.url`, this.remote.url);
   }
 
   private signature(date?: Date, who = this.author): SignaturePayload {
@@ -88,14 +110,14 @@ export class EsGitStore implements GitStore {
     if (this.remote && !this.repo.findRemote(REMOTE_NAME)) {
       this.repo.createRemote(REMOTE_NAME, this.remote.url);
     }
+    this.alignRemoteUrl();
   }
 
   async clone(): Promise<void> {
     if (!this.remote) throw new Error('No remote configured');
     await mkdir(path.dirname(this.dir), { recursive: true });
-    this.repo = await cloneRepository(this.remote.url, this.dir, {
-      fetch: { credential: this.credential },
-    });
+    const url = this.remote.url;
+    this.repo = await this.withCredential((credential) => cloneRepository(url, this.dir, { fetch: { credential } }));
     // Cloning an empty remote leaves HEAD on libgit2's default (`master`);
     // point it at the configured branch instead.
     if (!this.headOid()) this.repo.setHead(`refs/heads/${this.branch}`);
@@ -162,8 +184,9 @@ export class EsGitStore implements GitStore {
     if (parent && repo.getCommit(parent).treeId() === treeId) return null;
     return repo.commit(repo.getTree(treeId), message, {
       updateRef: 'HEAD',
-      author: this.signature(options.date, options.author),
-      committer: this.signature(options.date, options.author),
+      // The triggering user (or an explicit author) authors; Mandate (`git.author`) commits.
+      author: this.signature(options.date, commitAuthor(message, options.author) ?? this.author),
+      committer: this.signature(options.date),
       parents: parent ? [parent] : [],
     });
   }
@@ -171,7 +194,7 @@ export class EsGitStore implements GitStore {
   async fetch(): Promise<void> {
     if (!this.remote) return;
     const remote = this.r.getRemote(REMOTE_NAME);
-    await remote.fetch([], { fetch: { credential: this.credential } });
+    await this.withCredential((credential) => remote.fetch([], { fetch: { credential } }));
   }
 
   async pull(): Promise<boolean> {
@@ -232,14 +255,16 @@ export class EsGitStore implements GitStore {
     const branch = this.currentBranch() ?? this.branch;
     const rejections: string[] = [];
     const remote = this.r.getRemote(REMOTE_NAME);
-    await remote.push([`refs/heads/${branch}:refs/heads/${branch}`], {
-      credential: this.credential,
-      callbacks: {
-        pushUpdateReference: (ref, status) => {
-          if (status) rejections.push(`${ref}: ${status}`);
+    await this.withCredential((credential) =>
+      remote.push([`refs/heads/${branch}:refs/heads/${branch}`], {
+        credential,
+        callbacks: {
+          pushUpdateReference: (ref, status) => {
+            if (status) rejections.push(`${ref}: ${status}`);
+          },
         },
-      },
-    });
+      }),
+    );
     if (rejections.length) throw new Error(`Push rejected: ${rejections.join(', ')}`);
   }
 

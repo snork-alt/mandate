@@ -182,7 +182,7 @@ export const historyGetInputSchema = z
   .object({
     ref: anyDocRef,
     limit: z.number().int().min(1).max(500).default(100),
-    /** Server mode: only commits triggered by this user (GitHub login or service:<name>). */
+    /** Only commits triggered by this user (the owner, a GitHub login or service:<name>). */
     user: z.string().trim().min(1).max(200).optional(),
   })
   .strict();

@@ -44,6 +44,8 @@ export interface RepoList {
   owner?: string;
   owners?: GithubOwner[];
   items: GithubRepo[];
+  /** GitHub App mode: only repositories where the app is installed are listed; `installUrl` adds more. */
+  app?: { slug: string | null; installUrl: string | null };
 }
 
 /** Steps streamed by POST /ui/projects (Accept: application/x-ndjson). */

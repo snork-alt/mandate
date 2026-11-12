@@ -388,7 +388,7 @@ export const EDGE_KINDS = [
   'acts_on',
   'verified_at_code',
   'proven_by',
-  // Identity (P6): feedback / work order -> the user who filed / created it (server mode; the commit's user).
+  // Identity (P6): feedback / work order -> the user who filed / created it (the commit's user).
   'created_by',
   'filed_by',
   // A finding that repeats a finding of an earlier audit (finding `duplicateOf`).

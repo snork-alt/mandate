@@ -111,11 +111,14 @@ describeBackends('write lock', (b) => {
     expect(after!.n).toBe(0);
   });
 
-  it('projectWriteLock is shared only when the database is shared between instances', async () => {
+  it('projectWriteLock takes the database lock on the project key (advisory on Postgres)', async () => {
     const db: Db = await b.open();
     const l = projectWriteLock(db, 'p');
-    expect(l instanceof ProjectWriteLock).toBe(b.name === 'postgres');
     expect(projectWriteLock(undefined, 'p') instanceof ProjectWriteLock).toBe(false);
+    const withLock = db.withLock.bind(db);
+    let advisory = 0;
+    db.withLock = (k, fn) => (advisory++, withLock(k, fn));
     expect(await l.run(async () => 42)).toBe(42);
+    expect(advisory).toBe(1);
   });
 });

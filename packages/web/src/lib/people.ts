@@ -1,5 +1,5 @@
 /**
- * People (server mode only): contributors of elements (`contributors`) and the user directory (`users_resolve`).
+ * People: contributors of elements (`contributors`) and the user directory (`users_resolve`).
  * Both are batched: every component asks for its own ref / login and the requests made in the same tick go out as one
  * tool call (chunks of 100 refs / 200 logins); results are cached per ref / login by react-query.
  */
@@ -58,7 +58,7 @@ const loadUser = batcher<DirectoryUser | null>(
   null,
 );
 
-/** Contributors of one element: users (server mode) or agent identities (`userRecorded: false`: legacy, local mode). */
+/** Contributors of one element: users or agent identities (`userRecorded: false`: older agent-only commits). */
 /**
  * Contributors that came with a get tool's result (`contributors` on spec / doc / work order / feedback / audit gets):
  * the first render of that element's stack uses them instead of a separate `contributors` call.
@@ -82,7 +82,7 @@ export function useContributors(ref: string | null | undefined, enabled = true) 
   });
 }
 
-/** Directory entry of a login (name, avatar), server mode only. */
+/** Directory entry of a login (name, avatar). */
 export function useDirectoryUser(login: string | null | undefined, enabled = true) {
   const server = useShowUsers();
   return useQuery<DirectoryUser | null>({

@@ -66,7 +66,6 @@ const atLeast = (v: string, min: [number, number]) => {
 };
 
 export interface CheckContext {
-  mode: 'local' | 'server';
   home: string;
   localBaseDir: string;
   port: number;
@@ -92,19 +91,19 @@ export async function environmentChecks(c: CheckContext): Promise<Check[]> {
       return false;
     }
   };
-  const dataDir = c.mode === 'local' ? c.localBaseDir : path.join(c.home, 'projects');
+  const dataDir = path.join(c.home, 'projects');
   checks.push(writable(dataDir) ? { id: 'dataDir', label: 'Data folder', ok: true, level: 'info', detail: `${dataDir} is writable` } : { id: 'dataDir', label: 'Data folder', ok: false, level: 'error', detail: `${dataDir} is not writable`, fix: `Pick another folder or fix permissions: chmod u+w ${path.dirname(dataDir)}` });
   checks.push({ id: 'port', label: 'Port', ok: true, level: 'info', detail: `listening on ${c.port}` });
   checks.push(
     process.env.MANDATE_SERVICE === '1'
       ? { id: 'service', label: 'Background service', ok: true, level: 'info', detail: 'running as a service' }
-      : { id: 'service', label: 'Background service', ok: true, level: 'info', detail: 'running in the foreground', fix: 'Optional: getmandate service install keeps Mandate running after you close the terminal.' },
+      : { id: 'service', label: 'Background service', ok: true, level: 'info', detail: 'running in the foreground', fix: 'Optional: mandate install keeps Mandate running after you close the terminal.' },
   );
-  if (c.mode === 'server') checks.push(...(await serverChecks(c.publicUrl, c.fetch ?? fetch)));
+  if (!/^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(c.publicUrl)) checks.push(...(await serverChecks(c.publicUrl, c.fetch ?? fetch)));
   return checks;
 }
 
-/** Server mode: the public URL is reachable from the server, over HTTPS with a valid certificate, and SSE is not buffered. */
+/** On a server: the public URL is reachable from the server, over HTTPS with a valid certificate, and SSE is not buffered. */
 export async function serverChecks(publicUrl: string, f: Fetch = fetch): Promise<Check[]> {
   const out: Check[] = [];
   let u: URL;

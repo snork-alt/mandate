@@ -2,7 +2,7 @@
  * Setup sections, shared by the first-run wizard (`/setup`) and Settings (`/settings`). Each section edits a draft and
  * registers a saver; the wizard's Continue and Settings' Save run it (PUT /ui/setup/config with the configVersion).
  */
-import { Anchor, Button, Group, NumberInput, Select, Switch, TagsInput, Text, TextInput } from '@mantine/core';
+import { Anchor, Button, Group, Loader, NumberInput, Select, Switch, TagsInput, Text, TextInput } from '@mantine/core';
 import {
   IconAlertTriangle,
   IconBrain,
@@ -18,6 +18,10 @@ import {
   IconFolder,
   IconRefresh,
   IconServer,
+  IconUsers,
+  IconChevronDown,
+  IconLink,
+  IconUserCircle,
   IconTrash,
   IconX,
 } from '@tabler/icons-react';
@@ -27,7 +31,24 @@ import { Field, Notice } from '../connect/parts';
 import { copyText } from '../lib/copy';
 import { useAuth } from '../auth';
 import { UiApiError } from '../lib/ui';
-import { ASK_LIMITS, ASK_PRESETS, PER_TOOL_FIELD, modelConfigId, SECRET_DEFAULTS, setupApi, tildify, type AskModelConfig, type AskProvider, type ConfigPatch, type ServerMode, type SetupState } from './api';
+import {
+  announceApplied,
+  ASK_LIMITS,
+  ASK_PRESETS,
+  PER_TOOL_FIELD,
+  modelConfigId,
+  SECRET_DEFAULTS,
+  serverStartedAt,
+  setupApi,
+  tildify,
+  waitForRestart,
+  type AskModelConfig,
+  type AskProvider,
+  type ConfigPatch,
+  type GithubAppSettings,
+  type SetupConfig,
+  type SetupState,
+} from './api';
 import { ChoiceCard, CommandLine, CopyField, FolderBrowser, NextNote, Recommended, SecretField, StepIntro, TestButton } from './widgets';
 
 export type Saver = () => Promise<void>;
@@ -46,8 +67,7 @@ export function usePatchConfig() {
     const st = qc.getQueryData<SetupState>(['setup', 'state']) ?? (await setupApi.state());
     try {
       const r = await setupApi.patch(st.configVersion, patch);
-      if (r.restartRequired) restartNeeded.value = true;
-      window.dispatchEvent(new Event(RESTART_EVENT));
+      announceApplied(r.applied);
     } finally {
       await qc.invalidateQueries({ queryKey: ['setup', 'state'] });
     }
@@ -64,26 +84,12 @@ export function useSaver(register: SectionProps['register'], fn: Saver | null) {
   }, [register]);
 }
 
-/** Set once a saved change needs a restart (embedding provider, git backend). */
-export const restartNeeded = { value: false };
-export const RESTART_EVENT = 'mandate:restart-needed';
 
 export const configChangedMessage = (e: unknown) => (e instanceof UiApiError && e.code === 'config_changed' ? 'The config was edited outside Mandate. Reload to see the current values.' : null);
 
-/* ------------------------------------------------------------------ welcome / mode */
+/* ------------------------------------------------------------------ server address (Settings, advanced) */
 
-const MODE_TEXT: Record<ServerMode, { title: string; body: string }> = {
-  local: {
-    title: 'This computer',
-    body: 'Projects are git repositories in a folder on this machine. Sign in with a one-time link from the terminal; pushes use your own git credentials. No GitHub app needed.',
-  },
-  server: {
-    title: 'A remote server',
-    body: 'Several people reach Mandate at a public URL. Sign-in with GitHub is required (with an allow-list) and projects come from GitHub repositories.',
-  },
-};
-
-export function ChecksPanel({ mode }: { mode: ServerMode }) {
+export function ChecksPanel() {
   const checks = useQuery({ queryKey: ['setup', 'checks'], queryFn: setupApi.checks, retry: false });
   return (
     <div className="su-checks" data-testid="setup-checks">
@@ -109,197 +115,402 @@ export function ChecksPanel({ mode }: { mode: ServerMode }) {
         ))}
         {checks.isLoading && <li className="np-faint">Checking…</li>}
       </ul>
-      {mode === 'server' && (
-        <div className="np-hint" style={{ marginTop: 8 }}>
-          Until HTTPS works, reach the server through an SSH tunnel: <code>ssh -L 4000:localhost:4000 you@server</code>, then open http://localhost:4000.
+    </div>
+  );
+}
+
+const urlProblem = (v: string) => {
+  try {
+    const u = new URL(v.trim());
+    if (!/^https?:$/.test(u.protocol)) return 'Start with https://';
+    if (u.pathname !== '/' || u.search || u.hash) return 'Use the bare address, without a path';
+    return null;
+  } catch {
+    return 'Enter a full address, e.g. https://mandate.example.com';
+  }
+};
+
+/**
+ * Settings → Server address (advanced): the URL people and agents use. The setup wizard saves the address it was
+ * opened on; change it here for a domain or a reverse proxy. Listen address and proxy trust follow from it unless set.
+ */
+export function AddressSection({ state, variant }: SectionProps) {
+  const cur = state.config.server;
+  const current = cur.publicUrl ?? `http://localhost:${cur.port}`;
+  const [url, setUrl] = useState(current);
+  const [open, setOpen] = useState(false);
+  const [bind, setBind] = useState(cur.bind);
+  const [trustProxy, setTrustProxy] = useState(cur.trustProxy);
+  const restart = useServerRestart();
+  const problem = urlProblem(url);
+  const normalized = problem ? url.trim() : new URL(url.trim()).origin;
+  const advancedChanged = bind !== cur.bind || trustProxy !== cur.trustProxy;
+  const changed = normalized !== current || advancedChanged;
+  const change = useMutation({
+    mutationFn: async () => {
+      const before = await serverStartedAt();
+      const r = await setupApi.setServer(state.configVersion, normalized, open && advancedChanged ? { bind, trustProxy } : {});
+      await restart.run(before, r.url ?? null);
+      return r;
+    },
+  });
+  return (
+    <div className="su-section">
+      <StepIntro title="Server address">The address people and agents use. Change it when Mandate moves to a domain or behind a reverse proxy; Mandate restarts to apply it. The GitHub App must allow the new sign-in address.</StepIntro>
+      <Field label="Address" hint={problem ? undefined : `Sign-in returns to ${normalized}/auth/github/callback`} error={url && problem ? problem : null}>
+        <TextInput size="sm" value={url} onChange={(e) => setUrl(e.currentTarget.value)} placeholder="https://mandate.example.com" className="np-mono-input" data-testid="public-url" />
+      </Field>
+      <div>
+        <Button type="button" size="compact-xs" variant="subtle" color="gray" leftSection={<IconChevronDown size={12} style={{ transform: open ? 'none' : 'rotate(-90deg)' }} />} onClick={() => setOpen((o) => !o)} data-testid="address-advanced">
+          Advanced
+        </Button>
+        {open && (
+          <Group grow mt={8} align="flex-start">
+            <Field label="Listen on" hint="127.0.0.1 behind a proxy on this machine; 0.0.0.0 for direct access.">
+              <TextInput size="sm" value={bind} onChange={(e) => setBind(e.currentTarget.value)} className="np-mono-input" />
+            </Field>
+            <Field label="Behind a reverse proxy" hint="Trust X-Forwarded-* headers.">
+              <Switch checked={trustProxy} onChange={(e) => setTrustProxy(e.currentTarget.checked)} mt={6} />
+            </Field>
+          </Group>
+        )}
+      </div>
+      {changed && !problem && (
+        <Group gap={8}>
+          <Button type="button" size="xs" loading={change.isPending} disabled={change.isSuccess} onClick={() => change.mutate()} data-testid="address-save">
+            Save and restart
+          </Button>
+          <RestartStatus phase={restart.phase} />
+        </Group>
+      )}
+      {change.isError && <div className="np-error">{(change.error as Error).message}</div>}
+      {variant === 'settings' && <ChecksPanel />}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ restart after an address change */
+
+export type RestartPhase =
+  | { kind: 'idle' }
+  | { kind: 'restarting' }
+  | { kind: 'back'; to: string }
+  /** Not restarted by itself (manual), or not back within the wait: the command to run, and the new address. */
+  | { kind: 'manual'; command: string; url: string | null; timedOut: boolean };
+
+/** Ask the server to restart, wait for the new process, then go to the new address (or reload). */
+export function useServerRestart(o: { timeoutMs?: number; navigate?: (to: string) => void } = {}) {
+  const [phase, setPhase] = useState<RestartPhase>({ kind: 'idle' });
+  const run = async (before: number | null, url: string | null) => {
+    const r = await setupApi.restart();
+    const other = url && !url.startsWith(window.location.origin) ? url : null;
+    if (!r.restarting) return setPhase({ kind: 'manual', command: r.command, url: other, timedOut: false });
+    setPhase({ kind: 'restarting' });
+    const back = await waitForRestart(before, { ...(o.timeoutMs !== undefined ? { timeoutMs: o.timeoutMs } : {}) });
+    if (!back) return setPhase({ kind: 'manual', command: r.command, url: other, timedOut: true });
+    const to = other ?? window.location.pathname;
+    setPhase({ kind: 'back', to });
+    (o.navigate ?? ((t: string) => window.location.assign(t)))(to);
+  };
+  return { phase, run };
+}
+
+export function RestartStatus({ phase }: { phase: RestartPhase }) {
+  if (phase.kind === 'idle') return null;
+  if (phase.kind === 'restarting' || phase.kind === 'back')
+    return (
+      <Group gap={8} mt={8} data-testid="restart-progress">
+        <Loader size={14} />
+        <Text size="sm">{phase.kind === 'back' ? 'Mandate is back. Reloading…' : 'Mandate is restarting…'}</Text>
+      </Group>
+    );
+  return (
+    <div style={{ marginTop: 8 }} data-testid="restart-manual">
+      <b>Saved.</b> {phase.timedOut ? 'Mandate did not come back within 30 seconds. ' : 'This Mandate cannot restart itself. '}
+      Restart it: <code>{phase.command}</code>
+      {phase.url && (
+        <>
+          , then open{' '}
+          <Anchor href={phase.url} size="sm">
+            {phase.url}
+          </Anchor>
+        </>
+      )}
+      .
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ GitHub */
+
+/** POST the manifest to GitHub as a top-level form (GitHub shows "Create GitHub App", then redirects back). */
+export function submitManifest(action: string, manifest: string, doc: Document = document): void {
+  const form = doc.createElement('form');
+  form.method = 'post';
+  form.action = action;
+  const input = doc.createElement('input');
+  input.type = 'hidden';
+  input.name = 'manifest';
+  input.value = manifest;
+  form.appendChild(input);
+  doc.body.appendChild(form);
+  form.submit();
+}
+
+/** `?github=` after GitHub redirected back from the app creation. */
+export const GITHUB_RESULT: Record<string, { tone: 'ok' | 'danger'; text: string }> = {
+  created: { tone: 'ok', text: 'GitHub App created. Its secrets are saved on this server (secrets.env and a private key file), never in the config.' },
+  cancelled: { tone: 'danger', text: 'GitHub did not create the app (cancelled). Try again.' },
+  expired: { tone: 'danger', text: 'The GitHub code expired (it is valid for one hour). Create the app again.' },
+  state_mismatch: { tone: 'danger', text: 'The request expired or was started in another browser. Create the app again from here.' },
+  failed: { tone: 'danger', text: 'Mandate could not finish creating the app. Try again; the server log has details.' },
+};
+
+/** One-click GitHub App: personal account or an organization; then the app is installed where the projects live. */
+function CreateGithubApp({ app }: { app: GithubAppSettings | null | undefined }) {
+  const [owner, setOwner] = useState<'user' | 'org'>(app?.ownerType === 'Organization' ? 'org' : 'user');
+  const [org, setOrg] = useState(app?.ownerType === 'Organization' ? (app.owner ?? '') : '');
+  const result = new URLSearchParams(window.location.search).get('github');
+  const create = useMutation({
+    mutationFn: async () => {
+      const r = await setupApi.githubManifest({ owner: owner === 'org' ? org.trim() : 'user' });
+      submitManifest(r.action, r.manifest);
+      return r;
+    },
+  });
+  const orgOk = owner === 'user' || /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(org.trim());
+  return (
+    <div className="np-stack" data-testid="github-app">
+      {result && GITHUB_RESULT[result] && (
+        <Notice icon={result === 'created' ? <IconCheck size={16} /> : <IconAlertTriangle size={16} />} tone={GITHUB_RESULT[result].tone} title={result === 'created' ? 'GitHub App created' : 'GitHub App not created'} testId="github-result">
+          {GITHUB_RESULT[result].text}
+        </Notice>
+      )}
+      {app ? (
+        <div className="su-card su-kv" data-testid="github-app-info">
+          <span>GitHub App</span>
+          <b>
+            {app.htmlUrl ? (
+              <Anchor href={app.htmlUrl} target="_blank" rel="noreferrer" size="sm">
+                {app.slug}
+              </Anchor>
+            ) : (
+              app.slug
+            )}
+          </b>
+          <span>Owner</span>
+          <span>{app.owner ? `${app.owner}${app.ownerType === 'Organization' ? ' (organization)' : ''}` : 'unknown'}</span>
+          <span>Private key</span>
+          <span>{app.privateKeySet ? 'saved on this server' : 'missing'}</span>
+        </div>
+      ) : (
+        <Text size="sm" className="np-muted">
+          Mandate registers itself on GitHub in one click: you review it on GitHub and press <b>Create GitHub App</b>; GitHub sends the credentials back to this server. It asks only to read and write
+          repository contents (and to read organization members when an organization owns it).
+        </Text>
+      )}
+      <div className="su-choices" role="radiogroup">
+        <ChoiceCard selected={owner === 'user'} onSelect={() => setOwner('user')} title="My GitHub account" description="The app belongs to you; it can still be installed on organizations." icon={<IconUserCircle size={18} />} testId="gh-owner-user" />
+        <ChoiceCard selected={owner === 'org'} onSelect={() => setOwner('org')} title="An organization" description="The app belongs to the organization (you need to be an owner of it)." icon={<IconUsers size={18} />} testId="gh-owner-org">
+          <Field label="Organization" error={org && !orgOk ? 'A GitHub organization login' : null}>
+            <TextInput size="sm" value={org} onChange={(e) => setOrg(e.currentTarget.value)} placeholder="your-org" className="np-mono-input" data-testid="gh-org" />
+          </Field>
+        </ChoiceCard>
+      </div>
+      <Group gap={8}>
+        <Button type="button" size="sm" leftSection={<IconBrandGithub size={15} />} loading={create.isPending} disabled={!orgOk || (owner === 'org' && !org.trim())} onClick={() => create.mutate()} data-testid="gh-create-app">
+          {app ? 'Create a new GitHub App' : 'Create GitHub App'}
+        </Button>
+        {app && (
+          <Button type="button" size="sm" variant="default" component="a" href={app.installUrl} target="_blank" rel="noreferrer" rightSection={<IconExternalLink size={12} />} data-testid="gh-install">
+            Install on repositories
+          </Button>
+        )}
+      </Group>
+      {create.isError && <div className="np-error">{(create.error as Error).message}</div>}
+    </div>
+  );
+}
+
+/** Advanced fallback: an existing GitHub OAuth App (older setups keep working with it). */
+export function OAuthAppFields({ g, suggested, clientId, setClientId, secretSet, setSecretSet }: { g: NonNullable<SetupConfig['github']>; suggested: { name: string; homepageUrl: string; callbackUrl: string }; clientId: string; setClientId: (v: string) => void; secretSet: boolean; setSecretSet: (v: boolean) => void }) {
+  return (
+    <ol className="su-steps" data-testid="oauth-app">
+      <li>
+        <Text size="sm" fw={600}>
+          Create the OAuth App on GitHub
+        </Text>
+        <div className="su-copies">
+          <CopyField label="Application name" value={suggested.name} />
+          <CopyField label="Homepage URL" value={suggested.homepageUrl} />
+          <CopyField label="Callback URL" value={suggested.callbackUrl} testId="gh-callback" />
+        </div>
+        <Button type="button" size="xs" mt={8} leftSection={<IconBrandGithub size={14} />} rightSection={<IconExternalLink size={12} />} component="a" href="https://github.com/settings/applications/new" target="_blank" rel="noreferrer">
+          Open GitHub
+        </Button>
+      </li>
+      <li>
+        <Text size="sm" fw={600}>
+          Paste the credentials
+        </Text>
+        <div className="np-stack" style={{ marginTop: 8 }}>
+          <Field label="Client ID" hint="Shown at the top of the app page, e.g. Ov23li…">
+            <TextInput size="sm" value={clientId} onChange={(e) => setClientId(e.currentTarget.value)} placeholder="Ov23li…" className="np-mono-input" data-testid="gh-client-id" />
+          </Field>
+          <SecretField name={g.clientSecretEnv || SECRET_DEFAULTS.github} isSet={secretSet} label="Client secret" placeholder="Generate a new client secret on GitHub and paste it" onSaved={setSecretSet} />
+          <TestButton disabled={!clientId.trim() || !secretSet} run={() => setupApi.testGithub({ clientId: clientId.trim() })} label="Test credentials" testId="gh-test" />
+        </div>
+      </li>
+    </ol>
+  );
+}
+
+const EMPTY_GITHUB: NonNullable<SetupConfig['github']> = { clientId: null, clientSecretEnv: SECRET_DEFAULTS.github, clientSecretSet: false, allowedUsers: [], allowedOrgs: [], callbackUrl: null, kind: null, app: null };
+
+/** GitHub sign-in: the one-click GitHub App (default) or, under Advanced, an existing OAuth App. */
+export function GithubSection({ state, register, variant }: SectionProps) {
+  const g = state.config.github ?? EMPTY_GITHUB;
+  const suggested = g.suggested ?? { name: 'Mandate', homepageUrl: state.config.server.publicUrl ?? '', callbackUrl: `${state.config.server.publicUrl ?? ''}/auth/github/callback` };
+  const [useOAuth, setUseOAuth] = useState(g.kind === 'oauth');
+  const [clientId, setClientId] = useState(g.kind === 'oauth' ? (g.clientId ?? '') : '');
+  const [secretSet, setSecretSet] = useState(!!g.clientSecretSet);
+  const patch = usePatchConfig();
+  useSaver(register, async () => {
+    if (!useOAuth) {
+      if (g.kind !== 'app') throw new UiApiError('invalid_input', 'Create the GitHub App first (or use an existing OAuth App under Advanced)', 'github');
+      return;
+    }
+    if (!clientId.trim()) throw new UiApiError('invalid_input', 'Paste the Client ID of your GitHub OAuth App', 'github.clientId');
+    if (!secretSet) throw new UiApiError('invalid_input', 'Save the client secret first', 'github.clientSecret');
+    await patch({ github: { clientId: clientId.trim(), callbackUrl: g.callbackUrl ?? suggested.callbackUrl, clientSecretEnv: g.clientSecretEnv } });
+  });
+  return (
+    <div className="su-section">
+      <StepIntro title="GitHub">
+        {variant === 'wizard' ? 'Everyone signs in with GitHub. ' : ''}A GitHub App gives Mandate access only to the repositories you install it on; people see a project when they can read its repository.
+      </StepIntro>
+      {!useOAuth && <CreateGithubApp app={g.app} />}
+      <details className="su-advanced" open={useOAuth} data-testid="gh-advanced">
+        <summary
+          onClick={(e) => {
+            e.preventDefault();
+            setUseOAuth(!useOAuth);
+          }}
+        >
+          <IconChevronDown size={13} /> Advanced: use an existing OAuth App{g.kind === 'oauth' ? ' (in use)' : ''}
+        </summary>
+        {useOAuth && (
+          <>
+            <Text size="sm" className="np-muted" mb={6}>
+              OAuth Apps see every repository the person can access (no per-repository install). Existing setups keep working with them.
+            </Text>
+            <OAuthAppFields g={g} suggested={suggested} clientId={clientId} setClientId={setClientId} secretSet={secretSet} setSecretSet={setSecretSet} />
+          </>
+        )}
+      </details>
+      {variant === 'wizard' && <NextNote>Choose who may sign in and who administers this Mandate.</NextNote>}
+    </div>
+  );
+}
+
+/** Who may sign in (allow-list) and the admins. */
+const avatarOf = (login: string) => `https://avatars.githubusercontent.com/${encodeURIComponent(login)}?s=64`;
+
+/** Look a GitHub login up (debounced) and show who it is before adding it. */
+function AddAdmin({ existing, onAdd }: { existing: string[]; onAdd: (login: string) => void }) {
+  const [value, setValue] = useState('');
+  const [query, setQuery] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setQuery(value.trim()), 350);
+    return () => clearTimeout(t);
+  }, [value]);
+  const valid = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(query);
+  const lookup = useQuery({ queryKey: ['github-user', query.toLowerCase()], queryFn: () => setupApi.githubUser(query), enabled: valid, retry: false, staleTime: 60_000 });
+  const already = !!lookup.data && existing.some((u) => u.toLowerCase() === lookup.data!.login.toLowerCase());
+  const add = () => {
+    if (!lookup.data || already) return;
+    onAdd(lookup.data.login);
+    setValue('');
+    setQuery('');
+  };
+  return (
+    <div className="su-admin-add" data-testid="admin-add">
+      <TextInput
+        size="sm"
+        label="Add an admin"
+        placeholder="GitHub login"
+        value={value}
+        onChange={(e) => setValue(e.currentTarget.value)}
+        onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), add())}
+        error={query && !valid ? 'Not a GitHub login' : lookup.isError ? (lookup.error as Error).message.replace(/^.*no GitHub user/, 'No GitHub user') : null}
+        rightSection={lookup.isFetching ? <Loader size={14} /> : null}
+        data-testid="admin-login"
+      />
+      {lookup.data && value.trim() === query && (
+        <div className="su-admin-row su-admin-found" data-testid="admin-found">
+          <img src={lookup.data.avatarUrl ?? avatarOf(lookup.data.login)} alt="" width={28} height={28} className="su-admin-avatar" />
+          <div className="su-admin-who">
+            <Text size="sm" fw={600}>
+              {lookup.data.login}
+            </Text>
+            {lookup.data.name && (
+              <Text size="xs" c="dimmed">
+                {lookup.data.name}
+              </Text>
+            )}
+          </div>
+          <Button type="button" size="xs" disabled={already} onClick={add} data-testid="admin-add-btn">
+            {already ? 'Already an admin' : 'Add'}
+          </Button>
         </div>
       )}
     </div>
   );
 }
 
-export function ModeSection({ state, variant }: SectionProps) {
-  const current = state.config.server.mode;
-  const [mode, setMode] = useState<ServerMode>(current);
-  const [publicUrl, setPublicUrl] = useState(state.config.server.publicUrl ?? '');
-  const change = useMutation({ mutationFn: () => setupApi.setMode(state.configVersion, mode, mode === 'server' ? publicUrl.trim() : undefined) });
-  const urlOk = /^https?:\/\/[^\s/]+/.test(publicUrl.trim());
-  return (
-    <div className="su-section">
-      {variant === 'wizard' ? (
-        <StepIntro title="Welcome to Mandate">
-          Mandate keeps your specs in git and serves them to coding agents over MCP. First, where does it run? Most people run it on their own computer; pick a remote server only if a team will share
-          it over the network.
-        </StepIntro>
-      ) : (
-        <StepIntro title="Mode">How this Mandate runs. Switching changes how the server listens and signs people in, and needs a restart.</StepIntro>
-      )}
-      <div className="su-choices" role="radiogroup">
-        <ChoiceCard selected={mode === 'local'} onSelect={() => setMode('local')} title={MODE_TEXT.local.title} description={MODE_TEXT.local.body} icon={<IconDeviceLaptop size={18} />} recommended testId="mode-local" />
-        <ChoiceCard selected={mode === 'server'} onSelect={() => setMode('server')} title={MODE_TEXT.server.title} description={MODE_TEXT.server.body} icon={<IconServer size={18} />} testId="mode-server">
-          <Field label="Public URL" hint="The HTTPS address people and agents use, e.g. https://mandate.example.com." error={publicUrl && !urlOk ? 'Enter a full URL starting with https://' : null}>
-            <TextInput size="sm" value={publicUrl} onChange={(e) => setPublicUrl(e.currentTarget.value)} placeholder="https://mandate.example.com" className="np-mono-input" />
-          </Field>
-        </ChoiceCard>
-      </div>
-      {mode !== current && (
-        <Notice
-          icon={<IconAlertTriangle size={16} />}
-          tone="warn"
-          title={`Switch to “${MODE_TEXT[mode].title}”?`}
-          testId="mode-warning"
-          actions={
-            change.data?.restartRequired ? null : (
-              <Button type="button" size="xs" loading={change.isPending} disabled={mode === 'server' && !urlOk} onClick={() => change.mutate()}>
-                Switch mode
-              </Button>
-            )
-          }
-        >
-          This changes how the server listens ({mode === 'server' ? 'on all interfaces, behind your HTTPS proxy' : 'on this machine only'}) and how people sign in. It takes effect after a restart.
-          {change.data?.restartRequired && (
-            <>
-              <br />
-              <b>Saved.</b> Restart Mandate now: <code>npx getmandate restart</code> (or stop and start <code>npm run dev</code>).
-            </>
-          )}
-          {change.isError && <div className="np-error">{(change.error as Error).message}</div>}
-        </Notice>
-      )}
-      {variant === 'wizard' && <ChecksPanel mode={current} />}
-      {variant === 'wizard' && (
-        <NextNote>{current === 'local' ? 'Choose the folder for your projects. Every other step is optional.' : 'Set up GitHub sign-in so only your team can get in.'}</NextNote>
-      )}
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ projects folder (local) */
-
-export function ProjectsFolderSection({ state, register, variant }: SectionProps) {
-  const [dir, setDir] = useState(state.config.local.baseDir);
-  const [browsing, setBrowsing] = useState(false);
-  const patch = usePatchConfig();
-  const home = useQuery({ queryKey: ['fs', 'home'], queryFn: () => setupApi.fsList(), retry: false }).data?.home;
-  // The config may hold `~/…`; the folder API wants absolute paths.
-  const abs = home && (dir === '~' || dir.startsWith('~/')) ? `${home}${dir.slice(1)}` : dir;
-  const inspect = useQuery({ queryKey: ['fs', 'inspect', abs], queryFn: () => setupApi.fsInspect(abs), enabled: !!abs && (!dir.startsWith('~') || !!home), retry: false });
-  useSaver(register, async () => {
-    if (!dir.trim()) throw new UiApiError('invalid_input', 'Choose a folder for your projects', 'local.baseDir');
-    if (inspect.isError) {
-      try {
-        await setupApi.fsMkdir(abs.trim());
-      } catch (e) {
-        if (!(e instanceof UiApiError && /exist/i.test(`${e.code} ${e.message}`))) throw e;
-      }
-    }
-    if (dir.trim() !== state.config.local.baseDir) await patch({ local: { baseDir: dir.trim() } });
-  });
-  const exists = inspect.isSuccess;
-  return (
-    <div className="su-section">
-      <StepIntro title="Projects folder">
-        {variant === 'wizard'
-          ? 'Each Mandate project is a git repository. New projects are created in this folder; you can also add repositories that already exist anywhere in your home folder. The default works for most people.'
-          : 'Where new projects are created. Existing repositories can live anywhere in your home folder.'}
-      </StepIntro>
-      <Field
-        label={
-          <>
-            Folder {dir === state.config.local.baseDir && variant === 'wizard' && <Recommended />}
-          </>
-        }
-        hint={exists ? (inspect.data?.enclosingRepo ? `Inside the repository ${inspect.data.enclosingRepo}; pick a folder outside it.` : inspect.data?.isGitRepo ? 'This folder is itself a git repository; projects usually go in a plain folder.' : 'Folder exists.') : `Mandate creates it when you ${variant === 'wizard' ? 'continue' : 'save'}.`}
-      >
-        <Group gap={6} wrap="nowrap">
-          <TextInput size="sm" value={dir} onChange={(e) => setDir(e.currentTarget.value)} leftSection={<IconFolder size={14} />} className="np-mono-input" style={{ flex: 1 }} data-testid="projects-folder" />
-          <Button type="button" variant="default" size="sm" onClick={() => setBrowsing(true)}>
-            Browse…
-          </Button>
-        </Group>
-      </Field>
-      <Notice icon={<IconCloud size={16} />} title="Remotes are optional">
-        A project can push to any git remote (GitHub, GitLab, your own server). Mandate uses your own git credentials (SSH keys or the credential helper), like the git command line; nothing is stored in
-        Mandate.
-      </Notice>
-      {variant === 'wizard' && <NextNote>Check how Mandate runs git and pushes. The defaults work if git already works in your terminal.</NextNote>}
-      <FolderBrowser opened={browsing} onClose={() => setBrowsing(false)} onPick={(p) => setDir(home ? tildify(p, home) : p)} initial={inspect.isSuccess ? abs : undefined} title="Projects folder" />
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ GitHub sign-in (server) */
-
-export function GithubSection({ state, register, variant }: SectionProps) {
-  const g = state.config.github ?? { clientId: null, clientSecretEnv: SECRET_DEFAULTS.github, allowedUsers: [], allowedOrgs: [], callbackUrl: null };
-  const suggested = g.suggested ?? { name: 'Mandate', homepageUrl: state.config.server.publicUrl ?? '', callbackUrl: `${state.config.server.publicUrl ?? ''}/auth/github/callback` };
-  const [clientId, setClientId] = useState(g.clientId ?? '');
+/** Settings → Admins (avatars and logins; add with a GitHub lookup) and the optional organization gate. */
+export function AccessSection({ state, register }: SectionProps) {
+  const g = state.config.github ?? EMPTY_GITHUB;
   const [users, setUsers] = useState<string[]>(g.allowedUsers);
   const [orgs, setOrgs] = useState<string[]>(g.allowedOrgs);
-  const [secretSet, setSecretSet] = useState(!!g.clientSecretSet);
   const patch = usePatchConfig();
-  // Explicit server mode: access comes from GitHub repo permissions, the allow-list is optional.
   const auth = useAuth();
-  const repoAuth = auth?.repoAuth ?? (state.config.server.mode === 'server' && !auth?.legacy);
+  // Access comes from GitHub repo permissions; the allow-list is optional (older OAuth App installs: required).
+  const repoAuth = auth?.repoAuth ?? !(state.legacy ?? auth?.legacy);
+  const me = auth?.user?.login?.toLowerCase();
   useSaver(register, async () => {
-    if (!clientId.trim()) throw new UiApiError('invalid_input', 'Paste the Client ID of your GitHub OAuth App', 'github.clientId');
-    if (!secretSet) throw new UiApiError('invalid_input', 'Save the client secret first', 'github.clientSecret');
-    if (!repoAuth && users.length + orgs.length === 0) throw new UiApiError('invalid_input', 'Add at least one GitHub login or organization to the allow-list', 'github.allowedUsers');
-    await patch({ github: { clientId: clientId.trim(), allowedUsers: users, allowedOrgs: orgs, callbackUrl: g.callbackUrl ?? suggested.callbackUrl, clientSecretEnv: g.clientSecretEnv } });
+    if (users.length === 0) throw new UiApiError('invalid_input', 'Keep at least one admin', 'github.allowedUsers');
+    await patch({ github: { allowedUsers: users, allowedOrgs: orgs } });
   });
   return (
     <div className="su-section">
-      <StepIntro title="GitHub sign-in">
-        {variant === 'wizard' ? 'Required for a server: anyone who can reach the URL could otherwise get in. ' : ''}
+      <StepIntro title="Admins">
         {repoAuth
-          ? 'Access comes from GitHub: people see a project if they can read its repo; their agents can write if they can push. The allow-list optionally restricts who can sign in; people in allowedUsers are Mandate admins (create projects, change settings). '
-          : 'People sign in with GitHub, and only the logins and organizations in the allow-list get in. '}
-        You register Mandate once as a GitHub OAuth App.
+          ? 'Admins add projects and change settings. Everyone else sees a project when they can read its GitHub repository.'
+          : 'Admins and only the people and organizations listed here can sign in.'}
       </StepIntro>
-      <ol className="su-steps">
-        <li>
-          <Text size="sm" fw={600}>
-            Create the OAuth App on GitHub
-          </Text>
-          <Text size="sm" className="np-muted">
-            Use these exact values (or create it in your organization&apos;s developer settings).
-          </Text>
-          <div className="su-copies">
-            <CopyField label="Application name" value={suggested.name} />
-            <CopyField label="Homepage URL" value={suggested.homepageUrl} />
-            <CopyField label="Callback URL" value={suggested.callbackUrl} testId="gh-callback" />
-          </div>
-          <Button type="button" size="xs" mt={8} leftSection={<IconBrandGithub size={14} />} rightSection={<IconExternalLink size={12} />} component="a" href="https://github.com/settings/applications/new" target="_blank" rel="noreferrer">
-            Open GitHub
-          </Button>
-        </li>
-        <li>
-          <Text size="sm" fw={600}>
-            Paste the credentials
-          </Text>
-          <div className="np-stack" style={{ marginTop: 8 }}>
-            <Field label="Client ID" hint="Shown at the top of the app page, e.g. Ov23li…">
-              <TextInput size="sm" value={clientId} onChange={(e) => setClientId(e.currentTarget.value)} placeholder="Ov23li…" className="np-mono-input" data-testid="gh-client-id" />
-            </Field>
-            <SecretField name={g.clientSecretEnv || SECRET_DEFAULTS.github} isSet={secretSet} label="Client secret" placeholder="Generate a new client secret on GitHub and paste it" onSaved={setSecretSet} />
-            <TestButton disabled={!clientId.trim() || !secretSet} run={() => setupApi.testGithub({ clientId: clientId.trim() })} label="Test credentials" testId="gh-test" />
-          </div>
-        </li>
-        <li>
-          <Text size="sm" fw={600}>
-            {repoAuth ? 'Admins and sign-in allow-list' : 'Who may sign in'} {repoAuth && <span className="su-badge">Optional</span>}
-          </Text>
-          <div className="np-stack" style={{ marginTop: 8 }}>
-            <Field label={repoAuth ? 'Admins (GitHub logins)' : 'GitHub logins'} hint={repoAuth ? 'They create projects and change settings. Add yourself. Press Enter after each login.' : 'Press Enter after each login.'}>
-              <TagsInput size="sm" value={users} onChange={setUsers} placeholder="your-login" />
-            </Field>
-            <Field label="Organizations" hint={repoAuth ? 'Optional: only members of these organizations (or the admins) may sign in. Empty: anyone with GitHub access to a project repo.' : 'Every member of these organizations may sign in.'}>
-              <TagsInput size="sm" value={orgs} onChange={setOrgs} placeholder="your-org" />
-            </Field>
-          </div>
-        </li>
-      </ol>
-      {variant === 'wizard' && <NextNote>After setup you sign in with GitHub, then pick repositories (personal or organization) for your projects.</NextNote>}
+      <ul className="su-admins" data-testid="admins">
+        {users.map((u) => (
+          <li key={u} className="su-admin-row">
+            <img src={avatarOf(u)} alt="" width={28} height={28} className="su-admin-avatar" loading="lazy" />
+            <Text size="sm" fw={500} className="su-admin-who">
+              {u}
+              {u.toLowerCase() === me && (
+                <Text span size="xs" c="dimmed" ml={6}>
+                  you
+                </Text>
+              )}
+            </Text>
+            <Button type="button" size="compact-xs" variant="subtle" color="gray" disabled={users.length === 1} onClick={() => setUsers(users.filter((x) => x !== u))} aria-label={`Remove ${u}`}>
+              Remove
+            </Button>
+          </li>
+        ))}
+      </ul>
+      <AddAdmin existing={users} onAdd={(l) => setUsers([...users, l])} />
+      <Field label="Organizations" hint={repoAuth ? 'Optional: only members of these organizations (or the admins) can sign in.' : 'Every member of these organizations can sign in.'}>
+        <TagsInput size="sm" value={orgs} onChange={setOrgs} placeholder="your-org" />
+      </Field>
     </div>
   );
 }
@@ -651,8 +862,8 @@ interface EmbeddedDraft {
 
 export function GitSection({ state, register, variant }: SectionProps) {
   const g = state.config.git;
-  const local = state.config.server.mode === 'local';
-  // The wizard preselects the recommendation (system git when installed, in local mode); Settings shows the saved value.
+  const local = !state.config.server.publicUrl;
+  // The wizard preselects the recommendation (system git when installed, with a localhost address); Settings shows the saved value.
   const [backend, setBackend] = useState<'cli' | 'embedded'>(variant === 'wizard' && local && g.system.version ? 'cli' : g.backend);
   const [auto, setAuto] = useState(g.autoPush);
   const [emb, setEmb] = useState<EmbeddedDraft>({
@@ -678,7 +889,7 @@ export function GitSection({ state, register, variant }: SectionProps) {
     <div className="su-section">
       <StepIntro title="Git">
         {variant === 'wizard'
-          ? 'Mandate commits every change to your projects and pushes to their remotes. Using the git already on this computer is simplest: it reuses your SSH keys and credentials.'
+          ? 'Mandate commits every change to your projects and pushes to their remotes. Using the git already on this machine is simplest: it reuses your SSH keys and credentials.'
           : 'How Mandate runs git, which credentials it pushes with, and when.'}
       </StepIntro>
       <div className="su-choices" role="radiogroup">
@@ -730,24 +941,12 @@ export function ServerInfo({ state }: { state: SetupState }) {
   const s = state.config.server;
   return (
     <div className="su-card su-kv">
-      <span>Mode</span>
-      <b>{MODE_TEXT[s.mode].title}</b>
-      {s.mode === 'server' && (
-        <>
-          <span>Public URL</span>
-          <code>{s.publicUrl ?? 'not set'}</code>
-        </>
-      )}
+      <span>Address</span>
+      <code>{s.publicUrl ?? `http://localhost:${s.port}`}</code>
       <span>Listens on</span>
       <code>
         {s.bind}:{s.port}
       </code>
-      {s.mode === 'local' && (
-        <>
-          <span>Projects folder</span>
-          <code>{tildify(state.config.local.baseDir, null)}</code>
-        </>
-      )}
     </div>
   );
 }

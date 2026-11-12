@@ -35,7 +35,6 @@ export interface FlowProject {
   all?: FlowClient[];
 }
 export interface FlowState {
-  mode: 'local' | 'server';
   admin: boolean;
   user: string | null;
   projects: FlowProject[];

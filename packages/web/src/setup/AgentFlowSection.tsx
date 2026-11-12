@@ -1,6 +1,6 @@
 /**
  * Settings → Agent flow: per project, the policy (admins) and my agents' preferences (switches; locked when the
- * policy enforces them). Server-mode admins also see every client, read-only.
+ * policy enforces them). Team admins also see every client, read-only.
  */
 import { Alert, Avatar, Group, Loader, SegmentedControl, Switch, Table, Text, Tooltip } from '@mantine/core';
 import { IconLock } from '@tabler/icons-react';
@@ -17,7 +17,7 @@ function Locked({ children }: { children: React.ReactNode }) {
   );
 }
 
-function ClientName({ c, mode }: { c: FlowClient; mode: FlowState['mode'] }) {
+function ClientName({ c }: { c: FlowClient }) {
   return (
     <Group gap={8} wrap="nowrap">
       <span className="flow-agent-icon">
@@ -33,14 +33,14 @@ function ClientName({ c, mode }: { c: FlowClient; mode: FlowState['mode'] }) {
           )}
         </Text>
         <Text size="xs" c="dimmed">
-          {mode === 'local' && c.keyName ? `key ${c.keyName} · ` : ''}last seen {relativeTime(c.lastSeenAt)}
+          {c.keyName ? `key ${c.keyName} · ` : ''}last seen {relativeTime(c.lastSeenAt)}
         </Text>
       </div>
     </Group>
   );
 }
 
-function MyAgents({ p, mode }: { p: FlowProject; mode: FlowState['mode'] }) {
+function MyAgents({ p }: { p: FlowProject }) {
   const m = useFlowMutations();
   if (!p.mine.length)
     return (
@@ -112,7 +112,7 @@ function MyAgents({ p, mode }: { p: FlowProject; mode: FlowState['mode'] }) {
         {p.mine.map((c) => (
           <Table.Tr key={c.id}>
             <Table.Td>
-              <ClientName c={c} mode={mode} />
+              <ClientName c={c} />
             </Table.Td>
             <Table.Td>{sw(c, 'flow')}</Table.Td>
             <Table.Td>{sw(c, 'approval')}</Table.Td>
@@ -246,7 +246,7 @@ export function AgentFlowSection(_p: SectionProps) {
             </Text>
           </Group>
           <PolicyControls p={p} admin={q.data.admin} />
-          <MyAgents p={p} mode={q.data.mode} />
+          <MyAgents p={p} />
           <AllClients p={p} />
         </div>
       ))}

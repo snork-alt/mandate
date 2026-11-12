@@ -1,8 +1,8 @@
 /**
  * Contract: EVERY node kind has contributors (like "every node kind has lineage"). For each kind, a fixture element is
- * written by known users (server mode) and its contributors are asserted, including propagation through a cause
+ * written by known users and its contributors are asserted, including propagation through a cause
  * (feedback by alice and bob -> a standard rule edited by carol: carol direct, alice and bob via) and section-level
- * granularity. Legacy commits (no user) fall back to the agent (userRecorded: false); local mode returns agents only.
+ * granularity. Legacy commits (no user) fall back to the agent (userRecorded: false); 
  */
 import { NODE_KINDS, buildArchitectureRef, type Contributor } from '@mandate/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -18,13 +18,13 @@ let fx: McpFixture;
 const CHAT = new MemoryClientStore();
 const chatGet = CHAT.get.bind(CHAT);
 CHAT.get = async (p, id) => ({ ...((await chatGet(p, id)) ?? { flow: null, approval: null }), questions: 'chat' }) as never;
-const as = (login: string | null, mode: 'server' | 'local' = 'server'): ToolContext =>
+const as = (login: string | null, mode: 'team' | 'me' = 'team'): ToolContext =>
   ({
     storage: fx.storage,
     index: fx.index,
     reads: fx.reads,
     views: new DocViewService(fx.storage),
-    settings: memorySettings(mode, {}, 'test', CHAT),
+    settings: memorySettings({}, 'test', CHAT),
     clientName: `agent-of-${login ?? 'nobody'}`,
     ...(login ? { principal: { kind: 'user', login, project: 'test', via: 'oauth', tokenId: 't', tokenName: 'cli' } as Principal } : {}),
   }) as ToolContext;
@@ -112,7 +112,7 @@ afterAll(async () => {
   await fx?.close();
 });
 
-const get = async (ref: string, mode: 'server' | 'local' = 'server'): Promise<Contributor[]> => {
+const get = async (ref: string, mode: 'team' | 'me' = 'team'): Promise<Contributor[]> => {
   const r = await call(as(null, mode), 'contributors', { refs: [ref] });
   return Object.values(r.contributors as Record<string, Contributor[]>)[0]!;
 };
@@ -147,12 +147,6 @@ describe('contributors contract', () => {
     const legacy = list.filter((x) => !x.userRecorded);
     expect(legacy.length, JSON.stringify(list.map((x) => [x.user, x.userRecorded]))).toBeGreaterThan(0);
     expect(legacy.every((x) => x.agents.length === 0 || x.agents.includes(x.user))).toBe(true);
-  });
-
-  it('local mode: agents only, never users', async () => {
-    const list = await get(refs.section!.ref, 'local');
-    expect(list.length).toBeGreaterThan(0);
-    expect(list.every((x) => !x.userRecorded && x.user.startsWith('agent-of-'))).toBe(true);
   });
 
   it('get tools carry contributors in their derived data', async () => {

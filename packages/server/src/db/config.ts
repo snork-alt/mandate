@@ -1,5 +1,5 @@
 /**
- * `database` block of config.json. SQLite is the default (local mode, small servers); Postgres is the server option
+ * `database` block of config.json. SQLite is the default (one machine, small servers); Postgres is the server option
  * for shared state across instances. The connection URL is NEVER in config: `urlEnv` names the environment variable
  * that holds it (env or `~/.mandate/secrets.env`).
  */

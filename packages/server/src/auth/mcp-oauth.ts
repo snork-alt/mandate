@@ -1,5 +1,5 @@
 /**
- * Server mode: Mandate as the OAuth 2.1 authorization server for its MCP endpoints (MCP authorization spec
+ * Team: Mandate as the OAuth 2.1 authorization server for its MCP endpoints (MCP authorization spec
  * 2025-11-25): RFC 9728 protected-resource metadata per project, RFC 8414 authorization-server metadata, RFC 7591
  * dynamic client registration (public clients), authorization code + PKCE (S256 only), RFC 8707 resource indicators
  * (tokens are audience-bound to one project's MCP URL), short-lived access tokens + rotating refresh tokens.
@@ -13,7 +13,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { ProjectRegistry } from '../projects/registry.js';
 import type { RepoPermissions } from './github-perms.js';
-import { cookieOf, originOk, sessionForMode, SESSION_COOKIE, type AuthOptions } from './http.js';
+import { cookieOf, originOk, sessionFor, SESSION_COOKIE, type AuthOptions } from './http.js';
 import { stateForHome, type ServerState } from '../db/state.js';
 
 export const ACCESS_TTL_S = 3600;
@@ -273,7 +273,7 @@ export function registerMcpOAuth(app: FastifyInstance, d: McpOAuthDeps): void {
   app.get('/oauth/authorize', async (req, reply) => {
     const c = await check(req.query, reply);
     if (!c) return reply;
-    const user = sessionForMode(await d.auth.store.session(cookieOf(req, SESSION_COOKIE)), d.auth.mode);
+    const user = sessionFor(await d.auth.store.session(cookieOf(req, SESSION_COOKIE)));
     if (!user) {
       const back = `/oauth/authorize?${new URLSearchParams(req.query as Record<string, string>).toString()}`;
       return reply.redirect(`/auth/github/login?returnTo=${encodeURIComponent(back)}`);
@@ -306,7 +306,7 @@ export function registerMcpOAuth(app: FastifyInstance, d: McpOAuthDeps): void {
     if (!originOk(req, d.auth.uiOrigins)) return reply.code(403).type('text/html').send(page('Forbidden', '<h1>Forbidden</h1><p>Cross-site request.</p>'));
     const body = (req.body ?? {}) as { tx?: string; decision?: string };
     const tx = d.auth.store.unsign<{ q: z.infer<typeof authorizeSchema>; login: string; exp: number }>(body.tx);
-    const user = sessionForMode(await d.auth.store.session(cookieOf(req, SESSION_COOKIE)), d.auth.mode);
+    const user = sessionFor(await d.auth.store.session(cookieOf(req, SESSION_COOKIE)));
     if (!tx || tx.exp < Date.now() || !user || user.login !== tx.login) return reply.code(400).type('text/html').send(page('Expired', '<h1>This request expired</h1><p>Start the connection again from your agent.</p>'));
     const client = await d.oauth.client(tx.q.client_id);
     if (!client || !client.redirect_uris.includes(tx.q.redirect_uri)) return reply.code(400).send({ error: 'invalid_client' });

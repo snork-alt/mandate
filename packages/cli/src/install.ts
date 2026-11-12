@@ -3,14 +3,14 @@ import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { bool, str, type Args } from './args.js';
-import { AGENTS, agentById, can, commandChanges, projectCommandChanges, detectAgents, makeServer, mandateServersIn, mcpRemove, mcpUpsert, skillChanges, type AgentDef } from './agents.js';
+import { AGENTS, agentById, can, OAUTH_AGENTS, commandChanges, projectCommandChanges, detectAgents, makeServer, mandateServersIn, mcpRemove, mcpUpsert, skillChanges, type AgentDef } from './agents.js';
 import { cmdStart, entryUrl, openBrowser, printTunnel, service } from './commands.js';
 import { BIN, envFile, expand, manifestFile, PKG_NAME, PKG_ROOT, PKG_VERSION, SERVER_ENTRY, type Ctx } from './context.js';
 import { applyChanges, JsoncError, type Change } from './edits.js';
 import { caddySnippet, nginxSnippet } from './proxy.js';
 import { platformService, serviceSpec } from './service.js';
 import { health, waitHealthy } from './serverlink.js';
-import { DEFAULT_BASE_DIR, publicUrlProblem, readSettings, writeSettings, type Mode, type ServerSettings } from './settings.js';
+import { publicUrlProblem, readSettings, writeSettings, type ServerSettings } from './settings.js';
 import { c, fail, info, ok, Prompter, spinner, step, warn, type Out } from './ui.js';
 import { envChange, instructionFiles, KNOWN_INSTRUCTION_FILES, listProjects, projectKeys, rcChanges, readManifest, sectionChange, writeManifest } from './wiring.js';
 
@@ -21,37 +21,27 @@ export interface Runtime {
   dryRun: boolean;
 }
 
-/* ------------------------------------------------------------------ mode */
+/* ------------------------------------------------------------------ the server address */
 
+/**
+ * Mandate is always a server; `--public-url` (default http://localhost:<port>) is the address people and agents use.
+ * Bind and proxy trust follow from it: localhost → 127.0.0.1; https → behind a reverse proxy on this machine
+ * (127.0.0.1, X-Forwarded-* trusted; `--no-behind-proxy` listens on all interfaces); other http → all interfaces.
+ */
 export async function chooseSettings(rt: Runtime, a: Args): Promise<ServerSettings> {
   const cur = readSettings(rt.ctx);
-  const flagMode = str(a, 'mode') as Mode | undefined;
-  if (flagMode && flagMode !== 'local' && flagMode !== 'server') throw new Error('--mode must be local or server');
-  const mode: Mode =
-    flagMode ??
-    (cur.configured && !rt.prompt.interactive
-      ? cur.mode
-      : await rt.prompt.select(
-          'Are you setting Mandate up on this machine (local) or on a remote server?',
-          [
-            { value: 'local', label: 'On this machine (local)', hint: 'Projects are git repos in a folder (~/mandate); you sign in from this computer. No GitHub needed.' },
-            { value: 'server', label: 'On a remote server', hint: 'Teammates sign in with GitHub; projects come from GitHub repos. Needs a public URL (HTTPS).' },
-          ],
-          cur.configured ? cur.mode : 'local',
-        ));
+  for (const f of ['for', 'mode']) if (a.flags[f] !== undefined) rt.out.log(warn(`--${f} is ignored: Mandate always signs in with GitHub; use --public-url for its address`));
   const port = Number(str(a, 'port') ?? cur.port);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('--port must be 1..65535');
-  if (mode === 'local') return { mode, port, bind: '127.0.0.1', trustProxy: false, baseDir: cur.configured && cur.mode === 'local' ? cur.baseDir : DEFAULT_BASE_DIR };
-
-  let publicUrl = str(a, 'public-url') ?? (cur.mode === 'server' ? cur.publicUrl : undefined);
-  if (!publicUrl || (rt.prompt.interactive && !str(a, 'public-url'))) publicUrl = await rt.prompt.input('Public URL (e.g. https://mandate.example.com):', publicUrl ?? '', publicUrlProblem);
-  if (!publicUrl) throw new Error('server mode needs --public-url https://mandate.example.com');
+  const publicUrl = str(a, 'public-url') ?? cur.publicUrl;
+  if (!publicUrl) return { port, bind: str(a, 'bind') ?? '127.0.0.1', trustProxy: false };
   const problem = publicUrlProblem(publicUrl);
   if (problem) throw new Error(`--public-url: ${problem}`);
+  const u = new URL(publicUrl);
+  if (/^(localhost|127\.0\.0\.1|\[::1\])$/.test(u.hostname)) return { port, bind: str(a, 'bind') ?? '127.0.0.1', publicUrl: u.origin, trustProxy: false };
   const proxyFlag = a.flags['behind-proxy'];
-  const behind = proxyFlag !== undefined ? proxyFlag === true || proxyFlag === 'true' : await rt.prompt.confirm('Behind a reverse proxy (Caddy / nginx) that terminates HTTPS? (recommended)', true);
-  const bind = str(a, 'bind') ?? (behind ? '127.0.0.1' : '0.0.0.0');
-  return { mode, port, bind, publicUrl: new URL(publicUrl).origin, trustProxy: behind };
+  const behind = proxyFlag !== undefined ? proxyFlag === true || proxyFlag === 'true' : u.protocol === 'https:';
+  return { port, bind: str(a, 'bind') ?? (behind ? '127.0.0.1' : '0.0.0.0'), publicUrl: u.origin, trustProxy: behind };
 }
 
 /* ------------------------------------------------------------------ agents (user scope) */
@@ -70,21 +60,23 @@ export function userWiringChanges(ctx: Ctx, agents: AgentDef[], baseUrl: string)
   changes.push(...skillChanges(ctx, agents), ...commandChanges(ctx, agents));
   const projects = listProjects(ctx).map((p) => p.id);
   if (projects.length) {
-    const keys = projectKeys(ctx, projects);
     for (const ag of agents) {
       const t = ag.userMcp?.(ctx);
       if (!t || !can(ag, 'mcp', ctx.force)) {
         if (ag.caps.mcp === 'unverified' && t) skipped.push(`${ag.label}: MCP config location is unverified; not written (use --force to write ${t.file})`);
         continue;
       }
+      // Agents sign in with GitHub (MCP OAuth): no key in any file. Agents that cannot: `mandate connect --auth token`.
+      if (!OAUTH_AGENTS.has(ag.id)) {
+        skipped.push(`${ag.label}: cannot sign in by itself; run ${BIN} connect --url <server> --project <id> --auth token with a personal token`);
+        continue;
+      }
       try {
-        // Agents without env-var expansion get the key itself, in their user-scope file only (never in a repo).
-        changes.push(mcpUpsert(ag, t, ...projects.map((id) => ({ ...makeServer(baseUrl, id), ...(ag.envSyntax === null ? { key: keys.get(id) } : {}) }))));
+        changes.push(mcpUpsert(ag, t, ...projects.map((id) => ({ ...makeServer(baseUrl, id), oauth: true }))));
       } catch (e) {
         skipped.push(e instanceof JsoncError ? `${ag.label}: ${e.message}; add the mandate-<project> servers by hand (${BIN} connect prints them)` : `${ag.label}: ${(e as Error).message}`);
       }
     }
-    changes.push(envChange(ctx, keys), ...rcChanges(ctx));
   }
   return { changes, skipped };
 }
@@ -159,11 +151,13 @@ export async function cmdInstall(rt: Runtime, a: Args): Promise<number> {
     return 0;
   }
 
-  // 1. Mode (decides how the server binds, before anything is reachable).
-  out.log(step(1, TOTAL, 'Mode'));
+  // 1. The address (decides how the server binds, before anything is reachable).
+  out.log(step(1, TOTAL, 'Address'));
   const settings = await chooseSettings(rt, a);
-  out.log(ok(settings.mode === 'local' ? `local: this machine only (127.0.0.1:${settings.port})` : `server: ${settings.publicUrl} → listening on ${settings.bind}:${settings.port}${settings.trustProxy ? ' behind a reverse proxy' : ''}`));
-  if (settings.mode === 'server' && settings.publicUrl!.startsWith('http://')) {
+  out.log(ok(`${settings.publicUrl ?? `http://localhost:${settings.port}`} → listening on ${settings.bind}:${settings.port}${settings.trustProxy ? ' behind a reverse proxy' : ''}`));
+  // Reached from other machines (not localhost): proxy snippets, systemd linger, the SSH tunnel for the setup link.
+  const remote = !!settings.publicUrl && !/^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|$)/.test(settings.publicUrl);
+  if (remote && settings.publicUrl!.startsWith('http://')) {
     out.log(warn(c.bold('The public URL is plain http: sign-in cookies and agent keys would travel unencrypted. Use HTTPS (see the proxy snippets below).')));
   }
 
@@ -177,7 +171,7 @@ export async function cmdInstall(rt: Runtime, a: Args): Promise<number> {
   out.log(ok(`Node.js ${process.versions.node}`));
   const git = spawnSync('git', ['--version'], { encoding: 'utf8' });
   if (git.status === 0) out.log(ok(git.stdout.trim()));
-  else out.log(warn(settings.mode === 'local' ? 'git not found: Mandate works without it, but install git to push projects with your own credentials' : 'git not found (optional; the embedded git is used)'));
+  else out.log(warn(!remote ? 'git not found: Mandate works without it, but install git to push projects with your own credentials' : 'git not found (optional; the embedded git is used)'));
 
   // 3. Global command.
   out.log(step(3, TOTAL, 'The mandate command'));
@@ -191,11 +185,6 @@ export async function cmdInstall(rt: Runtime, a: Args): Promise<number> {
     chmodSync(ctx.mandateHome, 0o700);
     const file = writeSettings(ctx, settings);
     out.log(ok(`${ctx.mandateHome} ${c.dim(`(config: ${file})`)}`));
-    if (settings.mode === 'local') {
-      const base = expand(ctx, settings.baseDir ?? DEFAULT_BASE_DIR);
-      mkdirSync(base, { recursive: true });
-      out.log(ok(`projects folder ${base} ${c.dim('(change it in the setup wizard)')}`));
-    }
   } else out.log(`  ${c.dim('would create')} ${ctx.mandateHome} and write server settings to config.json`);
 
   // 5. Service + start.
@@ -213,7 +202,7 @@ export async function cmdInstall(rt: Runtime, a: Args): Promise<number> {
     if (p) {
       p.install(serviceSpec(ctx, entry, PKG_VERSION));
       out.log(ok(`${p.kind} service ${c.dim(p.file)}`));
-      if (p.kind === 'systemd' && settings.mode === 'server') {
+      if (p.kind === 'systemd' && remote) {
         const user = ctx.env.USER ?? '';
         const l = spawnSync('loginctl', ['enable-linger', user], { encoding: 'utf8' });
         out.log(l.status === 0 ? ok('lingering enabled: Mandate keeps running after you log out') : warn(`to keep Mandate running after logout: sudo loginctl enable-linger ${user}`));
@@ -239,28 +228,28 @@ export async function cmdInstall(rt: Runtime, a: Args): Promise<number> {
   }
 
   // 7. Open the setup wizard / UI.
-  out.log(step(7, TOTAL, settings.mode === 'local' ? 'Open Mandate' : 'Finish setup'));
+  out.log(step(7, TOTAL, 'Finish setup'));
   if (rt.dryRun) out.log(`  ${c.dim('would open the setup wizard')}`);
   else if (!running) out.log(info(`start Mandate, then run ${c.bold(`${BIN} open`)}`));
   else {
     const e = await entryUrl(ctx, s);
-    if (settings.mode === 'server') {
+    if (remote) {
       if (e.kind === 'setup') printTunnel(s, e.url, out, str(a, 'ssh'));
       else out.log(ok(`setup is complete: ${s.url}`));
     } else if (a.flags.open === false || !openBrowser(ctx, e.url)) out.log(info(`${e.kind === 'setup' ? 'setup wizard' : 'sign-in link'}: ${e.url}`));
     else out.log(ok(`opened the ${e.kind === 'setup' ? 'setup wizard' : 'UI'} in your browser`));
   }
 
-  if (settings.mode === 'server' && !rt.dryRun) printProxy(s.publicUrl!, s.port, out);
+  if (remote && s.publicUrl && !rt.dryRun) printProxy(s.publicUrl, s.port, out);
 
   out.log(`\n${c.bold('Next steps')}`);
-  if (settings.mode === 'local') {
-    out.log(`  ${c.cyan(`${BIN} open`)}        open Mandate (one-time sign-in link)`);
-    out.log(`  ${c.cyan(`${BIN} connect`)}     in a code repo: link it to a Mandate project for your coding agents`);
+  if (!remote) {
+    out.log(`  1. Finish the setup wizard: create the GitHub App (one click), then sign in with GitHub.`);
+    out.log(`  2. In a code repo: ${c.cyan(`${BIN} connect`)} (or the one-line installer from the Connect agent dialog).`);
   } else {
     out.log(`  1. Point DNS for ${new URL(s.publicUrl!).hostname} at this server and set up the reverse proxy (above).`);
-    out.log(`  2. Finish the setup wizard (GitHub sign-in) through the SSH tunnel.`);
-    out.log(`  3. On each developer machine, in a code repo: ${c.cyan(`npx ${PKG_NAME} connect --url ${s.publicUrl} --project <id>`)}`);
+    out.log(`  2. Finish the setup wizard (one-click GitHub App) through the SSH tunnel.`);
+    out.log(`  3. On each developer machine: the one-line installer from the Connect agent dialog, or ${c.cyan(`npx ${PKG_NAME} connect --url ${s.publicUrl} --project <id>`)}`);
   }
   out.log(`  ${c.cyan(`${BIN} status`)}      ${c.dim('·')} ${c.cyan(`${BIN} logs -f`)} ${c.dim('·')} ${c.cyan(`${BIN} doctor`)}`);
   return 0;

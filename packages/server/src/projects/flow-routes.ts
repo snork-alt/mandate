@@ -1,25 +1,24 @@
 /**
  * Web UI endpoints for Settings → Agent flow and the sidebar badge (session cookie + X-Mandate-UI, Origin-checked
  * writes, allowed hosts only):
- * - GET  /ui/flow[?project=<id>]                       policy, my clients, and (server-mode admins) every client
+ * - GET  /ui/flow[?project=<id>]                       policy, my clients, and (team admins) every client
  * - PUT  /ui/flow/:project/policy                      { flowPolicy?, approvalPolicy? }   admins only
- * - PUT  /ui/flow/:project/clients/:clientId           { flow?, approval? }  my own clients only (local: any)
+ * - PUT  /ui/flow/:project/clients/:clientId           { flow?, approval? }  my own clients only
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { authenticate, originOk, type AuthOptions } from '../auth/http.js';
 import type { ProjectConfig } from '../config.js';
 import type { ProjectRegistry } from './registry.js';
-import { APPROVAL_POLICIES, QUESTIONS_VIA, effective, FLOW_POLICIES, flowChangedEvent, refusal, type ClientRecord, type Mode, type Policy, type ProjectSettings } from './settings.js';
+import { APPROVAL_POLICIES, QUESTIONS_VIA, effective, FLOW_POLICIES, flowChangedEvent, refusal, type ClientRecord, type Policy, type ProjectSettings } from './settings.js';
 
 export interface FlowRouteDeps {
-  mode: Mode;
   auth: AuthOptions;
   hostOk: (req: FastifyRequest) => boolean;
   registry: ProjectRegistry;
   /** Settings of a project (policy + client store). */
   settings: (id: string) => ProjectSettings;
-  /** Server mode: the user's access to a project (projects without access are hidden). */
+  /** Team: the user's access to a project (projects without access are hidden). */
   access?: (login: string, p: ProjectConfig) => Promise<'none' | 'read' | 'write'>;
 }
 
@@ -53,19 +52,19 @@ export function registerFlowRoutes(app: FastifyInstance, d: FlowRouteDeps): void
     const a = await authenticate(req, null, d.auth);
     if (!a.ok || a.principal.kind !== 'ui') throw new HttpError(a.ok ? 403 : a.status, a.ok ? 'forbidden' : 'unauthorized', a.ok ? 'UI-only route (not for agent keys)' : a.message);
     const login = a.principal.user.login;
-    return { login, admin: d.mode === 'local' || d.auth.isAdmin?.(login) !== false };
+    return { login, admin: d.auth.isAdmin?.(login) !== false };
   };
   const visible = async (login: string, id: string): Promise<ProjectConfig> => {
     const p = d.registry.config(id);
     if (!p) throw new HttpError(404, 'not_found', `no project '${id}'`);
-    if (d.mode === 'server' && d.access && (await d.access(login, p)) === 'none') throw new HttpError(404, 'not_found', `no project '${id}'`);
+    if (d.access && (await d.access(login, p)) === 'none') throw new HttpError(404, 'not_found', `no project '${id}'`);
     return p;
   };
-  /** My clients: server mode = the signed-in user's; local mode = every client (one person, many agents). */
-  const mine = (s: ProjectSettings, login: string) => s.clients.list(s.project, d.mode === 'server' ? { user: login } : {});
+  /** My clients: the signed-in user's. */
+  const mine = (s: ProjectSettings, login: string) => s.clients.list(s.project, { user: login });
   const emit = async (project: string, fields: string[], login: string) => {
     const rt = await d.registry.open(project).catch(() => null);
-    const e = flowChangedEvent(project, fields, { agent: 'mandate-ui', ...(d.mode === 'server' ? { user: login } : {}) }, (await rt?.git.head().catch(() => null)) ?? '');
+    const e = flowChangedEvent(project, fields, { agent: 'mandate-ui', user: login }, (await rt?.git.head().catch(() => null)) ?? '');
     if (e) rt?.activity.emit(e);
   };
   const handle =
@@ -99,10 +98,10 @@ export function registerFlowRoutes(app: FastifyInstance, d: FlowRouteDeps): void
         const s = d.settings(id);
         const policy = s.policy();
         const my = (await mine(s, who.login)).map((r) => row(policy, r, true));
-        const all = d.mode === 'server' && who.admin ? (await s.clients.list(id)).map((r) => row(policy, r, r.user?.toLowerCase() === who.login.toLowerCase())) : undefined;
+        const all = who.admin ? (await s.clients.list(id)).map((r) => row(policy, r, r.user?.toLowerCase() === who.login.toLowerCase())) : undefined;
         projects.push({ id, name: p.name, policy, mine: my, ...(all ? { all } : {}) });
       }
-      return { mode: d.mode, admin: who.admin, user: d.mode === 'server' ? who.login : null, projects };
+      return { admin: who.admin, user: who.login, projects };
     }),
   );
 
@@ -132,8 +131,8 @@ export function registerFlowRoutes(app: FastifyInstance, d: FlowRouteDeps): void
       const s = d.settings(project);
       const cur = await s.clients.get(project, clientId);
       if (!cur) throw new HttpError(404, 'not_found', `no client '${clientId}' on '${project}'`);
-      // Server mode: only your own clients (an admin sees every client, read-only).
-      if (d.mode === 'server' && cur.user?.toLowerCase() !== who.login.toLowerCase()) throw new HttpError(403, 'forbidden', "you can only change your own agents' flow");
+      // Team: only your own clients (an admin sees every client, read-only).
+      if (cur.user?.toLowerCase() !== who.login.toLowerCase()) throw new HttpError(403, 'forbidden', "you can only change your own agents' flow");
       const policy = s.policy();
       const no = refusal(policy, b);
       if (no) throw new HttpError(409, no.code, no.message);

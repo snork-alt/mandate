@@ -4,8 +4,8 @@
  *   optional) and `approvalPolicy` required | optional (default optional). Legacy `flow { enabled, approval }` entries
  *   are migrated (enabled false → off; otherwise optional).
  * - Per-CLIENT preference (server-state database, table `flow_clients`, both SQLite and Postgres): keyed by
- *   (project, client id). Client id: server mode = GitHub login + normalised MCP client name; local mode = MCP client
- *   name + agent key name. Every client that calls the project is recorded (last seen, version), so it can be listed.
+ *   (project, client id). Client id: personal tokens / MCP OAuth = the user + normalised MCP client name; service-account
+ *   keys (and older shared keys) = MCP client name + key name. Every client that calls the project is recorded (last seen, version), so it can be listed.
  * Effective setting = the policy when it is required / off, else the client's preference (default on).
  */
 import type { ToolContext } from '../mcp/define.js';
@@ -13,7 +13,6 @@ import { migrate, type Migration } from '../db/migrate.js';
 import type { Db, Dialect } from '../db/types.js';
 import type { ProjectsStore } from './store.js';
 
-export type Mode = 'local' | 'server';
 export type FlowPolicy = 'required' | 'optional' | 'off';
 export type ApprovalPolicy = 'required' | 'optional';
 export type OnOff = 'on' | 'off';
@@ -35,7 +34,7 @@ export interface Policy {
 }
 export const DEFAULT_POLICY: Policy = { flowPolicy: 'optional', approvalPolicy: 'optional' };
 
-/** A calling coding agent: who (server mode: the GitHub user) and which client (normalised MCP clientInfo name). */
+/** A calling coding agent: who (the user) and which client (normalised MCP clientInfo name). */
 export interface ClientIdentity {
   id: string;
   /** Display label, e.g. "Claude Code". */
@@ -312,24 +311,21 @@ export class MemoryClientStore implements ClientStore {
 /* ------------------------------------------------------------------ per-project settings (ToolContext.settings) */
 
 export interface ProjectSettings {
-  /** Deployment mode of the server. */
-  mode: Mode;
   /** The project these settings belong to. */
   project: string;
   policy(): Policy;
   setPolicy(patch: Partial<Policy>): Promise<Policy>;
   clients: ClientStore;
-  /** Server mode: is this GitHub login a Mandate admin (policy changes)? Local mode: always true. */
+  /** Is this GitHub login a Mandate admin (policy changes)? */
   isAdmin(login: string | undefined): boolean;
 }
 
 /** Settings of one project: policy over the registry file (read fresh on every call), preferences in `clients`. */
-export function projectSettings(store: ProjectsStore, id: string, mode: Mode, clients: ClientStore = new MemoryClientStore(), isAdmin: (login: string) => boolean = () => true): ProjectSettings {
+export function projectSettings(store: ProjectsStore, id: string, clients: ClientStore = new MemoryClientStore(), isAdmin: (login: string) => boolean = () => true): ProjectSettings {
   return {
-    mode,
     project: id,
     clients,
-    isAdmin: (login) => mode === 'local' || (!!login && isAdmin(login)),
+    isAdmin: (login) => !!login && isAdmin(login),
     policy: () => policyOf(store.read().projects.find((p) => p.id === id) as Entry | undefined),
     setPolicy: (patch) =>
       store.mutate((reg) => {
@@ -345,17 +341,14 @@ export function projectSettings(store: ProjectsStore, id: string, mode: Mode, cl
 }
 
 /** In-memory settings (tests, in-process contexts). */
-export function memorySettings(mode: Mode = 'local', initial: Partial<Policy> = {}, project = 'test', clients: ClientStore = new MemoryClientStore()): ProjectSettings {
+export function memorySettings(initial: Partial<Policy> = {}, project = 'test', clients: ClientStore = new MemoryClientStore()): ProjectSettings {
   let policy = { ...DEFAULT_POLICY, ...initial };
-  return { mode, project, clients, isAdmin: () => true, policy: () => ({ ...policy }), setPolicy: async (patch) => (policy = { ...policy, ...patch }) };
+  return { project, clients, isAdmin: () => true, policy: () => ({ ...policy }), setPolicy: async (patch) => (policy = { ...policy, ...patch }) };
 }
 
-/**
- * Who a UI-triggered write (Settings, flow toggles, project creation) is attributed to: the signed-in GitHub user in
- * server mode; in local mode no user is ever recorded (the web UI is the agent).
- */
-export function uiActor(mode: 'local' | 'server', who: { kind: string; login?: string }): { user?: string; agent: string } {
-  return mode === 'server' && who.kind === 'user' && who.login ? { user: who.login, agent: 'mandate-ui' } : { agent: 'mandate-ui' };
+/** Who a UI-triggered write (Settings, flow toggles, project creation) is attributed to: the signed-in user. */
+export function uiActor(who: { kind: string; login?: string }): { user?: string; agent: string } {
+  return who.kind === 'user' && who.login ? { user: who.login, agent: 'mandate-ui' } : { agent: 'mandate-ui' };
 }
 
 /** Activity event for a flow change (policy or a client preference). */

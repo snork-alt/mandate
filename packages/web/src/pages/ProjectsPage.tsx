@@ -2,11 +2,10 @@ import { ActionIcon, Alert, Box, Button, Group, Skeleton, Text, Tooltip, useComp
 import { useDisclosure } from '@mantine/hooks';
 import { IconAlertTriangle, IconArrowRight, IconBrandGithub, IconFolder, IconGitBranch, IconMoon, IconPlus, IconSun } from '@tabler/icons-react';
 import { NewProjectModal } from '../connect/NewProjectModal';
-import { NewLocalProjectModal } from '../connect/NewLocalProjectModal';
 import { AccessBadge } from '../connect/AccessBadge';
 import { UserMenu } from '../connect/UserFooter';
 import { repoLabel } from '../connect/github';
-import { githubLoginUrl, isLocalMode, useAuth } from '../auth';
+import { githubLoginUrl, useAuth } from '../auth';
 import { useEffect } from 'react';
 import { APP_NAME, Logo } from '../components/Logo';
 import { TimeAgo } from '../components/TimeAgo';
@@ -132,8 +131,7 @@ export function ProjectsPage() {
   const last = lastProject();
   const [newOpened, newProject] = useDisclosure(false);
   const auth = useAuth();
-  const local = isLocalMode(auth);
-  // Only admins create projects (server mode: auth.github.allowedUsers).
+  // Only admins create projects (auth.github.allowedUsers).
   const canCreate = auth?.isAdmin !== false;
   useEffect(() => {
     document.title = `Projects · ${APP_NAME}`;
@@ -171,7 +169,7 @@ export function ProjectsPage() {
               Projects
             </Text>
             <Text size="sm" c="var(--app-text-muted)" mt={4}>
-              {local ? 'Each project is a git repository on this computer, with its own index, activity feed and MCP endpoint.' : 'Each project has its own git repository, index, activity feed and MCP endpoint.'}
+              Each project is a GitHub repository (or a folder in one), with its own index, activity feed and MCP endpoint.
             </Text>
           </div>
           {canCreate && (
@@ -191,7 +189,7 @@ export function ProjectsPage() {
             <div className="project-empty">
               <Text fw={600}>No projects yet</Text>
               <Text size="sm" c="var(--app-text-muted)" mt={4} mb="md">
-                {local ? 'Add a git repository you already have, or start a new one; coding agents then connect to its MCP endpoint.' : 'Create one backed by a GitHub repository; coding agents then connect to its MCP endpoint.'}
+                Create one backed by a GitHub repository; coding agents then connect to its MCP endpoint.
               </Text>
               {canCreate ? (
                 <Button size="xs" leftSection={<IconPlus size={14} />} onClick={newProject.open}>
@@ -207,7 +205,7 @@ export function ProjectsPage() {
           ))}
         </div>
       </main>
-      {local ? <NewLocalProjectModal opened={newOpened} onClose={newProject.close} /> : <NewProjectModal opened={newOpened} onClose={newProject.close} />}
+      <NewProjectModal opened={newOpened} onClose={newProject.close} />
     </div>
   );
 }

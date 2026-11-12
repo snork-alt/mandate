@@ -43,7 +43,7 @@ export function commentTarget(c: CommentView, workOrderId: string): CopyTarget {
 export function Avatar({ author, size = 22 }: { author: { agent: string; user?: string }; size?: number }) {
   const showUsers = useShowUsers();
   const who = author.user ?? author.agent;
-  // Server mode: the shared user avatar (hover card with "via <agent>").
+  // Team: the shared user avatar (hover card with "via <agent>").
   if (showUsers && author.user) return <UserAvatar user={author.user} size={size} agent={author.agent} />;
   return (
     <Tooltip label={author.user ? `${author.agent} acting as ${author.user}` : author.agent}>

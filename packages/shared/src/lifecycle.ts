@@ -331,7 +331,7 @@ const ENTRIES: LifecycleEntry[] = [
     table: QUESTION_TRANSITIONS,
     enforced: true,
     steps: [
-      step('answered', ['question_answer'], 'the user answers in the web UI; local mode only: relay an answer the user gave you explicitly in chat', { gate: 'every question answered with its option labels (free text allowed for single choice)', enforcedBy: 'QuestionService.check (storage/questions.ts)', errors: ['question_frozen', 'forbidden', 'validation'] }),
+      step('answered', ['question_answer'], 'the user answers in the web UI (agents never answer for the user)', { gate: 'every question answered with its option labels (free text allowed for single choice)', enforcedBy: 'QuestionService.check (storage/questions.ts)', errors: ['question_frozen', 'forbidden', 'validation'] }),
       step('cancelled', ['question_cancel'], 'the question no longer matters (with a reason)', { errors: ['question_frozen'] }),
       step('superseded', ['question_ask'], 'question_ask with supersedes: <id> replaces an open question', { errors: ['question_frozen'] }),
     ],
@@ -448,7 +448,7 @@ export const ERROR_ACTIONS: Record<string, string> = {
   not_claimed: 'claim the work order first (work_order_claim), then retry',
   ready_gate: 'every live section needs an acceptance criterion: insert one per listed section (or verifiedBy an existing one), then set ready',
   waiver_self_approved: 'approval must come from someone else: ask the user (question_ask purpose approval). Only if the user explicitly says to self-approve: feedback_accept with override: true, overrideReason (their words) and cause: the answered question',
-  override_not_allowed: 'self-approval is only for the sole active user, an admin or local mode, and only when the user says so: ask another user to accept the feedback',
+  override_not_allowed: 'self-approval is only for the sole active user, or an admin, and only when the user says so: ask another user to accept the feedback',
   claim_fresh: 'the claim has a recent heartbeat: only a stale claim can be released from the web UI; ask the agent or wait',
   not_snoozable: 'integrity errors cannot be snoozed: fix the error (its hint says how)',
   work_order_frozen: 'the work order is closed: only work_order_git_update (PR / merge) and replies are allowed; open a new work order for more work',

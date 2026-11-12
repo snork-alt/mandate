@@ -1,6 +1,6 @@
 /**
  * Read-only access to local CODE repositories (never the Mandate data repo), for `work_order_touch_from_commits`.
- * Mandate normally never reads code: this only works when the server runs on the developer's machine (local mode) and
+ * Mandate normally never reads code: this only works when the server runs on the developer's machine (on this computer) and
  * the code repo was registered with `mandate connect` (recorded in `~/.mandate/wiring.json`, matched by folder name =
  * the repo name used in code refs). Otherwise the agent reports the files itself (work_order_touch).
  */

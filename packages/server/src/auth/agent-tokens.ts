@@ -1,5 +1,5 @@
 /**
- * Server mode: personal agent tokens (the fallback to MCP OAuth). Created by a signed-in user in the Connect dialog,
+ * Team: personal agent tokens (the fallback to MCP OAuth). Created by a signed-in user in the Connect dialog,
  * scoped to (user, project), shown once, stored only as SHA-256 hashes in the server-state database (`agent_tokens`),
  * revocable, with a last-used time. The bearer acts AS the user: GitHub repo permissions decide read / write.
  */

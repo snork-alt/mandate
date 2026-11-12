@@ -1,10 +1,10 @@
 /**
  * Lineage, cause recording and attribution (see plans/lineage-brief.md §2, §6, §7).
  *
- * - Attribution: every write records the triggering USER (server mode only: the GitHub login of the MCP principal, or
- *   `service:<name>` for a named service-account key) and the coding AGENT. Users are never taken from client input.
- *   Trailers: `Mandate-User:` (new) with `Agent-User:` kept for compatibility; `Agent:` for the agent.
- *   Local mode records no user at all (the agent only).
+ * - Attribution: every write records the triggering USER (the GitHub login of the principal, or `service:<name>` for a
+ *   named service-account key) and the coding AGENT. Users are never taken from client input. Trailers:
+ *   `Mandate-User:` (new) with `Agent-User:` kept for compatibility; `Agent:` for the agent. Older commits without a
+ *   user stay agent-attributed.
  * - Causes: every MCP write accepts `cause` (refs). Stored as a `Caused-By:` trailer (comma separated) and as temporal
  *   `caused_by` graph edges from every changed node (sections included) to each cause. `Feedback:`, `Work-Order:`,
  *   `Verification:` and `Audit:` trailers produce `caused_by` edges too.
@@ -17,7 +17,7 @@ import type { CommitPoint, EdgeKind, GraphNodeKind } from './search.js';
 
 /* ------------------------------------------------------------------ attribution */
 
-/** Trailer naming the user who triggered a write (server mode). */
+/** Trailer naming the user who triggered a write. */
 export const USER_TRAILER = 'Mandate-User';
 /** Legacy trailer with the same meaning (still written for compatibility). */
 export const LEGACY_USER_TRAILER = 'Agent-User';
@@ -26,9 +26,9 @@ export const CAUSE_TRAILER = 'Caused-By';
 /** Prefix of service-account users (`service:<name>`, CI keys created with `mandate key create --service`). */
 export const SERVICE_USER_PREFIX = 'service:';
 
-/** Who triggered a write: the user (server mode only) and the coding agent. Old data: agent only. */
+/** Who triggered a write: the user and the coding agent. Old data: agent only. */
 export interface Attribution {
-  /** GitHub login, or `service:<name>`; absent in local mode and for legacy commits. */
+  /** GitHub login, or `service:<name>`; absent for older agent-only commits. */
   user?: string;
   /** Coding agent (the `Agent:` trailer / MCP clientInfo name), else the commit author. */
   agent?: string;
@@ -222,7 +222,7 @@ export interface LineageEvent {
   linesRemoved?: number;
   /** Status of the element after this event (verification result, feedback / work order status when known). */
   status?: string;
-  /** Server mode only: the user who triggered it. */
+  /** The user who triggered it. */
   user?: string;
   agent?: string;
   branch?: string;
@@ -492,17 +492,16 @@ export interface CodeRulesResponse {
 
 export const writersInputSchema = z.object({ limit: z.number().int().min(1).max(2000).default(500) }).strict();
 export interface WritersResponse {
-  mode: 'local' | 'server' | null;
   /** Recent commits grouped by (user, agent, credential). */
   writers: { user: string | null; agent: string | null; source: string | null; commits: number; last: string }[];
-  /** Commits without a user in server mode (legacy or shared keys). */
+  /** Commits without a user (older agent-only writes). */
   unattributed: number;
   /** Commits made by service accounts. */
   service: number;
   scanned: number;
 }
 
-/* ------------------------------------------------------------------ contributors (server mode: users only) */
+/* ------------------------------------------------------------------ contributors */
 
 export const contributorsInputSchema = z
   .object({
@@ -521,7 +520,7 @@ export type ContributorRole = string;
 export interface Contributor {
   /** GitHub login or service:<name>; the agent name when no user was recorded (`userRecorded: false`). */
   user: string;
-  /** false: no user on the commits (legacy data, local mode): `user` is the agent identity. */
+  /** false: no user on the commits (older agent-only commits): `user` is the agent identity. */
   userRecorded: boolean;
   /** direct: wrote to the element (or its sections, comments, verifications); via: contributed to a cause of it. */
   kind: 'direct' | 'via';
@@ -542,7 +541,7 @@ export interface ContributorsResponse {
   contributors: Record<string, Contributor[]>;
 }
 
-/* ------------------------------------------------------------------ user directory (server mode) */
+/* ------------------------------------------------------------------ user directory */
 
 export const usersResolveInputSchema = z.object({ logins: z.array(z.string().trim().min(1).max(200)).min(1).max(200) }).strict();
 export type UsersResolveInput = z.input<typeof usersResolveInputSchema>;
@@ -575,7 +574,7 @@ export const lineageAnnotationSchema = z
     /** Canonical cause references (validated like `cause`). */
     causes: z.array(z.string().min(3)).min(1).max(20),
     note: z.string().trim().min(1).max(2000),
-    /** Who annotated: the server principal (the user in server mode), else the agent. */
+    /** Who annotated: the server principal (the user), else the agent. */
     by: z.string().min(1),
     at: z.string(),
     /** `low`: inferred from circumstantial evidence (no record names the cause); omitted = asserted. */

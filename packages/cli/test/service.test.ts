@@ -15,6 +15,15 @@ const spec: ServiceSpec = {
 describe('service definitions', () => {
   it('launchd plist', () => expect(launchdPlist(spec)).toMatchSnapshot());
   it('systemd unit', () => expect(systemdUnit({ ...spec, home: '/home/ada', mandateHome: '/home/ada/.mandate', log: '/home/ada/.mandate/logs/server.log' })).toMatchSnapshot());
+  it('restart the server when it exits 75 (self-restart after a mode switch) and tell it so', () => {
+    const plist = launchdPlist(spec);
+    expect(plist).toMatch(/<key>KeepAlive<\/key>\s*<dict>\s*<key>SuccessfulExit<\/key>\s*<false\/>/); // non-zero exit (75) → relaunch
+    expect(plist).toMatch(/<key>MANDATE_SUPERVISED<\/key>\s*<string>1<\/string>/);
+    const unit = systemdUnit(spec);
+    expect(unit).toContain('RestartForceExitStatus=75');
+    expect(unit).toMatch(/^Restart=on-failure$/m);
+    expect(unit).toContain('Environment=MANDATE_SUPERVISED=1');
+  });
   it('escapes XML and quotes paths with spaces', () => {
     expect(launchdPlist({ ...spec, home: '/Users/a&b' })).toContain('/Users/a&amp;b');
     expect(systemdUnit({ ...spec, node: '/opt/my node/bin/node' })).toContain('ExecStart="/opt/my node/bin/node" /usr/local/lib');
