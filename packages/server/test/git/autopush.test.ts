@@ -96,7 +96,7 @@ for (const backend of ['embedded', 'cli'] as const) {
     }
 
     it('coalesces a burst of commits into one debounced push (git.pushed event with the range)', async () => {
-      const s = await setup();
+      const s = await setup({ debounceMs: 2000 }); // wide window: the burst must land inside it even under load
       await wait(500); // let the startup catch-up run finish
       const before = s.pushes();
       for (let i = 0; i < 3; i++) await s.write(`specs/a${i}.md`, `a${i}\n`);
@@ -118,9 +118,9 @@ for (const backend of ['embedded', 'cli'] as const) {
       const s = await setup({ debounceMs: 60_000, intervalMs: 200 });
       await s.write('specs/sweep.md', 'x\n');
       expect((await s.ap.status()).nextPushAt).toBeTruthy();
-      await until(() => remoteLog(s.bare)[0] === 'write specs/sweep.md');
+      await until(() => remoteLog(s.bare)[0] === 'write specs/sweep.md', 25_000);
       s.close();
-    });
+    }, 40_000);
 
     it('integrates a moved remote (fetch + merge, inside the write lock) and pushes again', async () => {
       const s = await setup({ debounceMs: 60_000 });

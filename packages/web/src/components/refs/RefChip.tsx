@@ -8,8 +8,14 @@ import { copyText } from '../../lib/copy';
 import { openCommandPalette } from '../CommandPalette';
 import { StatusGlyph } from './StatusGlyph';
 import { KIND_ICON, fallbackLabel, refHref, refKind } from './kinds';
+import { sectionHref } from '../../lib/links';
 import { useRefNode } from './useRefNode';
+import { CodeRulesLines } from './CodeRules';
+import { parseRef } from '@mandate/shared/refs';
+import { MaturityDot } from '../maturity/MaturityBadge';
+import { useSpecMaturities } from '../maturity/SpecMaturity';
 import './refs.css';
+import { Contributors } from '../people/People';
 import { appUrl, withBase } from '../../project';
 
 /** Reference checks of an ask answer: unresolved refs render visibly as such. */
@@ -29,6 +35,18 @@ export interface RefChipProps {
   check?: ReferenceCheck;
 }
 
+const PEOPLE_LABEL: Partial<Record<string, string>> = { code_file: 'Touched by', code_range: 'Touched by', repo: 'Touched by', commit: 'Committed by', code_commit: 'Implemented by', pull_request: 'Worked on by', branch: 'Worked on by', agent: 'Used by', symbol: 'Mentioned by' };
+
+/** Who touched / wrote the referenced element (lazy: the preview mounts only while open). */
+function RefPeople({ uri, kind }: { uri: string; kind: string }) {
+  return (
+    <div className="ref-preview-people" data-testid="ref-people">
+      <span className="faint">{PEOPLE_LABEL[kind] ?? 'Contributors'}</span>
+      <Contributors refUri={uri} size="xs" max={5} form="compact" />
+    </div>
+  );
+}
+
 /**
  * One rich reference everywhere (Activity, Ask answers, tables, tool results): kind icon, resolved title, live status icon,
  * hover preview, click opens it, right-click copies (Mandate reference first).
@@ -46,8 +64,17 @@ export function RefChip({ to, label, href, resolve = true, check }: RefChipProps
   const props = node.data?.props ?? {};
   const status = typeof props.status === 'string' ? props.status : undefined;
   const title = label ?? node.data?.label ?? chk?.label ?? fallbackLabel(uri);
-  const target = href ?? refHref(uri);
+  // Comments open their work order (at the comment); PRs / code commits open the work order they belong to.
+  const viaProps =
+    kind === 'comment' && typeof props.target === 'string'
+      ? `${sectionHref(props.target.split('/sections/')[0]!)}#comment-${typeof props.thread === 'string' ? props.thread : (props.id as string)}`
+      : (kind === 'pull_request' || kind === 'code_commit') && typeof props.workOrder === 'string'
+        ? sectionHref(props.workOrder)
+        : null;
+  const target = href ?? refHref(uri) ?? viaProps;
   const summary = typeof props.summary === 'string' ? props.summary : undefined;
+  const specId = kind === 'spec' ? parseRef(uri)?.id : undefined;
+  const maturity = useSpecMaturities(!!specId);
 
   const open = (e: MouseEvent) => {
     e.preventDefault();
@@ -69,6 +96,8 @@ export function RefChip({ to, label, href, resolve = true, check }: RefChipProps
       <strong>{node.data?.label ?? title}</strong>
       <div className="ref-preview-mono">{kind?.replace('_', ' ')}{status ? ` · ${status.replace('_', ' ')}` : ''}</div>
       {summary && <div>{summary}</div>}
+      {(kind === 'code_file' || kind === 'code_range') && <CodeRulesLines refUri={uri} />}
+      {kind && <RefPeople uri={uri} kind={kind} />}
     </div>
   );
 
@@ -87,7 +116,13 @@ export function RefChip({ to, label, href, resolve = true, check }: RefChipProps
             >
               <Icon size={13} stroke={1.6} className="ref-chip-icon" />
               <span className="ref-chip-label">{title}</span>
-              {unresolved ? <IconAlertTriangle size={12} aria-label="unresolved" /> : <StatusGlyph status={status} size={12} />}
+              {unresolved ? (
+                <IconAlertTriangle size={12} aria-label="unresolved" />
+              ) : specId && maturity.get(specId) ? (
+                <MaturityDot m={maturity.get(specId)!} details={false} />
+              ) : (
+                <StatusGlyph status={status} size={12} />
+              )}
             </a>
           </Tooltip>
         </span>

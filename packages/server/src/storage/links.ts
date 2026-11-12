@@ -1,5 +1,6 @@
 import { checkLinks, parseLinkTarget } from '@mandate/doc';
 import type { Backlink, DocLinks, ResolvedLink, Section, SectionLinkInfo, StoredComponent, StoredSpec, StoredStandard } from '@mandate/shared';
+import { userOfTrailers } from '@mandate/shared';
 import type { GitStore } from '../git/GitStore.js';
 import { componentCodec, specCodec, standardCodec } from './codecs.js';
 import { actorOf, type WriteContext } from './GitBackedRepository.js';
@@ -26,6 +27,17 @@ class LinkValidationError extends Error {
   readonly code = 'invalid_links';
   constructor(readonly details: string[]) {
     super(`invalid_links: ${details.join('; ')}`);
+  }
+}
+
+/** A waiver / exemption / criteria removal whose feedback was accepted by its own writer (409 `waiver_self_approved`). */
+export class WaiverSelfApprovedError extends Error {
+  readonly statusCode = 409;
+  readonly code = 'waiver_self_approved';
+  constructor(feedback: string, who: string, what: string, filed = false) {
+    super(
+      `waiver_self_approved: feedback '${feedback}' was ${filed ? 'filed' : 'accepted'} by the same author (${who}) who writes this ${what}; approval must come from someone else (the sole active user or an admin may self-approve: feedback_accept with override: true and overrideReason)`,
+    );
   }
 }
 
@@ -96,7 +108,9 @@ export class LinkService {
     const head = kind === 'components' ? await this.git.resolveCommit('HEAD').catch(() => null) : null;
     const f = finder(withNext);
     const successors = liveSuccessors(m);
-    const actor = ctx ? actorOf(ctx.meta) : 'local';
+    // MW-2: the writer's principal: the server-resolved user (Mandate-User trailer, set from the authenticated
+    // principal only) in server mode, else the agent identity. Compared trimmed and case-folded (approval()).
+    const actor = (ctx ? (userOfTrailers(ctx.meta.trailers) ?? actorOf(ctx.meta)) : 'local').trim();
     const sections = next.sections.map((s) => {
       const before = current?.sections.find((x) => x.id === s.id);
       const links = s.links.map((l) => {
@@ -128,6 +142,7 @@ export class LinkService {
         }
         if (!changed) return l;
         const state = approval({ feedback: l.feedback, by: actor }, m);
+        if (state.reason === 'self_approved' || state.reason === 'same_author') throw new WaiverSelfApprovedError(l.feedback, actor, 'waiver', state.reason === 'same_author');
         if (!state.effective) {
           const why = { no_feedback: 'no feedback', feedback_missing: `feedback '${l.feedback}' does not exist`, not_accepted: `feedback '${l.feedback}' is not accepted`, same_author: `feedback '${l.feedback}' was filed by the same author (${actor}); a waiver needs approval by someone else`, stale: 'stale' }[state.reason!];
           problems.push(`section "${s.id}": waiver of ${l.to}: ${why}`);
@@ -150,14 +165,17 @@ export class LinkService {
           problems.push(`exemptFrom: ${e.standard} does not apply to this spec through appliesTo`);
         }
         const state = approval({ feedback: e.feedback, by: actor }, m);
+        if (state.reason === 'self_approved' || state.reason === 'same_author') throw new WaiverSelfApprovedError(e.feedback, actor, 'exemption', state.reason === 'same_author');
         if (!state.effective) problems.push(`exemptFrom ${e.standard}: needs an accepted feedback item by someone other than ${actor} (${state.reason})`);
         return { ...e, by: actor };
       });
     }
-    for (const p of graphProblems(withNext)) {
-      // Only problems that involve this document block the write (pre-existing ones are lint issues).
-      if (p.message.includes(`${kind}/${next.id}`)) problems.push(p.message);
-    }
+    // Only problems that involve this document block the write (pre-existing ones elsewhere are lint issues). MW-3:
+    // cycles are searched through this document's nodes (an unrelated cycle never hides a new one); exact URIs (no
+    // prefix match: specs/auth is not specs/auth-flow).
+    const self = `mandate://${kind}/${next.id}`;
+    const mine = (u: string) => u === self || u.startsWith(`${self}/`);
+    for (const p of graphProblems(withNext, mine)) if ((p.nodes ?? [p.uri]).some(mine)) problems.push(p.message);
     if (problems.length) throw new LinkValidationError([...new Set(problems)]);
     return { ...next, sections, ...(kind === 'specs' ? { exemptFrom } : {}) };
   }

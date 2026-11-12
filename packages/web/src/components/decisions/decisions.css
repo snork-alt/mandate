@@ -1,0 +1,3 @@
+/* Item actions: "…" menu and the primary decision button. Existing tokens and type scale only. */
+.item-actions { display: inline-flex; align-items: center; gap: 4px; flex: none; }
+.fb-decide { display: flex; align-items: center; gap: 8px; margin-top: 10px; }

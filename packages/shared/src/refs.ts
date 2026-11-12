@@ -6,7 +6,7 @@
 export const REF_SCHEME = 'mandate://';
 export const MCP_SERVER_NAME = 'mandate';
 
-export type RefKind = 'specs' | 'standards' | 'components' | 'work-orders' | 'feedback';
+export type RefKind = 'specs' | 'standards' | 'components' | 'work-orders' | 'feedback' | 'audits';
 
 export interface MandateRef {
   kind: RefKind;
@@ -23,12 +23,12 @@ export interface MandateRef {
 const SLUG = '[a-z0-9]+(?:-[a-z0-9]+)*';
 /** `mandate://<kind>/<id>[@<sha>][/sections/<sid>][#Lx-Ly]` (the version suffix sits on the document id). */
 const REF_RE = new RegExp(
-  `^mandate://(specs|standards|components|work-orders|queue|feedback)/(${SLUG})(?:@([0-9a-f]{4,40}))?(?:/sections/(${SLUG}))?(?:#L(\\d+)(?:-L(\\d+))?)?$`,
+  `^mandate://(specs|standards|components|work-orders|queue|feedback|audits)/(${SLUG})(?:@([0-9a-f]{4,40}))?(?:/sections/(${SLUG}))?(?:#L(\\d+)(?:-L(\\d+))?)?$`,
 );
 
 /** Build the `mandate://` URI for a reference. */
 export function buildRef(ref: MandateRef): string {
-  if (ref.sectionId && (ref.kind === 'work-orders' || ref.kind === 'feedback')) throw new Error(`${ref.kind} items have no sections`);
+  if (ref.sectionId && ref.kind === 'feedback') throw new Error(`${ref.kind} items have no sections`);
   let uri = `${REF_SCHEME}${ref.kind}/${ref.id}`;
   if (ref.commit) uri += `@${ref.commit}`;
   if (ref.sectionId) uri += `/sections/${ref.sectionId}`;
@@ -42,7 +42,7 @@ export function parseRef(input: string): MandateRef | null {
   const m = REF_RE.exec(uri);
   if (!m) return null;
   const [, kind, id, commit, sectionId, start, end] = m;
-  if ((kind === 'work-orders' || kind === 'queue' || kind === 'feedback') && sectionId) return null;
+  if (kind === 'feedback' && sectionId) return null;
   // `mandate://queue/<id>` is a read-only alias of `work-orders` (the pre-rename form); always emit the new one.
   const ref: MandateRef = { kind: (kind === 'queue' ? 'work-orders' : kind) as RefKind, id: id! };
   if (sectionId) ref.sectionId = sectionId;
@@ -76,12 +76,19 @@ export const NODE_KINDS = [
   'repo',
   'commit',
   'agent',
+  'user',
   'branch',
   'verification',
   'version',
   'excerpt',
   'component',
   'architecture',
+  'audit',
+  'finding',
+  'comment',
+  'question',
+  'pull_request',
+  'code_commit',
 ] as const;
 export type NodeKind = (typeof NODE_KINDS)[number];
 
@@ -96,11 +103,24 @@ export type NodeRef =
   | { kind: 'code'; repo: string; path: string; lines?: { start: number; end: number } }
   | { kind: 'repos'; name: string }
   | { kind: 'commits'; sha: string }
+  /** Agent identity (case-folded id: `mandate://agents/Giulia` and `.../giulia` are the same node). */
   | { kind: 'agents'; name: string }
+  /** A person (server mode): the case-folded GitHub login, `mandate://users/<login>`. */
+  | { kind: 'users'; login: string }
   | { kind: 'branches'; name: string }
   | { kind: 'verifications'; id: string }
+  /** A finding of an audit: `mandate://audits/<audit>/findings/<fid>` (audits themselves are documents). */
+  | { kind: 'findings'; audit: string; id: string }
   /** The generated architecture view: `mandate://architecture[@sha][?focus=<component>]`. */
-  | { kind: 'architecture'; commit?: string; focus?: string };
+  | { kind: 'architecture'; commit?: string; focus?: string }
+  /** A comment (review / coordination thread) on a work order or one of its sections: `mandate://comments/<id>`. */
+  | { kind: 'comments'; id: string }
+  /** A question an agent asked the user through Mandate (`question_ask`): `mandate://questions/<ask-NNNN>`. */
+  | { kind: 'questions'; id: string }
+  /** A pull request of a code repository: `mandate://prs/<repo>/<number>`. */
+  | { kind: 'prs'; repo: string; number: number }
+  /** A commit of a CODE repository (not the Mandate repo): `mandate://code-commits/<repo>/<sha>`. */
+  | { kind: 'code-commits'; repo: string; sha: string };
 
 /** Percent-encode everything but unreserved characters and `:` (so `Foo::bar` and `A.b` stay readable). */
 const encodePart = (s: string) => encodeURIComponent(s).replace(/%3A/gi, ':');
@@ -113,7 +133,7 @@ const decodePart = (s: string) => {
 };
 
 const isDocRef = (r: NodeRef): r is MandateRef =>
-  r.kind === 'specs' || r.kind === 'standards' || r.kind === 'components' || r.kind === 'work-orders' || r.kind === 'feedback';
+  r.kind === 'specs' || r.kind === 'standards' || r.kind === 'components' || r.kind === 'work-orders' || r.kind === 'feedback' || r.kind === 'audits';
 
 /** The architecture view reference: `mandate://architecture[@sha][?focus=<component>]`. */
 export function buildArchitectureRef(r: { commit?: string; focus?: string } = {}): string {
@@ -127,13 +147,27 @@ export function buildNodeUri(ref: NodeRef): string {
     case 'symbols':
       return `${REF_SCHEME}symbols/${encodePart(ref.name)}`;
     case 'repos':
-    case 'agents':
     case 'branches':
       return `${REF_SCHEME}${ref.kind}/${encodePart(ref.name)}`;
+    case 'agents':
+      // G-9: case-folded ids; old `mandate://agents/<Name>` references parse to the same node.
+      return `${REF_SCHEME}agents/${encodePart(foldIdentity(ref.name))}`;
+    case 'users':
+      return `${REF_SCHEME}users/${encodePart(foldIdentity(ref.login))}`;
     case 'commits':
       return `${REF_SCHEME}commits/${ref.sha}`;
     case 'verifications':
       return `${REF_SCHEME}verifications/${ref.id}`;
+    case 'findings':
+      return buildFindingRef(ref);
+    case 'comments':
+      return buildCommentRef(ref.id);
+    case 'questions':
+      return buildQuestionRef(ref.id);
+    case 'prs':
+      return buildPrRef(ref);
+    case 'code-commits':
+      return buildCodeCommitRef(ref);
     case 'architecture':
       return buildArchitectureRef(ref);
     case 'code': {
@@ -174,8 +208,23 @@ export function parseNodeUri(input: string): NodeRef | null {
     const name = decodePart(m[2]!);
     return name ? { kind: m[1] as 'repos' | 'agents' | 'branches', name } : null;
   }
+  if ((m = /^users\/([^/#?]+)$/.exec(rest))) {
+    const login = decodePart(m[1]!);
+    return login ? { kind: 'users', login } : null;
+  }
   if ((m = /^commits\/([0-9a-f]{4,40})$/.exec(rest))) return { kind: 'commits', sha: m[1]! };
   if ((m = new RegExp(`^verifications\\/(${SLUG})$`).exec(rest))) return { kind: 'verifications', id: m[1]! };
+  if ((m = new RegExp(`^audits\\/(${SLUG})\\/findings\\/(${SLUG})$`).exec(rest))) return { kind: 'findings', audit: m[1]!, id: m[2]! };
+  if ((m = new RegExp(`^comments\\/(${SLUG})$`).exec(rest))) return { kind: 'comments', id: m[1]! };
+  if ((m = new RegExp(`^questions\\/(${SLUG})$`).exec(rest))) return { kind: 'questions', id: m[1]! };
+  if ((m = /^prs\/([^/#?@]+)\/(\d{1,9})$/.exec(rest))) {
+    const repo = decodePart(m[1]!);
+    return repo ? { kind: 'prs', repo, number: Number(m[2]) } : null;
+  }
+  if ((m = /^code-commits\/([^/#?@]+)\/([0-9a-f]{4,64})$/.exec(rest))) {
+    const repo = decodePart(m[1]!);
+    return repo ? { kind: 'code-commits', repo, sha: m[2]! } : null;
+  }
   if ((m = new RegExp(`^architecture(?:@([0-9a-f]{4,40}))?(?:\\?focus=(${SLUG}))?$`).exec(rest))) {
     return { kind: 'architecture', ...(m[1] ? { commit: m[1] } : {}), ...(m[2] ? { focus: m[2] } : {}) };
   }
@@ -196,6 +245,12 @@ export function parseNodeUri(input: string): NodeRef | null {
   return null;
 }
 
+/** Identity key of an agent name or user login: trimmed, case-folded (G-9). */
+export const foldIdentity = (name: string): string => name.trim().toLowerCase();
+
+/** `mandate://users/<login>` of a (GitHub) login. */
+export const buildUserRef = (login: string): string => `${REF_SCHEME}users/${encodePart(foldIdentity(login))}`;
+
 /** Graph node kind of a parsed URI. */
 export function nodeKindOf(ref: NodeRef): NodeKind {
   switch (ref.kind) {
@@ -209,10 +264,25 @@ export function nodeKindOf(ref: NodeRef): NodeKind {
       if (ref.lines) return 'excerpt';
       if (ref.commit) return 'version';
       return ref.sectionId ? 'section' : 'component';
+    case 'audits':
+      if (ref.lines) return 'excerpt';
+      if (ref.commit) return 'version';
+      return ref.sectionId ? 'section' : 'audit';
+    case 'comments':
+      return 'comment';
+    case 'questions':
+      return 'question';
+    case 'prs':
+      return 'pull_request';
+    case 'code-commits':
+      return 'code_commit';
     case 'architecture':
       return 'architecture';
     case 'work-orders':
-      return 'work_order';
+      // Work orders are markdown documents (`work-orders/<id>.md`): versioned, with sections.
+      if (ref.lines) return 'excerpt';
+      if (ref.commit) return 'version';
+      return ref.sectionId ? 'section' : 'work_order';
     case 'feedback':
       return 'feedback';
     case 'symbols':
@@ -225,10 +295,14 @@ export function nodeKindOf(ref: NodeRef): NodeKind {
       return 'commit';
     case 'agents':
       return 'agent';
+    case 'users':
+      return 'user';
     case 'branches':
       return 'branch';
     case 'verifications':
       return 'verification';
+    case 'findings':
+      return 'finding';
   }
 }
 
@@ -254,6 +328,28 @@ export function buildCommitRef(sha: string): string {
   return `${REF_SCHEME}commits/${sha}`;
 }
 
+/** A finding of an audit: `mandate://audits/<audit>/findings/<fid>`. */
+export function buildFindingRef(r: { audit: string; id: string }): string {
+  return `${REF_SCHEME}audits/${r.audit}/findings/${r.id}`;
+}
+
+/** A question asked through Mandate: `mandate://questions/<id>`. */
+export function buildQuestionRef(id: string): string {
+  return `${REF_SCHEME}questions/${id}`;
+}
+
+/** A comment: `mandate://comments/<id>`. */
+export function buildCommentRef(id: string): string {
+  return `${REF_SCHEME}comments/${id}`;
+}
+/** A pull request of a code repository: `mandate://prs/<repo>/<number>`. */
+export function buildPrRef(r: { repo: string; number: number }): string {
+  return `${REF_SCHEME}prs/${encodePart(r.repo)}/${r.number}`;
+}
+/** A commit of a code repository: `mandate://code-commits/<repo>/<sha>`. */
+export function buildCodeCommitRef(r: { repo: string; sha: string }): string {
+  return `${REF_SCHEME}code-commits/${encodePart(r.repo)}/${r.sha}`;
+}
 /** `@mandate:<uri>` for any reference URI. */
 export function mentionOf(uri: string): string {
   return `@${MCP_SERVER_NAME}:${uri}`;
@@ -271,7 +367,7 @@ export function refFromText(text: string): string | null {
 }
 
 /** Every reference kind the builders can produce (contract test: each is a graph key). */
-export const REF_KINDS = ['specs', 'standards', 'components', 'work-orders', 'feedback', 'code', 'symbols', 'commits', 'architecture'] as const;
+export const REF_KINDS = ['specs', 'standards', 'components', 'work-orders', 'feedback', 'code', 'symbols', 'commits', 'architecture', 'audits', 'findings', 'comments', 'questions', 'prs', 'code-commits', 'users'] as const;
 export type AnyRefKind = (typeof REF_KINDS)[number];
 
 /** All builders by kind, with an example input each (for coverage checks). */
@@ -279,12 +375,19 @@ export const refBuilders = {
   specs: (r: Omit<MandateRef, 'kind'>) => buildRef({ ...r, kind: 'specs' }),
   standards: (r: Omit<MandateRef, 'kind'>) => buildRef({ ...r, kind: 'standards' }),
   components: (r: Omit<MandateRef, 'kind'>) => buildRef({ ...r, kind: 'components' }),
-  'work-orders': (r: Omit<MandateRef, 'kind' | 'sectionId' | 'lines'>) => buildRef({ ...r, kind: 'work-orders' }),
+  'work-orders': (r: Omit<MandateRef, 'kind'>) => buildRef({ ...r, kind: 'work-orders' }),
   feedback: (r: Omit<MandateRef, 'kind' | 'sectionId' | 'lines'>) => buildRef({ ...r, kind: 'feedback' }),
   code: buildCodeRef,
   symbols: buildSymbolRef,
   commits: buildCommitRef,
   architecture: buildArchitectureRef,
+  audits: (r: Omit<MandateRef, 'kind'>) => buildRef({ ...r, kind: 'audits' }),
+  findings: buildFindingRef,
+  comments: buildCommentRef,
+  questions: buildQuestionRef,
+  prs: buildPrRef,
+  'code-commits': buildCodeCommitRef,
+  users: buildUserRef,
 } as const satisfies Record<AnyRefKind, (...args: never[]) => string>;
 
 /** Canonical form of any reference (prefix dropped, parts in builder order); null if invalid. */

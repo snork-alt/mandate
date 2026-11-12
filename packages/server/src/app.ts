@@ -17,11 +17,14 @@ export function buildApp({ health, logger = false }: BuildAppOptions): FastifyIn
   return app;
 }
 
+/** Path of a request URL for logs: no query string, upload tokens redacted. */
+export const logUrl = (url: string) => url.split('?')[0]!.replace(/\/uploads\/[^/]+/, '/uploads/***');
+
 /** Request logs never include query strings (the OAuth callback carries `code` / `state`) or headers (keys, cookies). */
 export function loggerOptions(stream?: { write(line: string): void }) {
   return {
     level: 'info',
-    serializers: { req: (req: { method: string; url: string; hostname?: string }) => ({ method: req.method, url: req.url.split('?')[0], hostname: req.hostname }) },
+    serializers: { req: (req: { method: string; url: string; hostname?: string }) => ({ method: req.method, url: logUrl(req.url), hostname: req.hostname }) },
     ...(stream ? { stream } : {}),
   };
 }

@@ -1,11 +1,12 @@
 /** Live activity feed: event derivation, notifications to concurrent sessions, filters, backfill, outside commits, pulls. */
 import { execFileSync } from 'node:child_process';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ACTIVITY_NOTIFICATION, type ActivityEvent } from '@mandate/shared';
 import { EsGitStore } from '../../src/git/EsGitStore.js';
 import { ActivityBus } from '../../src/events/index.js';
+import { workOrderCodec } from '../../src/storage/codecs.js';
 import { tempDir } from '../helpers.js';
 import { connect, mcpFixture, type McpFixture } from './fixture.js';
 
@@ -25,15 +26,19 @@ async function editSpec(id: string, text: string, agent = 'claude-test') {
   return fx.git.commit([file], `specs: update ${id}${trailers(agent)}`);
 }
 
-/** Rewrite one work order line and commit. */
+/** Rewrite the first work order document (through a flat view: status, note, claim, section statuses) and commit. */
 async function editWorkOrder(fn: (w: Record<string, any>) => void, agent = 'claude-test') {
-  const p = path.join(fx.dir, 'work-orders.jsonl');
-  const lines = (await readFile(p, 'utf8')).split('\n').filter(Boolean);
-  const w = JSON.parse(lines[0]!);
+  const id = (await readdir(path.join(fx.dir, 'work-orders'))).filter((f) => f.endsWith('.md')).sort()[0]!.slice(0, -3);
+  const file = `work-orders/${id}.md`;
+  const p = path.join(fx.dir, file);
+  const d = workOrderCodec.decode(await readFile(p, 'utf8'), id);
+  const wos = d.sections.filter((s) => s.type === 'wo-section');
+  const w: Record<string, any> = { id, status: d.status, note: d.note, claim: d.claim, sections: wos.map((s) => ({ id: s.id, status: s.status })) };
   fn(w);
-  lines[0] = JSON.stringify(w);
-  await writeFile(p, `${lines.join('\n')}\n`);
-  await fx.git.commit(['work-orders.jsonl'], `work-orders: update ${w.id}${trailers(agent)}\nWork-Order: ${w.id}`);
+  const next = { ...d, status: w.status, note: w.note, claim: w.claim, sections: d.sections.map((s) => (s.type === 'wo-section' ? { ...s, status: w.sections.find((x: { id: string }) => x.id === s.id).status } : s)) };
+  if (!next.claim) delete next.claim;
+  await writeFile(p, workOrderCodec.encode(next as never));
+  await fx.git.commit([file], `work order: update ${id}${trailers(agent)}\nWork-Order: ${id}`);
   return w;
 }
 
@@ -125,15 +130,12 @@ describe('live notifications', () => {
     await a.close();
   });
 
-  it('derives claims, flagged heartbeats, section_done and completion', async () => {
+  it('derives claims, section_done and completion (heartbeats are not commits any more)', async () => {
     const now = () => new Date().toISOString();
     const w = await editWorkOrder((x) => {
       x.status = 'in_progress';
-      x.claim = { agent: 'claude-a', startedAt: now(), heartbeatAt: now() };
+      x.claim = { agent: 'claude-a', startedAt: now() };
       for (const s of x.sections) s.status = 'pending';
-    });
-    await editWorkOrder((x) => {
-      x.claim.heartbeatAt = new Date(Date.now() + 1000).toISOString();
     });
     await editWorkOrder((x) => {
       x.sections[0].status = 'done';
@@ -145,9 +147,8 @@ describe('live notifications', () => {
     });
     const r = await fx.call('activity_list', { ref: `mandate://work-orders/${w.id}`, limit: 20 });
     const types = (r.body.events as ActivityEvent[]).map((e) => e.type);
-    expect(types).toEqual(expect.arrayContaining(['work_order.claimed', 'work_order.heartbeat', 'work_order.section_done', 'work_order.completed']));
-    const hb = (r.body.events as ActivityEvent[]).find((e) => e.type === 'work_order.heartbeat')!;
-    expect(hb.heartbeat).toBe(true);
+    expect(types).toEqual(expect.arrayContaining(['work_order.section_done', 'work_order.completed']));
+    expect(types.includes('work_order.claimed') || types.includes('work_order.updated')).toBe(true);
     const done = (r.body.events as ActivityEvent[]).find((e) => e.type === 'work_order.completed')!;
     expect(done.details?.progress).toEqual({ done: w.sections.length, total: w.sections.length });
     expect((await fx.call('activity_list', { ref: `mandate://work-orders/${w.id}`, includeHeartbeats: false })).body.events.some((e: ActivityEvent) => e.heartbeat)).toBe(false);

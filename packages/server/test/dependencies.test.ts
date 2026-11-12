@@ -45,7 +45,7 @@ describe('work-order dependency graph on seeded data', () => {
     const down = node(t, S('invoice-emails', 'template'))!;
     expect(down).toMatchObject({ side: 'downstream', depth: 1, blocked: true });
     expect(down.workOrders).toEqual([expect.objectContaining({ kind: 'implement', status: 'pending' })]);
-    expect(down.workOrders[0]!.id).toMatch(/^wo-/);
+    expect(down.workOrders[0]!.id).toMatch(/^q-\d{4}$/);
     expect(t.summary.dependentWorkOrders).toBe(1);
     expect(t.summary.blockedBySections).toBe(0);
   });

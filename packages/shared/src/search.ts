@@ -21,7 +21,7 @@ export const SEARCH_MODES = ['hybrid', 'text', 'semantic'] as const;
 export type SearchMode = (typeof SEARCH_MODES)[number];
 
 /** What a hit is: a whole document (spec/standard/work order/feedback) or a section of a spec or standard. */
-export const SEARCH_KINDS = ['spec', 'standard', 'section', 'work_order', 'feedback', 'component'] as const;
+export const SEARCH_KINDS = ['spec', 'standard', 'section', 'work_order', 'feedback', 'component', 'audit'] as const;
 export type SearchKind = (typeof SEARCH_KINDS)[number];
 export type DocKind = Exclude<SearchKind, 'section'>;
 
@@ -172,6 +172,22 @@ export interface CodeSearchResponse {
   glob?: string;
   lines?: { start: number; end: number };
   refs: CodeRefHit[];
+  /** Work orders that touched matching code (their `touched` list / section code refs; current state). */
+  workOrders?: CodeTouchHit[];
+}
+
+/** A work order (or one of its sections) that touched a file / range. */
+export interface CodeTouchHit {
+  /** The work order (`mandate://work-orders/<id>`). */
+  workOrder: string;
+  /** The work-order section, when the touch was recorded for one. */
+  section?: string;
+  title: string;
+  status?: string;
+  repo: string;
+  path: string;
+  lines?: { start: number; end: number };
+  change?: string;
 }
 
 export interface RelatedItem {
@@ -278,13 +294,30 @@ export interface HistorySearchResponse {
 
 /* ------------------------------------------------------------------ graph */
 
-export type GraphNodeKind = 'spec' | 'standard' | 'section' | 'work_order' | 'feedback' | 'symbol' | 'code_file' | 'code_range' | 'repo' | 'commit' | 'agent' | 'branch' | 'verification' | 'version' | 'excerpt' | 'component' | 'architecture';
+export type GraphNodeKind = 'spec' | 'standard' | 'section' | 'work_order' | 'feedback' | 'symbol' | 'code_file' | 'code_range' | 'repo' | 'commit' | 'agent' | 'user' | 'branch' | 'verification' | 'version' | 'excerpt' | 'component' | 'architecture' | 'audit' | 'finding' | 'comment' | 'question' | 'pull_request' | 'code_commit';
+
+/**
+ * Authored section links: one edge kind per link `rel` (P1; props: note, feedback, by, pin, seenAt). They replace the
+ * former `links_to {rel}` edge; the Cypher type `:LINKS_TO` stays an alias for their union for one release.
+ */
+export const LINK_EDGE_KINDS = ['depends_on', 'follows', 'deviates_from', 'extends', 'supersedes', 'conflicts_with', 'relates_to', 'affects', 'verified_by'] as const;
+export type LinkEdgeKind = (typeof LINK_EDGE_KINDS)[number];
 
 export const EDGE_KINDS = [
   'has_section',
+  // Section links (LINK_EDGE_KINDS; `depends_on` also: work order -> work order).
   'depends_on',
+  'follows',
+  'extends',
+  'supersedes',
+  'conflicts_with',
+  'relates_to',
+  'verified_by',
+  // Derived document-level dependencies (from the section links / legacy frontmatter `dependsOn`), never both kinds.
+  'spec_depends_on',
+  'component_depends_on',
+  // Spec / component / standard -> standard it uses (props: via ['links' | 'appliesTo'], rules: matching appliesTo).
   'uses_standard',
-  'applies_to',
   'mentions_symbol',
   'references_code',
   'in_file',
@@ -302,7 +335,6 @@ export const EDGE_KINDS = [
   'verifies',
   'applied_to',
   'verified_at',
-  'links_to',
   'deviates_from',
   'version_of',
   'previous_version',
@@ -313,7 +345,6 @@ export const EDGE_KINDS = [
   'governs',
   'example_of',
   'inherits_rule',
-  'superseded_by',
   // Components (architecture): what a spec section affects, what code a component owns (any matching glob) and which
   // component owns a file or range (the most specific glob wins), and the architecture view's components.
   'affects',
@@ -322,6 +353,46 @@ export const EDGE_KINDS = [
   // Containment: a component contains its children (`parent` frontmatter).
   'contains',
   'includes',
+  // Audits: an audit checks its target (spec / standard) and each checklist item (criterion / rule section) at a
+  // commit; findings belong to an audit, concern a section, are found in code and are fixed by work orders or
+  // reported in feedback (stored on the work order / feedback as `from_finding`).
+  'audits',
+  'checks',
+  'audited_at',
+  'finding_of',
+  'concerns',
+  'found_in',
+  'fixed_by',
+  'reported_in',
+  'from_finding',
+  // Work orders (markdown documents): the code they touched (file / range, temporal), their pull requests, the code
+  // commits that implement them (code commit -> work order), a PR merged as a code commit.
+  'touches',
+  'has_pr',
+  'implements',
+  'merged_as',
+  // Comments (review / coordination threads): a comment on a work order or one of its sections; replies.
+  'comments_on',
+  'reply_to',
+  // Lineage: an effect (changed doc / section / record, or the commit) -> its recorded cause (`cause` input and
+  // Feedback / Work-Order / Verification / Audit / Caused-By trailers); temporal, from the commit that recorded it.
+  'caused_by',
+  // Standards in code: rule (or standard) -> code file / range where it was checked: passed / failed.
+  'applies_at',
+  'violated_at',
+  // Approvals and provenance: a waiver (section deviates_from with feedback) or exemption (spec exemptFrom) -> its
+  // approving feedback; spec -> standard it is exempt from; work order -> the feedback it acts on (`reason`);
+  // verification -> the code commit it ran at; work-order section -> the criteria / results that prove it.
+  'waived_by',
+  'exempt_from',
+  'acts_on',
+  'verified_at_code',
+  'proven_by',
+  // Identity (P6): feedback / work order -> the user who filed / created it (server mode; the commit's user).
+  'created_by',
+  'filed_by',
+  // A finding that repeats a finding of an earlier audit (finding `duplicateOf`).
+  'duplicate_finding_of',
 ] as const;
 export type EdgeKind = (typeof EDGE_KINDS)[number];
 
@@ -329,11 +400,18 @@ export type EdgeKind = (typeof EDGE_KINDS)[number];
 export const REVERSE_EDGE_NAMES: Record<EdgeKind, string> = {
   has_section: 'section_of',
   depends_on: 'blocks',
+  follows: 'followed_by',
+  extends: 'extended_by',
+  supersedes: 'superseded_by',
+  conflicts_with: 'conflicted_by',
+  relates_to: 'related_by',
+  verified_by: 'verification_of',
+  spec_depends_on: 'spec_dependency_of',
+  component_depends_on: 'component_dependency_of',
   uses_standard: 'used_by',
-  applies_to: 'applied_by',
   mentions_symbol: 'mentioned_in',
   references_code: 'referenced_by',
-  in_file: 'contains',
+  in_file: 'has_range',
   in_repo: 'repo_contains',
   targets: 'targeted_by',
   changed: 'changed_by',
@@ -342,13 +420,12 @@ export const REVERSE_EDGE_NAMES: Record<EdgeKind, string> = {
   on_branch: 'branch_contains',
   resolves: 'resolved_by',
   duplicate_of: 'duplicated_by',
-  related_to: 'related_to',
+  related_to: 'related_from',
   covers: 'covered_by',
-  similar_to: 'similar_to',
-  verifies: 'verified_by',
+  similar_to: 'similar_from',
+  verifies: 'has_verification_result',
   applied_to: 'has_verification',
   verified_at: 'verifications_at',
-  links_to: 'linked_from',
   deviates_from: 'deviated_from_by',
   version_of: 'has_version',
   previous_version: 'next_version',
@@ -358,12 +435,37 @@ export const REVERSE_EDGE_NAMES: Record<EdgeKind, string> = {
   governs: 'governed_by',
   example_of: 'has_example',
   inherits_rule: 'rule_inherited_by',
-  superseded_by: 'supersedes_standard',
   affects: 'affected_by',
-  owns: 'owned_by_glob',
+  owns: 'matched_by_component',
   owned_by: 'owner_of',
   contains: 'contained_in',
   includes: 'included_in',
+  audits: 'audited_by',
+  checks: 'checked_by',
+  audited_at: 'audits_at',
+  finding_of: 'has_finding',
+  concerns: 'concerned_by',
+  found_in: 'has_finding_in',
+  fixed_by: 'fixes',
+  reported_in: 'reports',
+  from_finding: 'followed_up_by',
+  touches: 'touched_by',
+  has_pr: 'pr_of',
+  implements: 'implemented_by',
+  merged_as: 'merge_of',
+  comments_on: 'has_comment',
+  reply_to: 'has_reply',
+  caused_by: 'led_to',
+  applies_at: 'follows_rule',
+  violated_at: 'violates',
+  waived_by: 'approves_waiver',
+  exempt_from: 'exempts',
+  acts_on: 'acted_on_by',
+  verified_at_code: 'code_verified_by',
+  proven_by: 'proves',
+  created_by: 'creator_of',
+  filed_by: 'filer_of',
+  duplicate_finding_of: 'duplicated_by_finding',
 };
 
 export interface GraphNode {
@@ -432,7 +534,7 @@ export interface GraphHistoryResponse {
 
 export interface ContentChange {
   uri: string;
-  kind: 'spec' | 'standard' | 'section' | 'work_order' | 'feedback' | 'component';
+  kind: 'spec' | 'standard' | 'section' | 'work_order' | 'feedback' | 'component' | 'audit';
   action: 'created' | 'modified' | 'deleted' | 'renamed';
   changeKinds: ChangeKind[];
   /** Commits in the range that changed it. */
@@ -475,6 +577,8 @@ export interface GraphNeighborsResponse {
   nodes: GraphNode[];
   edges: GraphEdge[];
   nextCursor: string | null;
+  /** The node cap was reached (GQ-14): the neighbourhood is incomplete. */
+  truncated?: boolean;
 }
 
 export interface GraphPathResponse {
@@ -517,6 +621,11 @@ export interface IndexStatus {
     embedded: number;
     pending: number;
     running: boolean;
+    /**
+     * Which model answers semantic queries: `current`; `previous` while a new model re-embeds after a switch;
+     * `text-only` when no previous model is usable meanwhile; `none` when semantic search is off.
+     */
+    serving?: { mode: 'current' | 'previous' | 'text-only' | 'none'; modelId: string | null; model: string | null; note?: string };
   };
   lastSyncAt: string | null;
   lastError: string | null;
@@ -560,7 +669,7 @@ export interface GraphQueryResult {
 
 export interface GraphSchema {
   labels: { label: string; kind: string; description: string; properties: string[] }[];
-  relationships: { type: string; kind: string; reverse: string; from: string[]; to: string[] }[];
+  relationships: { type: string; kind: string; reverse: string; from: string[]; to: string[]; description?: string; deprecated?: boolean }[];
   functions: string[];
   examples: { question: string; query: string }[];
 }
@@ -580,6 +689,7 @@ export const NODE_LABELS = {
   repo: 'Repo',
   commit: 'Commit',
   agent: 'Agent',
+  user: 'User',
   branch: 'Branch',
   verification: 'Verification',
   version: 'Version',
@@ -587,6 +697,12 @@ export const NODE_LABELS = {
   // (added with the components model; the graph side is the graph agent's)
   component: 'Component',
   architecture: 'Architecture',
+  audit: 'Audit',
+  finding: 'Finding',
+  comment: 'Comment',
+  question: 'Question',
+  pull_request: 'PullRequest',
+  code_commit: 'CodeCommit',
 } as const satisfies Record<NodeKind, string>;
 
 /** Labels defined by a kind plus a property value. */
@@ -599,7 +715,10 @@ export const DERIVED_LABELS = {
 /** Relationship type of each edge kind: UPPER_SNAKE. */
 export const relTypeOf = (kind: EdgeKind): string => kind.toUpperCase();
 
-/** Relationship types defined by an edge kind plus its `rel` prop. */
-export const DERIVED_REL_TYPES = {
-  FOLLOWS: { kind: 'links_to', rel: 'follows' },
-} as const;
+/**
+ * Relationship types that stand for several edge kinds. `LINKS_TO` (deprecated, one release): the union of the section
+ * link kinds (LINK_EDGE_KINDS); `l.rel` still reads the link's rel on them.
+ */
+export const DERIVED_REL_TYPES: Record<string, { kinds: readonly EdgeKind[]; deprecated?: string }> = {
+  LINKS_TO: { kinds: LINK_EDGE_KINDS, deprecated: 'use the per-rel types (:DEPENDS_ON, :FOLLOWS, ...); LINKS_TO and l.rel go away in the next release' },
+};

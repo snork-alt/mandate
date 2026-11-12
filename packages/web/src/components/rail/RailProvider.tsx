@@ -6,6 +6,7 @@ import {
   RAIL_STRIP,
   clampWidth,
   defaultTab,
+  isMobileWidth,
   loadCollapsed,
   loadTabs,
   loadWidth,
@@ -38,6 +39,8 @@ export interface RailState {
   pushEvent: (e: ActivityEvent) => void;
   /** Live connection of the MCP session (the feed backfills on reconnect). */
   connected: boolean;
+  /** The first `activity_list` settled (resolved or failed): before that the feed is loading, not empty. */
+  loaded: boolean;
   paused: boolean;
   setPaused: (p: boolean) => void;
   /** Live events held back while paused. */
@@ -90,12 +93,13 @@ export function RailProvider({ children, activity }: { children: ReactNode; acti
   const pageType = pageTypeOf(pathname);
   const tabs = tabsFor(pageType);
   const [memory, setMemory] = useState<TabMemory>(loadTabs);
-  const [collapsed, setCollapsed] = useState(loadCollapsed);
+  const [collapsed, setCollapsed] = useState(() => loadCollapsed());
   const [width, setWidthState] = useState(loadWidth);
   const [detailsSlot, setDetailsSlot] = useState<HTMLElement | null>(null);
   const [events, setEvents] = useState<ActivityEvent[]>([]);
   const [unread, setUnread] = useState(0);
   const [connected, setConnected] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const [paused, setPausedState] = useState(false);
   const [buffer, setBuffer] = useState<ActivityEvent[]>([]);
   const [fresh, setFresh] = useState<ReadonlySet<string>>(new Set());
@@ -109,9 +113,18 @@ export function RailProvider({ children, activity }: { children: ReactNode; acti
     setWidthState(c);
     saveWidth(c);
   }, []);
+  // An explicit open / collapse is remembered, except on mobile (the sheet always starts collapsed there).
   const setCollapsedP = useCallback((c: boolean) => {
     setCollapsed(c);
-    saveCollapsed(c);
+    if (!isMobileWidth()) saveCollapsed(c);
+  }, []);
+  // Shrinking into the mobile layout closes the sheet so it never covers the page unasked.
+  useEffect(() => {
+    const onResize = () => {
+      if (isMobileWidth()) setCollapsed(true);
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
   }, []);
   const selectTab = useCallback(
     (t: RailTab) => {
@@ -165,6 +178,8 @@ export function RailProvider({ children, activity }: { children: ReactNode; acti
       setEvents((list) => mergeEvents(list, r.events));
     } catch {
       /* offline: the feed fills when the connection is back */
+    } finally {
+      setLoaded(true);
     }
   }, []);
   const subscribe = deps.subscribe;
@@ -200,9 +215,9 @@ export function RailProvider({ children, activity }: { children: ReactNode; acti
   }, [collapsed, width]);
 
   const value = useMemo<RailState>(
-    () => ({ pageType, tabs, activeTab, collapsed, width, setWidth, selectTab, toggleTab, collapse: () => setCollapsedP(true), detailsSlot, setDetailsSlot, events, unread, pushEvent, connected, paused, setPaused, buffered: buffer.length, fresh }),
+    () => ({ pageType, tabs, activeTab, collapsed, width, setWidth, selectTab, toggleTab, collapse: () => setCollapsedP(true), detailsSlot, setDetailsSlot, events, unread, pushEvent, connected, loaded, paused, setPaused, buffered: buffer.length, fresh }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [pageType, activeTab, collapsed, width, setWidth, selectTab, toggleTab, setCollapsedP, detailsSlot, events, unread, pushEvent, connected, paused, setPaused, buffer.length, fresh],
+    [pageType, activeTab, collapsed, width, setWidth, selectTab, toggleTab, setCollapsedP, detailsSlot, events, unread, pushEvent, connected, loaded, paused, setPaused, buffer.length, fresh],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

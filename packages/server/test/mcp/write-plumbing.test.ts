@@ -22,7 +22,7 @@ const tool = defineTool({
 describe('write tool plumbing', () => {
   it('adds agent / branch / idempotencyKey to the schema', () => {
     const js = inputJsonSchema(tool.input) as unknown as { properties: Record<string, unknown>; additionalProperties: unknown };
-    expect(Object.keys(js.properties)).toEqual(['id', 'feedback', 'agent', 'branch', 'idempotencyKey']);
+    expect(Object.keys(js.properties)).toEqual(['id', 'feedback', 'agent', 'branch', 'idempotencyKey', 'cause']);
     expect(js.additionalProperties).toBe(false);
   });
 

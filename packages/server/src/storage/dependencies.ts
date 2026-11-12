@@ -1,6 +1,5 @@
 import { parseLinkTarget, parseSectionUri } from '@mandate/doc';
 import {
-  workOrderSchema,
   type DependencyEdge,
   type DependencyNode,
   type DependencyRel,
@@ -14,7 +13,7 @@ import {
 import { buildRef } from '@mandate/shared/refs';
 import type { GitStore } from '../git/GitStore.js';
 import { specCodec, standardCodec } from './codecs.js';
-import type { JsonlFileRepository } from './JsonlFileRepository.js';
+import { workOrdersAt } from './work-order-docs.js';
 import type { MarkdownDirRepository } from './MarkdownDirRepository.js';
 import { specComponents } from './model.js';
 
@@ -289,7 +288,7 @@ export class DependencyService {
   constructor(
     private readonly specs: MarkdownDirRepository<StoredSpec>,
     private readonly standards: MarkdownDirRepository<StoredStandard>,
-    private readonly workOrders: JsonlFileRepository<WorkOrder>,
+    private readonly workOrders: { list(): Promise<WorkOrder[]> },
     private readonly git: GitStore,
   ) {}
 
@@ -308,7 +307,7 @@ export class DependencyService {
     return this.atCommit.get(key)!;
   }
 
-  /** Specs, standards and work orders as they were at `commit` (work orders lived in `queue.jsonl` before the rename). */
+  /** Specs, standards and work orders as they were at `commit` (markdown documents, or the legacy jsonl before the migration). */
   async dataAt(commit: string): Promise<DependencyData> {
     // blobsAt lists paths (-> blob ids); contents come from readFileAt.
     const paths = [...(await this.git.blobsAt(commit, ['specs', 'standards'])).keys()].filter((p) => p.endsWith('.md'));
@@ -319,15 +318,7 @@ export class DependencyService {
       }),
     );
     const decoded = <T extends Doc>(dir: Kind) => docs.flatMap((d) => (d.dir === dir && d.doc ? [d.doc as T] : []));
-    const jsonl = (await this.git.readFileAt(commit, 'work-orders.jsonl').catch(() => null)) ?? (await this.git.readFileAt(commit, 'queue.jsonl').catch(() => null)) ?? '';
-    const workOrders = jsonl.split('\n').flatMap((line) => {
-      try {
-        const r = workOrderSchema.safeParse(JSON.parse(line));
-        return r.success ? [r.data] : [];
-      } catch {
-        return [];
-      }
-    });
+    const workOrders = await workOrdersAt(this.git, commit);
     return { specs: decoded<StoredSpec>('specs'), standards: decoded<StoredStandard>('standards'), workOrders };
   }
 

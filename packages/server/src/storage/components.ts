@@ -2,6 +2,7 @@ import { parseLinkTarget } from '@mandate/doc';
 import {
   architectureGetInputSchema,
   buildArchitectureRef,
+  buildFindingRef,
   buildRef,
   componentAncestors,
   computeLayering,
@@ -11,13 +12,15 @@ import {
   matchingAppliesTo,
   OPEN_WORK_ORDER_STATUSES,
   ownerOf,
+  parseAuditCodeRef,
   parseRef,
-  workOrderSchema,
   type ArchitectureEdge,
   type ArchitectureGetInput,
   type ArchitectureGraph,
   type ArchitectureNode,
   type ComponentDerived,
+  type ComponentGap,
+  type StoredAudit,
   type StoredComponent,
   type StoredFeedback,
   type StoredSpec,
@@ -25,13 +28,32 @@ import {
 } from '@mandate/shared';
 import type { GitStore } from '../git/GitStore.js';
 import { componentCodec, specCodec, standardCodec } from './codecs.js';
+import { workOrdersAt } from './work-order-docs.js';
 import type { LinkService } from './links.js';
 import { criteriaOf, dependencyState, docUri, finder, levelOf, sectionUri, specComponents, standardInForce, type Model } from './model.js';
 import type { VerificationService } from './verification.js';
 
-/** Code refs of all specs (repo, path), for ownership coverage. */
-function knownRefs(m: Model): { repo: string; path: string; uri: string }[] {
-  return m.specs.flatMap((s) => s.sections.flatMap((sec) => sec.refs.map((r) => ({ repo: r.repo, path: r.path, uri: sectionUri('specs', s.id, sec.id) }))));
+type KnownRef = { repo: string; path: string; uri: string };
+
+/**
+ * Code refs of every source (repo, path), for ownership coverage: spec and standard section refs, files work orders
+ * touched (not deleted ones), and the code refs of audit findings (when the audits are given; abandoned ones skipped).
+ */
+export function knownRefs(m: Model, audits: StoredAudit[] = []): KnownRef[] {
+  const out: KnownRef[] = [];
+  for (const [kind, docs] of [['specs', m.specs], ['standards', m.standards]] as const)
+    for (const d of docs) for (const sec of d.sections) for (const r of sec.refs ?? []) out.push({ repo: r.repo, path: r.path, uri: sectionUri(kind, d.id, sec.id) });
+  for (const w of m.workOrders ?? []) for (const t of w.touched ?? []) if (t.change !== 'deleted') out.push({ repo: t.repo, path: t.path, uri: buildRef({ kind: 'work-orders', id: w.id }) });
+  for (const a of audits) {
+    if (a.status === 'abandoned') continue;
+    for (const s of a.sections)
+      for (const f of s.findings ?? [])
+        for (const c of f.codeRefs ?? []) {
+          const r = parseAuditCodeRef(c);
+          if (r) out.push({ repo: r.repo, path: r.path, uri: buildFindingRef({ audit: a.id, id: f.id }) });
+        }
+  }
+  return out;
 }
 
 /** Components a component depends on (section or whole-component depends_on targets). */
@@ -77,9 +99,29 @@ export function componentRules(c: StoredComponent, m: Model): ComponentDerived['
   return [...out.values()].sort((a, b) => order[a.level] - order[b.level]);
 }
 
-/** Coverage lint: code refs no component owns, and owns globs that match no known code ref. */
-export function coverage(m: Model): { unowned: { repo: string; path: string; uri: string }[]; emptyGlobs: { component: string; repo: string; glob: string }[] } {
-  const refs = knownRefs(m);
+/**
+ * Reference gaps of the active components (integrity warnings, never auto-fixed): no spec section affects it
+ * (directly, or through code refs to files it owns), no standard applies to it, or it declares no owned code
+ * without being `kind: external`.
+ */
+export function componentGaps(m: Model): Map<string, ComponentGap[]> {
+  const referenced = new Set(m.specs.filter((s) => s.status !== 'archived').flatMap((s) => specComponents(s, m).map((c) => c.id)));
+  const out = new Map<string, ComponentGap[]>();
+  for (const c of m.components ?? []) {
+    if (c.status !== 'active') continue;
+    const gaps: ComponentGap[] = [];
+    const ref = `mandate://components/${c.id}`;
+    if (!referenced.has(c.id)) gaps.push({ rule: 'component_unreferenced', message: `${c.id}: no spec section affects it`, hint: `Add an affects link to ${ref} on the spec sections that change it (or a code ref to a file it owns).` });
+    if (c.kind !== 'external' && !followedStandards(c) && !componentRules(c, m).length) gaps.push({ rule: 'component_no_standards', message: `${c.id}: follows no standard`, hint: `Add follows links from ${ref} sections to the standards that apply (mandate://standards/<id>).` });
+    if (c.kind !== 'external' && !c.owns.some((o) => o.paths.length)) gaps.push({ rule: 'component_no_code', message: `${c.id}: owns no code`, hint: `Declare owns globs (repo + paths) on ${ref}, or set kind: external for a third-party service.` });
+    if (gaps.length) out.set(c.id, gaps);
+  }
+  return out;
+}
+
+/** Coverage lint: code refs no component owns, and owns globs that match no known code ref (refs of every source). */
+export function coverage(m: Model, audits: StoredAudit[] = []): { unowned: KnownRef[]; emptyGlobs: { component: string; repo: string; glob: string }[] } {
+  const refs = knownRefs(m, audits);
   const comps = (m.components ?? []).filter((c) => c.kind !== 'external');
   const unowned = refs.filter((r) => !ownerOf(r.repo, r.path, m.components ?? []));
   const emptyGlobs = comps.flatMap((c) => c.owns.flatMap((o) => o.paths.filter((g) => !refs.some((r) => r.repo === o.repo && globMatch(g, r.path))).map((glob) => ({ component: c.id, repo: o.repo, glob }))));
@@ -94,6 +136,7 @@ export async function deriveComponents(
 ): Promise<Record<string, ComponentDerived>> {
   const f = finder(m);
   const cov = coverage(m);
+  const gaps = componentGaps(m);
   const touching = m.specs.filter((s) => s.status !== 'archived').map((s) => ({ spec: s, comps: specComponents(s, m) }));
   const specState = new Map<string, { drifted: boolean; blocked: boolean; failing: number }>();
   for (const { spec } of touching) {
@@ -131,6 +174,7 @@ export async function deriveComponents(
       upstreamChanged,
       specStates: { drifted: states.filter((s) => s.drifted).length, blocked: states.filter((s) => s.blocked).length, failing: states.reduce((n, s) => n + s.failing, 0) },
       emptyGlobs: cov.emptyGlobs.filter((g) => g.component === c.id).map((g) => `${g.repo}:${g.glob}`),
+      gaps: gaps.get(c.id) ?? [],
     };
   }
   return out;
@@ -215,15 +259,8 @@ export class ArchitectureService {
         /* unparsable at that commit */
       }
     }
+    out.workOrders!.push(...(await workOrdersAt(this.git, commit)));
     const jsonl = async (file: string) => ((await this.git.readFileAt(commit, file).catch(() => null)) ?? '').split('\n').filter(Boolean);
-    for (const line of [...(await jsonl('work-orders.jsonl')), ...(await jsonl('queue.jsonl'))]) {
-      try {
-        const r = workOrderSchema.safeParse(JSON.parse(line));
-        if (r.success) out.workOrders!.push(r.data);
-      } catch {
-        /* skip */
-      }
-    }
     for (const line of await jsonl('feedback.jsonl')) {
       try {
         const r = feedbackSchema.safeParse(JSON.parse(line));
@@ -242,7 +279,7 @@ export class ArchitectureService {
     const groupOf = (c: StoredComponent) => (opts.groupBy === 'kind' ? c.kind : (c.owns[0]?.repo ?? (c.kind === 'external' ? 'external' : 'unowned')));
     const nodes: ArchitectureNode[] = comps.map((c) => {
       const d = derived[c.id]!;
-      const resp = c.sections.find((s) => s.id === 'responsibility')?.body.split(/\n\s*\n/)[0]?.trim();
+      const resp = c.sections.find((s) => s.id === 'responsibility' || (s.type === 'responsibility' && !s.archived))?.body.split(/\n\s*\n/)[0]?.trim();
       return {
         id: c.id,
         uri: buildRef({ kind: 'components', id: c.id }),

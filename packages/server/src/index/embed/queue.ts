@@ -2,6 +2,8 @@ import { estimateTokens } from '@mandate/doc';
 import { ensureVecTable, type DB } from '../db.js';
 import { backfill, jobCounts, listJobs, oldestPending, outstanding, vecId, type EmbedTarget, type JobCounts, type JobInfo } from './jobs.js';
 import { EmbeddingError, isProviderWide, type EmbeddingProvider } from './types.js';
+import { EmbedJobStore } from '../../db/embed-jobs.js';
+import { SqliteDb } from '../../db/sqlite.js';
 
 export { vecId } from './jobs.js';
 
@@ -75,6 +77,8 @@ export class EmbedQueue {
   private resolveDrained?: () => void;
   private readonly now: () => number;
   private readonly random: () => number;
+  /** Claim / release / fail through the backend-agnostic job store (db/embed-jobs.ts; SKIP LOCKED on Postgres). */
+  private readonly jobStore: EmbedJobStore;
 
   constructor(
     private readonly db: DB,
@@ -86,6 +90,7 @@ export class EmbedQueue {
     this.maxAttempts = opts.maxAttempts ?? 6;
     this.now = opts.now ?? Date.now;
     this.random = opts.random ?? Math.random;
+    this.jobStore = new EmbedJobStore(SqliteDb.wrap(db));
     this.recover();
     backfill(db, this.target, this.now());
   }
@@ -146,26 +151,13 @@ export class EmbedQueue {
   }
 
   /** Atomically move up to `n` due pending jobs to `running`, by priority then age. */
-  private claim(n: number): Claimed[] {
-    const t = this.now();
-    const rows = this.db
-      .prepare(
-        `UPDATE embed_jobs SET status = 'running', updated_at = ?
-         WHERE rowid IN (SELECT rowid FROM embed_jobs WHERE model_id = ? AND status = 'pending' AND next_attempt_at <= ?
-                         ORDER BY priority DESC, enqueued_at ASC LIMIT ?)
-         RETURNING content_hash, attempts`,
-      )
-      .all(t, this.target.modelId, t, n) as { content_hash: string; attempts: number }[];
-    return rows.map((r) => ({ hash: r.content_hash, attempts: r.attempts }));
+  private claim(n: number): Promise<Claimed[]> {
+    return this.jobStore.claim(this.target.modelId, n, this.now());
   }
 
   /** Back to pending without charging an attempt (provider outage). */
-  private release(jobs: Claimed[]): void {
-    const t = this.now();
-    const up = this.db.prepare("UPDATE embed_jobs SET status = 'pending', updated_at = ? WHERE content_hash = ? AND model_id = ? AND status = 'running'");
-    this.db.transaction(() => {
-      for (const j of jobs) up.run(t, j.hash, this.target.modelId);
-    })();
+  private release(jobs: Claimed[]): Promise<void> {
+    return this.jobStore.release(this.target.modelId, jobs.map((j) => j.hash), this.now());
   }
 
   /** Done: cache, vec0, then the job row is deleted (the vector's presence is the record). */
@@ -185,16 +177,14 @@ export class EmbedQueue {
   }
 
   /** attempts+1; pending again after an exponential backoff with jitter, or `failed` once the budget is spent. */
-  private fail(job: Claimed, err: Error): void {
+  private async fail(job: Claimed, err: Error): Promise<void> {
     const attempts = job.attempts + 1;
     const t = this.now();
     const base = this.opts.backoffBaseMs ?? 10_000;
     const cap = this.opts.backoffMaxMs ?? 3_600_000;
     const delay = Math.round(Math.min(cap, base * 2 ** (attempts - 1)) * (0.5 + this.random()));
     const status = attempts >= this.maxAttempts ? 'failed' : 'pending';
-    this.db
-      .prepare('UPDATE embed_jobs SET status = ?, attempts = ?, next_attempt_at = ?, last_error = ?, updated_at = ? WHERE content_hash = ? AND model_id = ? AND status = \'running\'')
-      .run(status, attempts, t + delay, err.message.slice(0, 500), t, job.hash, this.target.modelId);
+    await this.jobStore.fail(this.target.modelId, job.hash, attempts, status, t + delay, err.message, t);
     this.lastError = err.message;
     this.opts.onError?.(err);
   }
@@ -233,7 +223,7 @@ export class EmbedQueue {
     try {
       for (;;) {
         if (this.stopped) return this.finish(); // claimed jobs stay `running`: recovered on the next start
-        const jobs = this.claim(this.opts.batchSize);
+        const jobs = await this.claim(this.opts.batchSize);
         if (!jobs.length) break;
         const { live, inputs } = this.prepare(jobs);
         if (!live.length) continue;
@@ -243,7 +233,7 @@ export class EmbedQueue {
         } catch (e) {
           if (this.stopped) return this.finish();
           if (isProviderWide(e)) {
-            this.release(live);
+            await this.release(live);
             throw e;
           }
           // One input may poison the batch: retry one by one so only the culprit is charged.
@@ -286,10 +276,10 @@ export class EmbedQueue {
       } catch (e) {
         if (this.stopped) return;
         if (isProviderWide(e)) {
-          this.release(live.slice(i));
+          await this.release(live.slice(i));
           throw e;
         }
-        this.fail(live[i]!, toError(e));
+        await this.fail(live[i]!, toError(e));
       }
     }
   }

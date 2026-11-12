@@ -5,6 +5,8 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { KeyStore, maskKey } from '../../src/auth/keys.js';
 import { parseDotenv, SecretsFile } from '../../src/secrets.js';
 import { ConfigError, loadConfig, projectIndexPath } from '../../src/config.js';
+import { ProjectsStore, reloadProjects, watchProjectsFile } from '../../src/projects/store.js';
+import { ProjectRegistry } from '../../src/projects/registry.js';
 import { main as cli } from '../../scripts/mandate.js';
 import { AuthStore, loadServerSecret } from '../../src/auth/sessions.js';
 import { cleanupTempDirs, tempDir } from '../helpers.js';
@@ -108,49 +110,107 @@ describe('secrets.env', () => {
   });
 });
 
-describe('project config', () => {
+describe('project config + projects.json', () => {
   const write = async (json: unknown) => {
     const home = await tempDir();
     const p = path.join(home, '.mandate', 'config.json');
     mkdirSync(path.dirname(p), { recursive: true });
     writeFileSync(p, JSON.stringify(json));
-    return { home, p };
+    return { home, p, reg: path.join(home, '.mandate', 'projects.json') };
   };
 
-  it('migrates a legacy dataDir into the project "default" (same index path), keeping other blocks', async () => {
-    const { home, p } = await write({ dataDir: '~/specs', ask: { provider: 'openai-compatible', model: 'm', baseUrl: 'http://x/v1', apiKeyEnv: 'K' } });
-    const before = loadConfig({ HOME: home, MANDATE_CONFIG: p, MANDATE_DATA_DIR: '' });
-    const file = JSON.parse(readFileSync(p, 'utf8'));
-    expect(file.dataDir).toBeUndefined();
-    expect(file.projects).toEqual([{ id: 'default', name: 'Default', dataDir: '~/specs' }]);
-    expect(file.ask.model).toBe('m');
-    expect(before.projects[0]).toMatchObject({ id: 'default', dataDir: path.join(home, 'specs') });
-    expect(before.index.path).toBe(projectIndexPath('~/.mandate/index/{dataDirHash}.sqlite', path.join(home, 'specs'), 'default', true).replace('~', home));
-    expect(statSync(p).mode & 0o777).toBe(0o600);
+  it('migrates a legacy dataDir into projects.json (same index path) without touching config.json; idempotent', async () => {
+    const { home, p, reg } = await write({ dataDir: '~/specs', embedding: { provider: 'none' } });
+    const raw = readFileSync(p, 'utf8');
+    const c = loadConfig({ HOME: home, MANDATE_CONFIG: p });
+    expect(readFileSync(p, 'utf8')).toBe(raw);
+    const file = JSON.parse(readFileSync(reg, 'utf8'));
+    expect(file).toMatchObject({ version: 1, projects: [{ id: 'default', name: 'Default', dataDir: '~/specs' }] });
+    expect(statSync(reg).mode & 0o777).toBe(0o600);
+    expect(c.projects[0]).toMatchObject({ id: 'default', dataDir: path.join(home, 'specs') });
+    expect(c.index.path).toBe(projectIndexPath('~/.mandate/index/{dataDirHash}.sqlite', path.join(home, 'specs'), 'default', true).replace('~', home));
+    expect(c.warnings.join('\n')).toMatch(/created .*projects\.json.*delete the "dataDir" key/);
+    const again = loadConfig({ HOME: home, MANDATE_CONFIG: p });
+    expect(readFileSync(reg, 'utf8')).toBe(JSON.stringify(file, null, 2) + '\n');
+    expect(again.warnings.join('\n')).toMatch(/still has "dataDir".*wins/);
+  });
+
+  it('projects.json wins over config.json projects (warning names the stale key)', async () => {
+    const { home, p, reg } = await write({ projects: [{ id: 'old', name: 'Old', dataDir: '/old' }] });
+    writeFileSync(reg, JSON.stringify({ version: 1, projects: [{ id: 'new', name: 'New', dataDir: '/new', createdAt: 'x' }] }), { mode: 0o600 });
+    const c = loadConfig({ HOME: home, MANDATE_CONFIG: p });
+    expect(c.projects.map((x) => x.id)).toEqual(['new']);
+    expect(c.warnings[0]).toMatch(/still has "projects".*projects\.json is the project registry and wins/);
   });
 
   it('resolves several projects with separate index files and per-project git settings', async () => {
     const { home, p } = await write({
       projects: [
         { id: 'web', name: 'Web', dataDir: '~/web' },
-        { id: 'api', name: 'API', dataDir: '~/api', git: { branch: 'trunk', remote: 'https://example.com/api.git' }, github: { repo: 'acme/api', path: 'docs', connectedBy: 'octo' } },
+        { id: 'api', name: 'API', dataDir: '~/api', git: { branch: 'trunk', remote: 'https://example.com/api.git', autoPush: { debounceSeconds: 3 }, auth: { username: 'bot' } }, github: { repo: 'acme/api', path: 'docs', connectedBy: 'octo' } },
       ],
       index: { path: '~/idx.sqlite' },
+      git: { autoPush: { enabled: true, debounceSeconds: 20, intervalSeconds: 600 }, auth: { tokenEnv: 'GT' } },
       auth: { required: true, sessionTtlHours: 24 },
     });
-    const c = loadConfig({ HOME: home, MANDATE_CONFIG: p });
+    const c = loadConfig({ HOME: home, MANDATE_CONFIG: p, GT: 'tok' });
     expect(c.defaultProject).toBe('web');
+    // Per-project overrides merge over the global block (no defaults masking it).
+    expect(c.projects[1]!.remote!.auth).toEqual({ type: 'https', username: 'bot', token: 'tok' });
     expect(c.projects.map((x) => x.index.path)).toEqual([path.join(home, 'idx.sqlite'), path.join(home, 'idx.api.sqlite')]);
-    expect(c.projects[1]).toMatchObject({ branch: 'trunk', remote: { url: 'https://example.com/api.git' }, github: { repo: 'acme/api', path: 'docs' } });
-    expect(c.warnings[0]).toMatch(/auth.required is deprecated/);
+    expect(c.projects[1]).toMatchObject({ branch: 'trunk', remote: { url: 'https://example.com/api.git' }, github: { repo: 'acme/api', path: 'docs', connectedBy: 'octo' }, autoPush: { enabled: true, debounceSeconds: 3, intervalSeconds: 600 } });
+    expect(c.projects[0]!.autoPush).toEqual({ enabled: true, debounceSeconds: 20, intervalSeconds: 600 });
+    expect(c.warnings.join('\n')).toMatch(/auth.required is deprecated/);
     expect(c.auth.sessionTtlHours).toBe(24);
   });
 
-  it('validates projects strictly', async () => {
-    for (const projects of [[{ id: 'Bad_Id', name: 'x', dataDir: '/x' }], [{ id: 'a', name: 'x', dataDir: '/x' }, { id: 'a', name: 'y', dataDir: '/y' }], [{ id: 'a', name: 'x', dataDir: '/x', extra: 1 }], []]) {
+  it('validates config and projects.json strictly', async () => {
+    for (const projects of [[{ id: 'Bad_Id', name: 'x', dataDir: '/x' }], [{ id: 'a', name: 'x', dataDir: '/x' }, { id: 'a', name: 'y', dataDir: '/y' }], [{ id: 'a', name: 'x', dataDir: '/x', extra: 1 }]]) {
       const { home, p } = await write({ projects });
       expect(() => loadConfig({ HOME: home, MANDATE_CONFIG: p })).toThrow(ConfigError);
     }
+    const { home, p, reg } = await write({});
+    for (const bad of ['{', JSON.stringify({ version: 2, projects: [] }), JSON.stringify({ version: 1, projects: [{ id: 'a', name: 'A', dataDir: '/a', createdAt: 'x', github: { owner: 'o', repo: 'r' } }] })]) {
+      writeFileSync(reg, bad, { mode: 0o600 });
+      expect(() => loadConfig({ HOME: home, MANDATE_CONFIG: p })).toThrow(ConfigError);
+    }
+    expect(() => loadConfig({ HOME: home, MANDATE_CONFIG: p, MANDATE_GIT_BACKEND: 'x' })).toThrow();
+  });
+
+  it('serializes concurrent writes (no lost projects), 0600, atomic', async () => {
+    const { reg } = await write({});
+    const store = new ProjectsStore(reg);
+    await Promise.all(Array.from({ length: 12 }, (_, i) => store.add({ id: `p${i}`, name: `P${i}`, dataDir: `/d/${i}`, createdAt: 'x' })));
+    expect(store.read().projects.map((p) => p.id).sort()).toEqual(Array.from({ length: 12 }, (_, i) => `p${i}`).sort());
+    expect(statSync(reg).mode & 0o777).toBe(0o600);
+    await expect(store.add({ id: 'p1', name: 'dup', dataDir: '/x', createdAt: 'x' })).rejects.toThrow(/already exists/);
+    expect(await store.remove('p3')).toBe(true);
+    expect(store.read().projects).toHaveLength(11);
+  });
+
+  it('hot-reloads an external edit; an invalid edit keeps the last good registry with a clear error', async () => {
+    const { home, p, reg } = await write({ projects: [{ id: 'a', name: 'A', dataDir: '~/a' }] });
+    const env = { HOME: home, MANDATE_CONFIG: p };
+    const registry = new ProjectRegistry(loadConfig(env).projects, async () => {
+      throw new Error('not opened in this test');
+    });
+    const errors: string[] = [];
+    const log = { info: () => undefined, error: (m: string) => errors.push(m) };
+    const fileNow = JSON.parse(readFileSync(reg, 'utf8'));
+    let changed = 0;
+    const stop = watchProjectsFile(reg, () => changed++, 50);
+    await new Promise((r) => setTimeout(r, 300)); // let watchFile take its baseline stat
+    writeFileSync(reg, JSON.stringify({ ...fileNow, projects: [...fileNow.projects, { id: 'b', name: 'B', dataDir: '~/b', createdAt: 'x' }] }), { mode: 0o600 });
+    for (let i = 0; i < 300 && !changed; i++) await new Promise((r) => setTimeout(r, 25));
+    stop();
+    expect(changed).toBeGreaterThan(0);
+    expect(await reloadProjects(registry, () => loadConfig(env).projects, log)).toMatchObject({ ok: true, added: ['b'] });
+    expect(registry.list().map((x) => x.id)).toEqual(['a', 'b']);
+    writeFileSync(reg, '{ "version": 1, "projects": [ { "id": "Bad"', { mode: 0o600 });
+    const r = await reloadProjects(registry, () => loadConfig(env).projects, log);
+    expect(r).toMatchObject({ ok: false, error: expect.stringMatching(/projects\.json/) });
+    expect(errors[0]).toMatch(/keeping the last good registry/);
+    expect(registry.list().map((x) => x.id)).toEqual(['a', 'b']);
   });
 });
 
@@ -181,9 +241,9 @@ describe('key CLI', () => {
     expect(await run('session', 'create', 'octo', '--ttl-minutes', '5')).toBe(0);
     const cookie = /mandate_session=(\S+)/.exec(out.join('\n'))![1]!;
     const store = new AuthStore(mh, loadServerSecret(mh, env), 3600_000);
-    expect(store.session(cookie)?.login).toBe('octo');
+    expect((await store.session(cookie))?.login).toBe('octo');
     expect(await run('session', 'revoke', cookie)).toBe(0);
-    expect(store.session(cookie)).toBeNull();
+    expect(await store.session(cookie)).toBeNull();
     // --out: a Playwright cookie list (0600), the value never printed; revocable from the file.
     out.length = 0;
     const jar = path.join(mh, 'jar', 'cookie.json');
@@ -192,9 +252,9 @@ describe('key CLI', () => {
     expect(c).toMatchObject({ name: 'mandate_session', domain: 'localhost' });
     expect(out.join('\n')).not.toContain(c!.value);
     expect(statSync(jar).mode & 0o777).toBe(0o600);
-    expect(store.session(c!.value)?.login).toBe('octo');
+    expect((await store.session(c!.value))?.login).toBe('octo');
     expect(await run('session', 'revoke', '--file', jar)).toBe(0);
-    expect(store.session(c!.value)).toBeNull();
+    expect(await store.session(c!.value)).toBeNull();
     expect(statSync(path.join(mh, 'keys.json')).mode & 0o777).toBe(0o600);
   });
 });

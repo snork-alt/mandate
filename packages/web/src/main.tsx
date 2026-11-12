@@ -17,6 +17,8 @@ import { listProjects } from './connect/projects';
 import { ProjectsPage } from './pages/ProjectsPage';
 import { AuthContext, fetchAuthStatus, loginPath, safeReturnTo, type AuthStatus } from './auth';
 import { LoginPage, SetupPage } from './pages/AuthPages';
+import { FinishSetupPage, SetupWizard } from './setup/SetupWizard';
+import { SettingsPage } from './setup/SettingsPage';
 import { goTo, lastProject, legacyTarget, NAVIGATE_EVENT, parseProjectPath, projectBase, setCurrentProject } from './project';
 
 const newQueryClient = () =>
@@ -99,11 +101,27 @@ function LegacyRedirect() {
   return <Center h="100vh">{error ? <Text c="red">{error}</Text> : <Loader size="sm" />}</Center>;
 }
 
-function App() {
+/** Pages outside projects (setup wizard, settings) share one query client. */
+const sharedQueryClient = newQueryClient();
+const Shared = ({ children }: { children: React.ReactNode }) => <QueryClientProvider client={sharedQueryClient}>{children}</QueryClientProvider>;
+
+function App({ status }: { status: AuthStatus }) {
   const pathname = usePathname();
   const project = parseProjectPath(pathname);
   if (project) return <ProjectApp key={project.id} projectId={project.id} />;
   if (pathname === '/' || pathname === '') return <HomeApp />;
+  if (pathname === '/settings')
+    return (
+      <Shared>
+        <SettingsPage />
+      </Shared>
+    );
+  if (pathname === '/setup')
+    return (
+      <Shared>
+        <SetupWizard status={status} />
+      </Shared>
+    );
   return <LegacyRedirect key={pathname} />;
 }
 
@@ -124,7 +142,8 @@ function Root() {
           if (stop) return;
           setError(null);
           setStatus(s);
-          if (!s.configured) timer = setTimeout(load, 3_000);
+          // Poll while waiting for config (legacy GitHub setup) or for setup to finish elsewhere (no setup cookie).
+          if (!s.configured || (s.setup?.inSetupMode && !s.setupAccess)) timer = setTimeout(load, 3_000);
         })
         .catch((e: Error) => {
           if (stop) return;
@@ -139,19 +158,34 @@ function Root() {
   }, []);
 
   const onLogin = pathname === '/login';
-  const needsLogin = !!status && status.configured && !status.authenticated && !onLogin;
+  const onSetup = pathname === '/setup';
+  const inSetup = !!status?.setup?.inSetupMode;
+  const needsLogin = !!status && !inSetup && status.configured && !status.authenticated && !onLogin;
   const leaveLogin = !!status && status.authenticated && onLogin;
+  // Setup mode with the setup cookie: everything leads to the wizard.
+  const toSetup = !!status && inSetup && !!status.setupAccess && !onSetup;
   useEffect(() => {
-    if (needsLogin) goTo(loginPath(), true);
+    if (toSetup) goTo('/setup', true);
+    else if (needsLogin) goTo(loginPath(), true);
     else if (leaveLogin) goTo(safeReturnTo(new URLSearchParams(window.location.search).get('returnTo')), true);
-  }, [needsLogin, leaveLogin]);
+  }, [needsLogin, leaveLogin, toSetup]);
 
   if (!status) return <Center h="100vh">{error ? <Text c="red">{error}</Text> : <Loader size="sm" />}</Center>;
+  if (inSetup) {
+    if (!status.setupAccess) return <FinishSetupPage status={status} />;
+    return (
+      <Shared>
+        <AuthContext.Provider value={status}>
+          <SetupWizard status={status} />
+        </AuthContext.Provider>
+      </Shared>
+    );
+  }
   if (!status.configured) return <SetupPage status={status} />;
   if (onLogin || !status.authenticated) return <LoginPage status={status} />;
   return (
     <AuthContext.Provider value={status}>
-      <App />
+      <App status={status} />
     </AuthContext.Provider>
   );
 }

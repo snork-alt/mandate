@@ -1,3 +1,4 @@
+import { scrollBehavior } from '../../../lib/ui';
 import { Link } from 'react-router';
 import { useEffect, useState } from 'react';
 import { ActionIcon, Menu, Modal, SegmentedControl, Tooltip, UnstyledButton } from '@mantine/core';
@@ -16,7 +17,7 @@ function jump(dir: 1 | -1) {
   const tops = marks.map((m) => m.getBoundingClientRect().top - offset);
   const target = dir === 1 ? marks[tops.findIndex((t) => t > 4)] : marks[tops.findLastIndex((t) => t < -4)];
   if (!target) return;
-  target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  target.scrollIntoView({ behavior: scrollBehavior(), block: 'center' });
   target.classList.add('tc-flash');
   setTimeout(() => target.classList.remove('tc-flash'), 900);
 }
@@ -65,7 +66,9 @@ export function VersionBanner({ tracked, missing }: { tracked: TrackedState; /**
     <div className="version-banner" role="region" aria-label="Viewing changes" data-error={tracked.error ? true : undefined}>
       <div className="version-banner-info">
         {tracked.error ? (
-          <span className="version-banner-label">Version not found — it may have been rewritten</span>
+          <span className="version-banner-label">
+            {tracked.notFound ? 'Version not found — it may have been rewritten. Showing the latest version.' : 'This version could not be displayed. Showing the latest version.'}
+          </span>
         ) : (
           <span className="version-banner-label">{metaOnly ? 'No content changes in this version — metadata only' : 'Viewing changes in'}</span>
         )}
@@ -95,6 +98,8 @@ export function VersionBanner({ tracked, missing }: { tracked: TrackedState; /**
         )}
       </div>
       <div className="version-banner-actions">
+        {!tracked.error && (
+        <>
         <SegmentedControl
           size="xs"
           value={tracked.compare}
@@ -126,6 +131,8 @@ export function VersionBanner({ tracked, missing }: { tracked: TrackedState; /**
             </Menu.Item>
           </Menu.Dropdown>
         </Menu>
+        </>
+        )}
         <Tooltip label="Exit (Esc)">
           <ActionIcon onClick={tracked.exit} aria-label="Exit changes view">
             <IconX size={15} />

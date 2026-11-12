@@ -8,7 +8,7 @@ let lib: DocLib | null = null;
 const loadLib = () => import('@mandate/doc').then((m) => (lib = m));
 
 export interface DocSource {
-  kind: 'specs' | 'standards' | 'components';
+  kind: 'specs' | 'standards' | 'components' | 'audits' | 'work-orders';
   id: string;
   /** Pin references to this commit (tracked mode). */
   commit?: string;
@@ -25,7 +25,7 @@ export const useDocSource = () => useContext(DocSourceCtx);
  * The document's source and line helpers, so every copy inside it can produce `#Lx-Ly` references.
  * `source` overrides the current file (e.g. an older version on screen).
  */
-export function useDocSourceValue(kind: 'specs' | 'standards' | 'components' | null, id: string, commit?: string, source?: string | null): DocSource | null {
+export function useDocSourceValue(kind: 'specs' | 'standards' | 'components' | 'audits' | 'work-orders' | null, id: string, commit?: string, source?: string | null): DocSource | null {
   const raw = useQuery({
     queryKey: [kind, id, 'raw'],
     queryFn: () => api.raw(kind as 'specs', id),

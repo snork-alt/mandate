@@ -1,3 +1,4 @@
+import { scrollBehavior } from '../../lib/ui';
 import { useEffect, useState } from 'react';
 import type { Section } from '@mandate/shared';
 import { sectionAnchor } from './anchors';
@@ -51,7 +52,7 @@ export function DocOutline({
           data-active={s.id === active || undefined}
           onClick={(e) => {
             e.preventDefault();
-            document.getElementById(sectionAnchor(s.id))?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            document.getElementById(sectionAnchor(s.id))?.scrollIntoView({ behavior: scrollBehavior(), block: 'start' });
             history.replaceState(null, '', `#${sectionAnchor(s.id)}`);
           }}
         >

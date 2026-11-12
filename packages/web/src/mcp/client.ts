@@ -157,6 +157,15 @@ export async function callTool<T>(name: string, args: Record<string, unknown>, s
   return callOn<T>(current(), name, args, signal, opts);
 }
 
+/** Side connections to other projects (Settings runs outside a project; never broadcasts notifications). */
+const side = new Map<string, Connection>();
+/** Call a tool of a given project without changing the current project scope. */
+export function callProjectTool<T>(id: string, name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
+  let c = side.get(id);
+  if (!c) side.set(id, (c = new Connection(projectMcpPath(id), false)));
+  return callOn<T>(c, name, args, signal, {});
+}
+
 /** Call a tool of the unscoped endpoint (`project_list`). */
 export function callRootTool<T>(name: string, args: Record<string, unknown> = {}, signal?: AbortSignal): Promise<T> {
   return callOn<T>(root, name, args, signal, {});

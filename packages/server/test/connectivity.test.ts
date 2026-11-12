@@ -88,8 +88,8 @@ describe('decision 2 + I5: claims live on work orders; spec in_progress is deriv
     await spec('s', [sec('a'), sec('b')], { status: 'ready' });
     const fb = await feedback(S('s', 'a'), 'giulia');
     const w = storage.workOrderService;
-    const one = await w.create({ spec: 's', kind: 'implement', status: 'pending', sections: [{ id: 'a' }], reason: [fb] });
-    const two = await w.create({ spec: 's', kind: 'implement', status: 'pending', sections: [{ id: 'b' }] });
+    const one = await w.create({ spec: 's', kind: 'implement', status: 'pending', sections: [{ id: 'a' }], reason: [fb], plan: 'p' });
+    const two = await w.create({ spec: 's', kind: 'implement', status: 'pending', sections: [{ id: 'b' }], plan: 'p' });
     await expect(w.create({ spec: 's', kind: 'review', status: 'pending', sections: [{ id: 'a' }], reason: ['fb-nope'] })).rejects.toThrow(/fb-nope/);
     expect(derivedStatus(await storage.specs.get('s'), await storage.model())).toBe('ready');
     const c1 = await w.claim({ id: one.id, agent: 'agent-1', branch: 'b1' });
@@ -115,8 +115,11 @@ describe('decision 2 + I5: claims live on work orders; spec in_progress is deriv
     const { storage, spec } = await setup();
     await spec('s', [sec('a')], { status: 'ready' });
     const w = storage.workOrderService;
-    const o = await w.create({ spec: 's', kind: 'implement', status: 'pending', sections: [{ id: 'a' }] });
+    const o = await w.create({ spec: 's', kind: 'implement', status: 'pending', sections: [{ id: 'a' }], plan: 'p' });
     await w.claim({ id: o.id, agent: 'old' }, { date: new Date(Date.now() - 2 * 3600_000) });
+    // Fresh while the server has not been up for the TTL (heartbeats are runtime state); stale once it has.
+    await expect(w.claim({ id: o.id, agent: 'new' })).rejects.toMatchObject({ code: 'claimed' });
+    (storage.heartbeats as { startedAt: number }).startedAt = 0;
     expect((await w.claim({ id: o.id, agent: 'new' })).claim!.agent).toBe('new');
   });
 });
@@ -137,7 +140,7 @@ describe('decision 3 + I9: feedback on sections and verification results, exempt
     await std('ui', [rule('ac-ui')], { appliesTo: ['tag:ui'] });
     await spec('s', [sec('a')], { tags: ['ui'] }, as('matteo'));
     const own = await feedback(T('ui', 'ac-ui'), 'matteo');
-    await expect(storage.specs.update('s', { exemptFrom: [{ standard: 'ui', reason: 'headless', feedback: own }] }, as('matteo'))).rejects.toThrow(/someone other than matteo/);
+    await expect(storage.specs.update('s', { exemptFrom: [{ standard: 'ui', reason: 'headless', feedback: own }] }, as('matteo'))).rejects.toThrow(/same author \(matteo\)/);
     const other = await feedback(T('ui', 'ac-ui'), 'giulia');
     await storage.specs.update('s', { exemptFrom: [{ standard: 'ui', reason: 'headless', feedback: other }] }, as('matteo'));
     const v = await storage.verificationService.forSpec(await storage.specs.get('s'));
@@ -271,9 +274,9 @@ describe('C4: full shas, pin lost, closing never validates pins', () => {
     const vfile = path.join(git.dir, 'verifications.jsonl');
     const line = JSON.parse((await readFile(vfile, 'utf8')).trim().split('\n').pop()!);
     await appendFile(vfile, `${JSON.stringify({ ...line, id: 'vr-lost', specCommit: lost })}\n`);
-    const wfile = path.join(git.dir, 'work-orders.jsonl');
+    const wfile = path.join(git.dir, `work-orders/${w.id}.md`);
     await writeFile(wfile, (await readFile(wfile, 'utf8')).replace(w.specCommit, lost));
-    await git.commit(['verifications.jsonl', 'work-orders.jsonl'], 'rewrite');
+    await git.commit(['verifications.jsonl', `work-orders/${w.id}.md`], 'rewrite');
     expect((await storage.verificationService.forSpec(await storage.specs.get('s'))).own[0]!.state).toBe('unknown');
     expect((await storage.workOrderService.resolve(w.id)).pinLost).toBe(true);
     // Cancelling never validates the pin.
@@ -306,9 +309,9 @@ describe('I6: section_done, obsolete, archive cascade', () => {
     const s = await storage.specs.get('s');
     expect(s.sections.find((x) => x.id === 'a')!.implementedCommit).toBe(o.specCommit); // the version actually implemented
     expect((await w.implementation('s')).a).toMatchObject({ outdated: true });
-    // Archiving a covered section makes it obsolete; the work order is then done.
+    // Archiving a covered section makes it obsolete; the work order stays open until completed (with an outcome).
     await patch('s', (x) => (x.id === 'b' ? { ...x, archived: true } : x));
-    expect(await w.get(o.id)).toMatchObject({ status: 'done', sections: [{ id: 'a', status: 'done' }, { id: 'b', status: 'obsolete' }] });
+    expect(await w.get(o.id)).toMatchObject({ status: 'pending', sections: [{ id: 'a', status: 'done' }, { id: 'b', status: 'obsolete' }] });
     const o2 = await w.create({ spec: 's', kind: 'update', status: 'pending', sections: [{ id: 'c' }] });
     await setSpecStatus(storage, { id: 's', status: 'archived' });
     expect((await w.get(o2.id)).status).toBe('cancelled');

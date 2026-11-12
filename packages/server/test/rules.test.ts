@@ -99,7 +99,8 @@ describe('scope and rulesForCode', () => {
     // path:/lang: appliesTo match specs through their code refs.
     const v = await storage.verificationService.forSpec(await storage.specs.get('x'));
     expect(v.inherited.find((g) => g.title === 'ts')!.criteria.map((c) => c.sectionId)).toEqual(['ts-strict', 'plain']);
-    expect(v.inherited.find((g) => g.title === 'sec')!.criteria.map((c) => c.sectionId)).toEqual(['no-secrets']);
+    // G-8: an explicit follows brings every rule of the standard (scope narrows only appliesTo and per-file answers).
+    expect(v.inherited.find((g) => g.title === 'sec')!.criteria.map((c) => c.sectionId)).toEqual(['no-secrets', 'css-only']);
   });
 
   it('lists the automated checks of a spec (ruleCheckPlan)', async () => {

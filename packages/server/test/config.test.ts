@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { ConfigError, loadConfig } from '../src/config.js';
@@ -9,19 +9,18 @@ import { cleanupTempDirs, tempDir } from './helpers.js';
 afterAll(cleanupTempDirs);
 
 describe('config', () => {
-  it('creates ~/.mandate/config.json with defaults (existing ./data/repo kept as data dir)', async () => {
+  it('runs on defaults without creating config.json; seeds projects.json (existing ./data/repo kept as data dir)', async () => {
     const home = await tempDir();
     const cwd = await tempDir();
     mkdirSync(path.join(cwd, 'data/repo/.git'), { recursive: true });
     const cfg = loadConfig({ HOME: home, INIT_CWD: cwd });
     expect(cfg.configPath).toBe(path.join(home, '.mandate/config.json'));
-    const file = JSON.parse(readFileSync(cfg.configPath, 'utf8'));
-    expect(file.projects).toEqual([{ id: 'default', name: 'Default', dataDir: path.join(cwd, 'data/repo') }]);
-    expect(file.dataDir).toBeUndefined();
+    expect(existsSync(cfg.configPath)).toBe(false);
+    const reg = JSON.parse(readFileSync(path.join(home, '.mandate/projects.json'), 'utf8'));
+    expect(reg.projects).toEqual([{ id: 'default', name: 'Default', dataDir: path.join(cwd, 'data/repo'), createdAt: expect.any(String) }]);
     expect(cfg.projects.map((p) => p.id)).toEqual(['default']);
     expect(cfg.defaultProject).toBe('default');
-    expect(file.embedding).toMatchObject({ provider: 'openai-compatible', model: 'nomic-embed-text', dimensions: 768 });
-    expect(readFileSync(cfg.configPath, 'utf8')).toContain('\n  "server": {\n');
+    expect(cfg.embedding).toMatchObject({ provider: 'openai-compatible', model: 'nomic-embed-text', dimensions: 768 });
     expect(cfg.port).toBe(4000);
     expect(cfg.index.path).toMatch(new RegExp(`^${home}/\\.mandate/index/[0-9a-f]{16}\\.sqlite$`));
     // Without ./data/repo: ~/.mandate/repos/default

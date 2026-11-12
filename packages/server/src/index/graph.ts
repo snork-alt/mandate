@@ -54,6 +54,7 @@ import {
   pub,
   resolveAt,
   resolveRef,
+  selfOrSections,
   toEdge,
   valid,
   type EdgeRow,
@@ -92,6 +93,7 @@ export async function graphNode(ctx: GraphContext, input: GraphNodeInput): Promi
   // A deleted node shows the relationships it had just before deletion.
   const nseq = deletedSeq !== null && seq === null ? deletedSeq - 1 : seq;
   const groups = new Map<string, GraphNodeResponse['neighbors'][number]>();
+  const groupSeen = new Map<string, Set<string>>();
   for (const dir of ['out', 'in'] as const) {
     for (const e of edgesOf(ctx, dir === 'in' ? uris : [uri], dir, nseq, null)) {
       const other = dir === 'out' ? e.to_uri : e.from_uri;
@@ -102,7 +104,11 @@ export async function graphNode(ctx: GraphContext, input: GraphNodeInput): Promi
         g = { kind: e.kind, direction: dir, name: dir === 'out' ? e.kind : REVERSE_EDGE_NAMES[e.kind], count: 0, nodes: [] };
         groups.set(key, g);
       }
-      if (g.nodes.some((n) => n.uri === other)) continue;
+      // Dedupe on every neighbour seen (not only the first `limit` kept): parallel edges differ only in props.
+      let seenInGroup = groupSeen.get(key);
+      if (!seenInGroup) groupSeen.set(key, (seenInGroup = new Set()));
+      if (seenInGroup.has(other)) continue;
+      seenInGroup.add(other);
       g.count++;
       if (g.nodes.length < inp.limit) g.nodes.push(labelOf(ctx, other, nseq));
     }
@@ -113,7 +119,7 @@ export async function graphNode(ctx: GraphContext, input: GraphNodeInput): Promi
 /* ------------------------------------------------------------------ traversal */
 
 /** Breadth-first neighbourhood (depth <= 3), cycle-safe and paginated. */
-export async function graphNeighbors(ctx: GraphContext, input: GraphNeighborsInput): Promise<GraphNeighborsResponse> {
+export async function graphNeighbors(ctx: GraphContext, input: GraphNeighborsInput): Promise<GraphNeighborsResponse & { truncated?: boolean }> {
   const inp = graphNeighborsInputSchema.parse(input);
   const { db } = ctx;
   const resolved = await resolveRef(ctx, inp.uri, inp.at);
@@ -126,15 +132,21 @@ export async function graphNeighbors(ctx: GraphContext, input: GraphNeighborsInp
   const edges = new Map<string, GraphEdge>();
   let frontier = [root];
   const MAX = 5000;
-  for (let d = 1; d <= inp.depth && frontier.length && seen.size < MAX; d++) {
+  let truncated = false;
+  for (let d = 1; d <= inp.depth && frontier.length && !truncated; d++) {
     const next: string[] = [];
-    for (const u of frontier) {
+    frontierLoop: for (const u of frontier) {
       const group = expandCode(db, u);
       for (const dir of dirs) {
         // Code nodes aggregate the INCOMING edges of overlapping ranges (who references this code); outgoing edges are the node's own.
         for (const e of edgesOf(ctx, dir === 'in' ? group : [u], dir, seq, kinds, kinds ? [] : COMMIT_EDGE_KINDS)) {
           const other = dir === 'out' ? e.to_uri : e.from_uri;
           if (other === u) continue;
+          if (!seen.has(other) && seen.size >= MAX) {
+            // Cap reached mid-hop: stop here and say so rather than growing without bound.
+            truncated = true;
+            break frontierLoop;
+          }
           edges.set(`${e.from_uri}|${e.to_uri}|${e.kind}`, toEdge(e));
           if (!seen.has(other)) {
             seen.set(other, d);
@@ -157,6 +169,7 @@ export async function graphNeighbors(ctx: GraphContext, input: GraphNeighborsInp
     }),
     edges: [...edges.values()].filter((e) => pageSet.has(e.from) || pageSet.has(e.to)),
     nextCursor: offset + inp.limit < order.length ? encodeCursor(offset + inp.limit) : null,
+    ...(truncated ? { truncated: true } : {}),
   };
 }
 
@@ -228,9 +241,13 @@ export async function graphPath(ctx: GraphContext, input: GraphPathInput): Promi
 
 /** Impact rules: edge kind and the direction to follow from an affected node to what it affects. */
 export const IMPACT: [EdgeKind, 'in' | 'out'][] = [
-  // Precise, section-level: links from sections (depends_on, follows, deviates_from; filtered below).
-  ['links_to', 'in'],
-  ['applies_to', 'out'],
+  // Precise, section-level: links from sections (depends_on, follows, deviates_from); derived document-level
+  // spec_depends_on / component_depends_on are not followed (the section links are).
+  ['depends_on', 'in'],
+  ['follows', 'in'],
+  ['deviates_from', 'in'],
+  // A standard affects the specs / components using it through appliesTo (link users are reached via follows).
+  ['uses_standard', 'in'],
   ['references_code', 'in'],
   ['covers', 'in'],
   ['targets', 'in'],
@@ -239,9 +256,12 @@ export const IMPACT: [EdgeKind, 'in' | 'out'][] = [
   ['has_section', 'in'],
 ];
 
-/** Links that propagate impact; derived document-level `depends_on` / `uses_standard` edges are not followed. */
-export const impactEdge = (e: EdgeRow) =>
-  e.kind !== 'links_to' || ['depends_on', 'follows', 'deviates_from'].includes(parseJson<{ rel?: string }>(e.props, {}).rel ?? '');
+/** `uses_standard` propagates only through appliesTo (section links are followed precisely); work-order depends_on never. */
+export const impactEdge = (e: EdgeRow) => {
+  if (e.kind === 'uses_standard') return (parseJson<{ via?: string[] }>(e.props, {}).via ?? []).includes('appliesTo');
+  if (e.kind === 'depends_on') return e.from_uri.includes('/sections/');
+  return true;
+};
 
 /** Everything that transitively depends on, uses, references, covers or targets the node, grouped by node kind. */
 export async function graphImpact(ctx: GraphContext, input: GraphImpactInput): Promise<GraphImpactResponse> {
@@ -255,7 +275,7 @@ export async function graphImpact(ctx: GraphContext, input: GraphImpactInput): P
   let frontier = resolved.live.flatMap((u) => expandCode(db, u));
   // A document's sections are affected with it.
   for (const live of resolved.live) {
-    if (!live.includes('/sections/') && /^mandate:\/\/(specs|standards|components)\//.test(live)) {
+    if (!live.includes('/sections/') && /^mandate:\/\/(specs|standards|components|audits|work-orders)\//.test(live)) {
       frontier = [...frontier, ...edgesOf(ctx, [live], 'out', seq, ['has_section']).map((e) => e.to_uri)];
     }
   }
@@ -266,7 +286,9 @@ export async function graphImpact(ctx: GraphContext, input: GraphImpactInput): P
     for (const [kind, dir] of IMPACT) {
       for (const e of edgesOf(ctx, frontier, dir, seq, [kind])) {
         if (!impactEdge(e)) continue;
-        const other = dir === 'in' ? e.from_uri : e.to_uri;
+        const raw = dir === 'in' ? e.from_uri : e.to_uri;
+        // P4: covers comes from a work-order section: the work order is what is affected.
+        const other = kind === 'covers' ? raw.split('/sections/')[0]! : raw;
         if (start.has(other) || found.has(other)) continue;
         found.set(other, { depth: d, via: kind });
         next.push(other);
@@ -403,17 +425,21 @@ export async function graphChanges(ctx: GraphContext, input: GraphChangesInput):
   const kindSql = kinds ? `AND e.kind IN (${kinds.map(() => '?').join(', ')})` : `AND e.kind NOT IN (${COMMIT_EDGE_KINDS.map(() => '?').join(', ')})`;
   const kindParams = kinds ?? COMMIT_EDGE_KINDS;
   const w = inp.within ? (await resolveRef(ctx, inp.within)).live[0] : undefined;
-  const withinSql = w ? "AND (e.from_uri = ? OR e.from_uri LIKE ? || '/sections/%' OR e.to_uri = ? OR e.to_uri LIKE ? || '/sections/%')" : '';
-  const withinParams = w ? [w, w, w, w] : [];
+  // Exact prefix matches (not LIKE: case-insensitive and `_`/`%` are wildcards).
+  const wf = w ? selfOrSections('e.from_uri', w) : null;
+  const wt = w ? selfOrSections('e.to_uri', w) : null;
+  const wn = w ? selfOrSections('n.uri', w) : null;
+  const withinSql = wf && wt ? `AND (${wf.sql} OR ${wt.sql})` : '';
+  const withinParams = wf && wt ? [...wf.params, ...wt.params] : [];
   const edgesAt = (p: number) => {
     const v = valid('e', p);
     const rows = db.prepare(`SELECT e.* FROM edges e WHERE ${v.sql} ${kindSql} ${withinSql}`).all(...v.params, ...kindParams, ...withinParams) as EdgeRow[];
     return new Map(rows.map((e) => [`${e.from_uri}\u0000${e.to_uri}\u0000${e.kind}\u0000${e.props ?? ''}`, e]));
   };
-  const nodeWithin = w ? "AND (n.uri = ? OR n.uri LIKE ? || '/sections/%')" : '';
+  const nodeWithin = wn ? `AND ${wn.sql}` : '';
   const nodesAt = (p: number) => {
     const v = valid('n', p);
-    const rows = db.prepare(`SELECT n.* FROM nodes n WHERE ${v.sql} AND n.kind != 'commit' ${nodeWithin}`).all(...v.params, ...(w ? [w, w] : [])) as NodeRow[];
+    const rows = db.prepare(`SELECT n.* FROM nodes n WHERE ${v.sql} AND n.kind != 'commit' ${nodeWithin}`).all(...v.params, ...(wn?.params ?? [])) as NodeRow[];
     return new Map(rows.map((n) => [n.uri, n]));
   };
   const [ef, et, nf, nt] = [edgesAt(from.seq), edgesAt(to.seq), nodesAt(from.seq), nodesAt(to.seq)];
@@ -431,15 +457,15 @@ export async function graphChanges(ctx: GraphContext, input: GraphChangesInput):
        SELECT e.to_uri, e.props, c.sha FROM edges e JOIN commits c ON e.from_uri = 'mandate://commits/' || c.sha
         WHERE e.kind = 'changed' AND c.sha IN (SELECT sha FROM a_to EXCEPT SELECT sha FROM a_from)
           AND json_extract(e.props, '$.merge') IS NOT 1
-          ${w ? "AND (e.to_uri = ? OR e.to_uri LIKE ? || '/sections/%')" : ''} ORDER BY abs(c.seq)`,
+          ${wt ? `AND ${wt.sql}` : ''} ORDER BY abs(c.seq)`,
     )
-    .all(to.sha, from.sha, ...(w ? [w, w] : [])) as { to_uri: string; props: string; sha: string }[];
+    .all(to.sha, from.sha, ...(wt?.params ?? [])) as { to_uri: string; props: string; sha: string }[];
   const content = new Map<string, ContentChange & { first: string; last: string }>();
   for (const r of changed) {
     const p = parseJson<{ action: ContentChange['action']; changeKinds: ChangeKind[] }>(r.props, { action: 'modified', changeKinds: [] });
     const ref = parseRef(r.to_uri);
     if (!ref) continue;
-    const kind: ContentChange['kind'] = ref.sectionId ? 'section' : ref.kind === 'specs' ? 'spec' : ref.kind === 'standards' ? 'standard' : ref.kind === 'work-orders' ? 'work_order' : ref.kind === 'components' ? 'component' : ref.kind;
+    const kind: ContentChange['kind'] = ref.sectionId ? 'section' : ref.kind === 'specs' ? 'spec' : ref.kind === 'standards' ? 'standard' : ref.kind === 'work-orders' ? 'work_order' : ref.kind === 'components' ? 'component' : ref.kind === 'audits' ? 'audit' : ref.kind;
     const c = content.get(r.to_uri) ?? { uri: r.to_uri, kind, action: p.action, changeKinds: [], commits: [], first: p.action, last: p.action };
     c.last = p.action;
     c.changeKinds = [...new Set([...c.changeKinds, ...p.changeKinds])];
@@ -451,8 +477,8 @@ export async function graphChanges(ctx: GraphContext, input: GraphChangesInput):
     if (first === 'created' && last === 'deleted') continue;
     c.action = first === 'created' ? 'created' : last === 'deleted' ? 'deleted' : first === 'renamed' ? 'renamed' : 'modified';
     const ref = parseRef(c.uri)!;
-    if ((c.kind === 'spec' || c.kind === 'standard' || c.kind === 'component') && ctx.git && ctx.formats) {
-      const dir = ref.kind as 'specs' | 'standards' | 'components';
+    if ((c.kind === 'spec' || c.kind === 'standard' || c.kind === 'component' || c.kind === 'audit' || c.kind === 'work_order') && ctx.git && ctx.formats) {
+      const dir = ref.kind as 'specs' | 'standards' | 'components' | 'audits' | 'work-orders';
       const path = `${dir}/${ref.id}.md`;
       try {
         const before = await ctx.git.readFileAt(from.sha, path);

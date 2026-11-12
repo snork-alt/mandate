@@ -1,9 +1,10 @@
-import { Menu, Text, UnstyledButton } from '@mantine/core';
+import { Menu, Text, Tooltip, UnstyledButton } from '@mantine/core';
 import { IconBrandGithub, IconCheck, IconLayoutGrid, IconSelector } from '@tabler/icons-react';
 import { githubLoginUrl } from '../auth';
 import { Logo } from '../components/Logo';
 import { goTo, projectBase } from '../project';
 import { useProjects } from './projects';
+import { AccessBadge } from './AccessBadge';
 
 /** Sidebar header: the current project, a menu with the other projects and the picker. */
 export function ProjectSwitcher({ projectId }: { projectId: string }) {
@@ -19,11 +20,15 @@ export function ProjectSwitcher({ projectId }: { projectId: string }) {
             <Text fw={600} size="sm" truncate lh={1.2}>
               {current?.name ?? projectId}
             </Text>
-            <Text size="xs" c="var(--app-text-faint)" truncate lh={1.2}>
+            <Text size="xs" c="var(--app-text-faint)" truncate lh={1.2} component="div" className="switcher-sub">
               Mandate · {projectId}
             </Text>
           </span>
-          {current?.github?.status === 'reconnect' && <span className="reconnect-dot" title="GitHub needs reconnecting" />}
+          {current?.github?.status === 'reconnect' && (
+            <Tooltip label="GitHub needs reconnecting" openDelay={300}>
+              <span className="reconnect-dot" role="img" aria-label="GitHub needs reconnecting" />
+            </Tooltip>
+          )}
           <IconSelector size={14} color="var(--app-text-faint)" style={{ flexShrink: 0 }} />
         </UnstyledButton>
       </Menu.Target>
@@ -34,8 +39,8 @@ export function ProjectSwitcher({ projectId }: { projectId: string }) {
             key={p.id}
             data-testid={`switch-${p.id}`}
             leftSection={<span className="project-avatar project-avatar-sm">{p.name.slice(0, 1).toUpperCase()}</span>}
-            rightSection={p.id === projectId ? <IconCheck size={14} /> : null}
-            onClick={() => p.id !== projectId && goTo(`${projectBase(p.id)}/specs`)}
+            rightSection={p.id === projectId ? <IconCheck size={14} /> : p.access ? <AccessBadge access={p.access} compact /> : null}
+            onClick={() => p.id !== projectId && goTo(`${projectBase(p.id)}/`)}
           >
             <Text size="sm" truncate>
               {p.name}

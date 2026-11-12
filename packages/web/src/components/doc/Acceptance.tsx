@@ -7,6 +7,10 @@ import { Markdown } from '../Markdown';
 import { CommitHash, CopyRef, copyTargetProps } from '../copy';
 import type { CopyTarget } from '../../lib/refs';
 import { sectionAnchor } from './anchors';
+import { buildNodeUri } from '@mandate/shared/refs';
+import { ActorAvatar, AvatarStack, Contributors } from '../people/People';
+import { useContributors } from '../../lib/people';
+import { bareRef } from '../../lib/lineage';
 import { CRITERION_STATE_META } from '../../lib/verification';
 
 
@@ -73,6 +77,12 @@ export function VerificationCount({ verified, total, failing = 0, stale = 0 }: {
   );
 }
 
+/** Who recorded a verification: its contributors stack (server: users; else agents), else the recording actor. */
+function VerificationPeople({ r }: { r: VerificationRecord }) {
+  const q = useContributors(buildNodeUri({ kind: 'verifications', id: r.id }));
+  return q.data?.length ? <AvatarStack contributors={q.data} size="xs" max={3} /> : <ActorAvatar user={r.byUser} agent={r.by} at={r.at} verb="Verified" />;
+}
+
 function ResultLine({ r }: { r: VerificationRecord }) {
   const link = r.evidence.ci ?? r.evidence.test;
   return (
@@ -90,6 +100,9 @@ function ResultLine({ r }: { r: VerificationRecord }) {
           {r.code.branch}
         </span>
       )}
+      <span className="criterion-result-people" data-testid="verification-people">
+        <VerificationPeople r={r} />
+      </span>
       <span>{r.by}</span>
       <Tooltip label={absoluteTime(r.at)}>
         <span>{relativeTime(r.at)}</span>
@@ -120,6 +133,11 @@ export function AcceptanceCard({ section, state, target }: { section: Section; s
             {section.threshold.metric}
             {section.threshold.max !== undefined && ` ≤ ${section.threshold.max}`}
             {section.threshold.min !== undefined && ` ≥ ${section.threshold.min}`}
+          </span>
+        )}
+        {target && (
+          <span className="section-people">
+            <Contributors refUri={bareRef(target.ref)} size="xs" max={3} form="compact" />
           </span>
         )}
         <span className="section-actions">{target && <CopyRef target={target} />}</span>

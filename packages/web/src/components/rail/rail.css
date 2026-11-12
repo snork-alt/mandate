@@ -93,6 +93,8 @@
 .ask-model span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ask-model:hover, .ask-model[aria-expanded='true'] { background: var(--app-surface); color: var(--app-text); }
 .ask-model-tag { font-size: 10px; color: var(--app-text-faint); }
+.ask-notice-line { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.ask-error-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .ask-notice code, .ask-snippet code { font-family: var(--mantine-font-family-monospace); }
 .ask-notice { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 8px; border: 1px solid var(--app-border-strong); background: var(--app-surface); font-size: var(--mantine-font-size-xs); line-height: 1.5; }
 .ask-notice p { margin: 0; font-size: var(--mantine-font-size-sm); color: var(--mantine-color-text); }
@@ -172,3 +174,8 @@
 .ask-cypher .code-block pre { padding: 22px 10px 8px; font-size: 11.5px; line-height: 1.55; }
 .ask-step-body:has(.ask-cypher) { max-height: 380px; }
 .ask-cypher-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 3px; font-family: var(--mantine-font-family-monospace); font-size: 11px; }
+/* Tables in the narrow rail (Cypher results, answer tables): share the width, long chips ellipsize instead of clipping. */
+.rail .embed-table { table-layout: fixed; }
+.rail .embed-table td, .rail .embed-table th { overflow: hidden; overflow-wrap: anywhere; }
+.rail .embed-table .ref-chips { flex-direction: column; align-items: flex-start; }
+.rail .embed-table .ref-chip-rich { max-width: 100%; }

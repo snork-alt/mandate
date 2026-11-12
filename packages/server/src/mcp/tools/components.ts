@@ -13,7 +13,7 @@ import {
   docRefSchema,
   layerSchema,
   ownsSchema,
-  sectionCreateSchema,
+  componentSectionCreateSchema,
   sectionRefSchema,
 } from '@mandate/shared';
 import { z } from 'zod';
@@ -81,7 +81,6 @@ const componentMeta = {
 };
 export const componentCreateInputSchema = z
   .object({
-    id: slugSchema.optional(),
     title: line(300),
     summary: line(1000).optional(),
     kind: z.enum(COMPONENT_KINDS),
@@ -90,7 +89,7 @@ export const componentCreateInputSchema = z
     owner: line(200).optional(),
     layer: layerSchema.optional(),
     parent: slugSchema.optional(),
-    sections: z.array(sectionCreateSchema).max(100).optional(),
+    sections: z.array(componentSectionCreateSchema).max(100).optional(),
   })
   .strict();
 export const componentUpdateMetaInputSchema = z
@@ -134,7 +133,7 @@ Example: {"ref":"mandate://components/auth-service/sections/responsibility"}`,
     name: 'architecture_get',
     title: 'Get the architecture',
     kind: 'read',
-    description: `The generated architecture view (mandate://architecture): components in layers top to bottom (layer frontmatter, default order ${DEFAULT_LAYER_ORDER.join(' > ')}; without one, inherited from the parent or derived from depends_on so dependents sit above their dependencies), containment (node parent / children, from the parent frontmatter), also grouped by repo or kind, depends_on edges between them (from component section links; violation: true when an edge points upward), and at HEAD per-component overlays (work orders, claims, specs, open feedback, drift, blocked, failing). at: a past commit; compare: an older commit (added / removed / changed); focus: a component id (marks upstream / downstream); includeArchived: show archived components (hidden by default); format graph (layers, nodes, edges) or mermaid (adds a top-to-bottom flowchart, one subgraph per layer, nested subgraphs for containing components).
+    description: `The generated architecture view (mandate://architecture): components by layer (default order ${DEFAULT_LAYER_ORDER.join(' > ')}), parent / children, depends_on edges (violation: an upward edge) and, at HEAD, overlays (work orders, claims, specs, feedback, drift, blocked, failing). Options: at (commit), compare (older commit), focus (component id), includeArchived, format graph | mermaid.
 Example: {"focus":"auth-service","format":"mermaid"}`,
     input: architectureGetInputSchema,
     run: (a, ctx) => ctx.storage.architecture.get(a),

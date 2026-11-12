@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { agentSnippets, genericSnippet, maskKey, mcpUrlFor, serverName } from '../src/connect/snippets';
+import { agentGuides, agentSnippets, connectCommand, genericSnippet, keyEnvVar, maskKey, mcpUrlFor, serverName } from '../src/connect/snippets';
 import { appPathname, legacyTarget, parseProjectPath, projectBase, setCurrentProject, withBase } from '../src/project';
 
 const KEY = 'mnd_demo_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_xyz9';
@@ -55,7 +55,7 @@ describe('connect-agent snippets', () => {
 
   it('per-agent formats', () => {
     const by = Object.fromEntries(agentSnippets(input).map((s) => [s.id, s]));
-    expect(Object.keys(by)).toEqual(['claude-code', 'cursor', 'vscode', 'codex', 'gemini', 'windsurf', 'opencode']);
+    expect(Object.keys(by)).toEqual(['claude-code', 'codex', 'cursor', 'vscode', 'gemini', 'windsurf', 'opencode']);
     expect(by['claude-code']!.code).toBe(`claude mcp add --transport http mandate-demo ${URL_} \\\n  --header "Authorization: Bearer ${KEY}"`);
     expect(JSON.parse(by.cursor!.code).mcpServers['mandate-demo']).toEqual({ url: URL_, headers: { Authorization: `Bearer ${KEY}` } });
     expect(JSON.parse(by.vscode!.code).servers['mandate-demo'].type).toBe('http');
@@ -71,5 +71,17 @@ describe('connect-agent snippets', () => {
   it('MCP URL points agents at the API server, not the Vite dev port', () => {
     expect(mcpUrlFor({ protocol: 'http:', hostname: 'localhost', origin: 'http://localhost:5173' }, '/p/demo/mcp', '4000')).toBe('http://localhost:4000/p/demo/mcp');
     expect(mcpUrlFor({ protocol: 'http:', hostname: '127.0.0.1', origin: 'http://127.0.0.1:4000' }, '/p/demo/mcp')).toBe('http://127.0.0.1:4000/p/demo/mcp');
+  });
+
+  it('agent guides: Claude Code and Codex first, key from an env var', () => {
+    const g = agentGuides(input);
+    expect(g.map((x) => x.id).slice(0, 2)).toEqual(['claude-code', 'codex']);
+    expect(keyEnvVar('team-a')).toBe('MANDATE_KEY_TEAM_A');
+    expect(g[0]!.env).toBe(`export MANDATE_KEY_DEMO=${KEY}`);
+    expect(g[0]!.register.code).toContain('--header "Authorization: Bearer $MANDATE_KEY_DEMO"');
+    expect(g[0]!.register.code).not.toContain(KEY);
+    expect(g[1]!.register.code).toBe(`[mcp_servers.mandate-demo]\nurl = "${URL_}"\nbearer_token_env_var = "MANDATE_KEY_DEMO"`);
+    expect(g[1]!.verify).toContain('codex mcp list');
+    expect(connectCommand('demo')).toBe('mandate connect --project demo');
   });
 });

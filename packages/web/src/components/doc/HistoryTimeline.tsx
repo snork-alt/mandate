@@ -6,6 +6,11 @@ import { IconGitBranch, IconRobot, IconUser } from '@tabler/icons-react';
 import type { HistoryEntry } from '@mandate/shared';
 import { absoluteTime, relativeTime } from '../../lib/time';
 import { shortSubject } from '../../lib/specs';
+import { filterByUsers, usersOf, useShowUsers } from '../../lib/attribution';
+import { ByLine, UserAvatar } from '../attribution/Attribution';
+import { FilterButton } from '../FilterButton';
+import { CoAuthors, UserFilterContext } from '../people/People';
+import { RefChip } from '../refs/RefChip';
 
 /** Compact git history of one file: subject, who (agent trailer or author), branch and time. */
 interface Props {
@@ -23,6 +28,8 @@ interface Props {
 export function HistoryTimeline({ entries, loading, now, versionHref, activeCommit, limit = 8 }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [contentOnly, setContentOnly] = useState(true);
+  const [users, setUsers] = useState<string[]>([]);
+  const showUsers = useShowUsers();
   if (loading) return <Skeleton height={80} radius="md" />;
   if (!entries?.length) {
     return (
@@ -33,11 +40,25 @@ export function HistoryTimeline({ entries, loading, now, versionHref, activeComm
   }
   const tagged = entries.some((e) => e.changes);
   // "Content changes only": hide metadata-only commits (heartbeats...), but keep the selected one.
-  const filtered = tagged && contentOnly ? entries.filter((e) => !e.changes || e.changes.includes('text') || e.commit === activeCommit) : entries;
+  const byContent = tagged && contentOnly ? entries.filter((e) => !e.changes || e.changes.includes('text') || e.commit === activeCommit) : entries;
+  // "By user" (server mode only; local mode records no users).
+  const userOptions = usersOf(entries, showUsers);
+  const filtered = filterByUsers(byContent, users, showUsers);
   const hidden = entries.length - filtered.length;
   const shown = expanded ? filtered : filtered.slice(0, limit);
   return (
+    <UserFilterContext.Provider value={showUsers ? (u: string) => setUsers([u]) : null}>
     <div className="timeline">
+      {userOptions.length > 0 && (
+        <div className="timeline-filters">
+          <FilterButton label="User" options={userOptions.map((u) => ({ value: u, label: u, icon: <UserAvatar user={u} size={14} /> }))} selected={users} onChange={setUsers} clearable summary="colon" />
+        </div>
+      )}
+      {shown.length === 0 && (
+        <Text size="sm" c="var(--app-text-faint)">
+          No matching changes.
+        </Text>
+      )}
       {shown.map((h) => (
         <div
           key={h.commit}
@@ -61,7 +82,7 @@ export function HistoryTimeline({ entries, loading, now, versionHref, activeComm
               )}
             </Tooltip>
             <div className="timeline-meta">
-              <span>{h.agent ?? h.author}</span>
+              {h.agent || (showUsers && h.user) ? <ByLine a={{ user: h.user, agent: h.agent }} showUsers={showUsers} /> : <span>{h.author}</span>}
               <span>·</span>
               <Tooltip label={absoluteTime(h.date)}>
                 <span>{relativeTime(h.date, now)}</span>
@@ -69,6 +90,20 @@ export function HistoryTimeline({ entries, loading, now, versionHref, activeComm
               {h.changes && h.changes.length > 0 && <span className="timeline-tag">{h.changes.join(' · ')}</span>}
               <CommitHash sha={h.commit} className="timeline-hash" />
             </div>
+            {h.trailers?.['Uploaded-Via'] && (
+              <Text size="xs" c="dimmed" className="timeline-upload">
+                Uploaded via {h.trailers['Uploaded-Via']} by {(showUsers && h.user) || h.agent || h.author}
+              </Text>
+            )}
+            {h.coAuthors && h.coAuthors.length > 0 && <CoAuthors logins={h.coAuthors} />}
+            {h.causes && h.causes.length > 0 && (
+              <span className="timeline-cause" aria-label="Recorded cause of this change">
+                {h.causes.slice(0, 2).map((c) => (
+                  <RefChip key={c} to={c} />
+                ))}
+                {h.causes.length > 2 && <span className="rail-faint">+{h.causes.length - 2}</span>}
+              </span>
+            )}
             {h.branch && (
               <span className="timeline-branch">
                 <IconGitBranch size={11} />
@@ -93,5 +128,6 @@ export function HistoryTimeline({ entries, loading, now, versionHref, activeComm
         </UnstyledButton>
       )}
     </div>
+    </UserFilterContext.Provider>
   );
 }

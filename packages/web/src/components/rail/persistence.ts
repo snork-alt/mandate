@@ -31,11 +31,28 @@ export const loadWidth = () => {
   return v == null ? RAIL_DEFAULT : clampWidth(Number(v));
 };
 export const saveWidth = (w: number) => write(KEYS.width, String(clampWidth(w)));
-export const loadCollapsed = () => read(KEYS.collapsed) === '1';
+/** Mobile layout (bottom sheet over the page; see rail.css). */
+export const RAIL_MOBILE_MAX = 760;
+/** Below this width the rail starts collapsed unless the user opened it before. */
+export const RAIL_AUTO_OPEN_MIN = 1280;
+const viewport = () => (typeof window === 'undefined' ? RAIL_AUTO_OPEN_MIN : window.innerWidth);
+export const isMobileWidth = (w = viewport()) => w <= RAIL_MOBILE_MAX;
+
+/**
+ * Initial collapsed state. Mobile: always collapsed (a stored "open" is never restored). Otherwise the stored explicit
+ * choice wins; with none, open from 1280 px, collapsed below.
+ */
+export const loadCollapsed = (w = viewport()) => {
+  if (isMobileWidth(w)) return true;
+  const v = read(KEYS.collapsed);
+  if (v === '1') return true;
+  if (v === '0') return false;
+  return w < RAIL_AUTO_OPEN_MIN;
+};
 export const saveCollapsed = (c: boolean) => write(KEYS.collapsed, c ? '1' : '0');
 
-/** Document pages (`/specs/x`, `/standards/x`, `/work-orders/x`, `/feedback/x`) vs everything else. */
-export const pageTypeOf = (pathname: string): PageType => (/^\/(specs|standards|work-orders|feedback)\/[^/]+/.test(pathname) ? 'doc' : 'list');
+/** Document pages (`/specs/x`, `/standards/x`, `/components/x`, `/work-orders/x`, `/feedback/x`, `/audits/x`) vs everything else. */
+export const pageTypeOf = (pathname: string): PageType => (/^\/(specs|standards|components|work-orders|feedback|audits)\/[^/]+/.test(pathname) ? 'doc' : 'list');
 
 export const tabsFor = (t: PageType): RailTab[] => (t === 'doc' ? ['details', 'activity', 'ask'] : ['activity', 'ask']);
 export const defaultTab = (t: PageType): RailTab => (t === 'doc' ? 'details' : 'activity');

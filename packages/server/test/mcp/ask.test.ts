@@ -5,9 +5,12 @@ import { ASK_NOTIFICATION, parseAnswer, type AskEvent, type AskResult } from '@m
 import { ASK_EXCLUDED_TOOLS, askToolset } from '../../src/mcp/tools/ask.js';
 import { TOOLS } from '../../src/mcp/index.js';
 import { describeTool, type ToolContext } from '../../src/mcp/define.js';
-import { askSystemPrompt, cachedAskModel, clearAskModelCache, ConversationStore, createAskModel, liveAskConfig, runAsk, type AskModel } from '../../src/ask/index.js';
+import { askSystemPrompt, compactToolHistory, CORE_TOOLS, FIND_TOOLS, rankTools, cachedAskModel, clearAskModelCache, ConversationStore, createAskModel, liveAskConfig, runAsk, type AskModel } from '../../src/ask/index.js';
 import { askConfigSchema, type AskModelConfig, type ResolvedAskConfig } from '../../src/config.js';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { estimateTokens } from '@mandate/doc';
+import { APICallError } from 'ai';
+import { describeProviderError, isTransientProviderError } from '../../src/ask/retry.js';
 import os from 'node:os';
 import path from 'node:path';
 import { connect, mcpFixture, serveProjects, type McpFixture } from './fixture.js';
@@ -149,13 +152,13 @@ describe('agent loop', () => {
   });
 
   it('streams events in order: text deltas, tool_start / tool_end per call, the answer, then done', async () => {
-    const t = await askApp((_r, step) => (step === 1 ? { text: 'Checking.', toolCalls: [{ id: 's1', name: 'graph_schema', input: {} }] } : { text: 'Done: mandate://specs/login-sso' }));
+    const t = await askApp((_r, step) => (step === 1 ? { text: 'Checking.', toolCalls: [{ id: 's1', name: 'spec_list', input: {} }] } : { text: 'Done: mandate://specs/login-sso' }));
     await t.ask({ question: 'order?' });
     const events = await t.settled();
     const seq = events.map((e) => (e.type === 'tool_start' ? `start:${e.id}` : e.type === 'tool_end' ? `end:${e.call.id}:${e.call.ok}` : e.type));
     expect(seq).toEqual(['start', 'text', 'start:s1', 'end:s1:true', 'text', 'text', 'done']);
     const start = events.find((e) => e.type === 'tool_start')!;
-    expect(start).toMatchObject({ name: 'graph_schema', args: {} });
+    expect(start).toMatchObject({ name: 'spec_list', args: {} });
     const done = events.at(-1)!;
     expect(done.type === 'done' && done.result.toolCalls[0]!.summary).toBeTruthy();
   });
@@ -176,8 +179,9 @@ describe('agent loop', () => {
       ['w3', 'tool_not_allowed'],
     ]);
     expect(res.answer).toBe('I cannot change specs.');
-    // Exactly the read toolset reaches the model; every refusal goes back to it as an error result.
-    expect((t.model!.requests[0]!.tools ?? []).map((x) => x.name).sort()).toEqual([...offered].sort());
+    // Core read tools are loaded, the others are deferred (find_tools); every refusal goes back as an error result.
+    expect((t.model!.requests[0]!.tools ?? []).map((x) => x.name).sort()).toEqual([...CORE_TOOLS, FIND_TOOLS].sort());
+    expect(CORE_TOOLS.every((n) => offered.includes(n))).toBe(true);
     expect(lastToolResults(t.model!.requests[1]!).map((x) => [x.id, x.type])).toEqual([
       ['w1', 'error-text'],
       ['w2', 'error-text'],
@@ -215,13 +219,15 @@ describe('agent loop', () => {
   });
 
   it('keeps the conversation for follow-ups', async () => {
-    const t = await askApp((_r, step) => (step === 1 ? { toolCalls: [{ id: 'f1', name: 'graph_schema', input: {} }] } : { text: `answer ${step}` }));
+    const t = await askApp((_r, step) => (step === 1 ? { toolCalls: [{ id: 'f1', name: 'spec_list', input: {} }] } : { text: `answer ${step}` }));
     const first = (await t.ask({ question: 'first question' })).body as AskResult;
     const second = (await t.ask({ question: 'and then?', conversationId: first.conversationId })).body as AskResult;
     expect(second.conversationId).toBe(first.conversationId);
     expect(second.answer).toBe('answer 3');
     const prompt = t.model!.requests[2]!.prompt;
-    expect(prompt.map((m) => m.role)).toEqual(['system', 'user', 'assistant', 'tool', 'assistant', 'user']);
+    // Follow-ups carry the previous question and answer, not the old raw tool outputs.
+    expect(prompt.map((m) => m.role)).toEqual(['system', 'user', 'assistant', 'user']);
+    expect(JSON.stringify(prompt)).toContain('answer 2');
     expect(userText(t.model!.requests[2]!, 0)).toBe('first question');
     expect(userText(t.model!.requests[2]!, 1)).toBe('and then?');
   });
@@ -248,7 +254,9 @@ describe('toolset', () => {
       expect(readOnly, name).toContain(name);
       expect(why.length).toBeGreaterThan(3);
     }
-    expect(askToolset(TOOLS).map((t) => t.name)).toEqual(expect.arrayContaining(['search', 'graph_query', 'spec_get', 'history_get', 'activity_list', 'git_status', 'index_status', 'ask_status']));
+    expect(askToolset(TOOLS).map((t) => t.name)).toEqual(expect.arrayContaining(['search', 'graph_query', 'spec_get', 'history_get', 'activity_list', 'git_status']));
+    // Settings / ops / raw-file tools answer no project question (prompts review 3.7).
+    for (const n of ['project_info', 'index_status', 'ask_status', 'doc_raw', 'graph_batch']) expect(askToolset(TOOLS).map((t) => t.name)).not.toContain(n);
   });
 
   it('never includes a write or ops tool', () => {
@@ -268,7 +276,7 @@ describe('toolset', () => {
 });
 
 describe('limits', () => {
-  const forever: Script = (_r, step) => ({ toolCalls: [{ id: `t${step}`, name: 'graph_schema', input: {} }] });
+  const forever: Script = (_r, step) => ({ toolCalls: [{ id: `t${step}`, name: 'spec_list', input: {} }] });
 
   it('stops after maxToolCalls when the model ignores the answer-now step', async () => {
     const t = await askApp(forever, { maxToolCalls: 2 });
@@ -287,7 +295,7 @@ describe('limits', () => {
       (req, step) =>
         req.toolChoice?.type === 'none'
           ? { text: 'Best effort answer.' }
-          : { toolCalls: [1, 2, 3].map((i) => ({ id: `p${step}-${i}`, name: 'graph_schema', input: {} })) },
+          : { toolCalls: [1, 2, 3].map((i) => ({ id: `p${step}-${i}`, name: 'spec_list', input: {} })) },
       { maxToolCalls: 2 },
     );
     const res = (await t.ask({ question: 'many' })).body as AskResult;
@@ -296,8 +304,10 @@ describe('limits', () => {
     expect(res.toolCalls.map((c) => c.ok)).toEqual([true, true, false]);
     expect(res.toolCalls[2]!.error?.code).toBe('limit');
     const last = t.model!.requests.at(-1)!;
-    expect(last.prompt[0]!.content as string).toContain('Write the final answer now');
-    expect(JSON.parse(lastToolResults(last)[2]!.value).error.code).toBe('limit');
+    expect(JSON.stringify(last.prompt.at(-1))).toContain('Write the final answer now');
+    // The system prompt stays byte-stable (cache prefix).
+    expect(last.prompt[0]!.content).toBe(t.model!.requests[0]!.prompt[0]!.content);
+    expect(JSON.parse(lastToolResults({ ...last, prompt: last.prompt.slice(0, -1) })[2]!.value).error.code).toBe('limit');
   });
 
   it('stops at the token budget', async () => {
@@ -324,7 +334,7 @@ describe('limits', () => {
     const ac = new AbortController();
     const model = new ScriptedModel((req, step) =>
       step === 1
-        ? { text: 'Partial', toolCalls: [{ id: 'a1', name: 'graph_schema', input: {} }] }
+        ? { text: 'Partial', toolCalls: [{ id: 'a1', name: 'spec_list', input: {} }] }
         : new Promise((_res, rej) => {
             ac.abort();
             if (req.abortSignal?.aborted) rej(new DOMException('aborted', 'AbortError'));
@@ -340,12 +350,12 @@ describe('limits', () => {
       model,
       tools: askToolset(TOOLS),
       ctx,
-      limits: { maxToolCalls: 5, timeoutMs: 60_000, tokenBudget: 100_000, maxOutputTokens: 1000 },
+      limits: { maxToolCalls: 5, timeoutMs: 60_000, tokenBudget: 100_000, maxOutputTokens: 1000, maxToolResultTokens: 5000, toolResultTokens: {} },
       conversations,
       signal: ac.signal,
     });
     expect(res.stopReason).toBe('aborted');
-    expect(res.toolCalls.map((c) => c.name)).toEqual(['graph_schema']);
+    expect(res.toolCalls.map((c) => c.name)).toEqual(['spec_list']);
     expect(conversations.get('abortconv').at(-1)?.role).toBe('assistant');
   });
 
@@ -438,16 +448,16 @@ describe('multiple models', () => {
   it('switches models mid-conversation, carrying the history over', async () => {
     process.env.MANDATE_TEST_OPUS_KEY = 'sk-test';
     try {
-      const luna = new ScriptedModel((_r, step) => (step === 1 ? { toolCalls: [{ id: 'l1', name: 'graph_schema', input: {} }] } : { text: 'Luna says: see mandate://specs/login-sso' }));
+      const luna = new ScriptedModel((_r, step) => (step === 1 ? { toolCalls: [{ id: 'l1', name: 'spec_list', input: {} }] } : { text: 'Luna says: see mandate://specs/login-sso' }));
       const opus = new ScriptedModel(() => ({ text: 'Opus follows up.' }));
       const t = await askApp(null, two, (m) => (m.id === 'opus' ? opus : luna));
       const first = (await t.ask({ question: 'first question' })).body as AskResult;
       expect(first.modelId).toBe('luna');
       const second = (await t.ask({ question: 'follow-up', conversationId: first.conversationId, model: 'opus' })).body as AskResult;
       expect(second).toMatchObject({ conversationId: first.conversationId, modelId: 'opus', answer: 'Opus follows up.' });
-      // Opus received Luna's turns (tool call and result included) as provider-neutral messages.
+      // Opus received Luna's turn (question and answer) as provider-neutral messages.
       const prompt = opus.requests[0]!.prompt;
-      expect(prompt.map((m) => m.role)).toEqual(['system', 'user', 'assistant', 'tool', 'assistant', 'user']);
+      expect(prompt.map((m) => m.role)).toEqual(['system', 'user', 'assistant', 'user']);
       expect(JSON.stringify(prompt)).toContain('Luna says: see mandate://specs/login-sso');
       expect(userText(opus.requests[0]!, 1)).toBe('follow-up');
       // And back to Luna.
@@ -544,5 +554,191 @@ describe('ask config', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('token economy', () => {
+  it('loads deferred read tools on demand with find_tools (exact names first); never write tools', async () => {
+    const t = await askApp((req, step) =>
+      step === 1
+        ? { toolCalls: [{ id: 'd0', name: 'graph_impact', input: { uri: 'mandate://standards/security-baseline' } }, { id: 'f1', name: 'find_tools', input: { query: 'graph_impact standard_usage spec_update_meta' } }] }
+        : step === 2
+          ? { toolCalls: [{ id: 'd1', name: 'graph_impact', input: { uri: 'mandate://standards/security-baseline' } }, { id: 'd2', name: 'standard_usage', input: { id: 'security-baseline' } }] }
+          : { text: `loaded: ${(req.tools ?? []).map((x) => x.name).filter((n) => n === 'graph_impact' || n === 'standard_usage').join(',')}` },
+    );
+    const res = (await t.ask({ question: 'impact?' })).body as AskResult;
+    expect(res.toolCalls.map((c) => [c.name, c.ok, c.error?.code ?? c.summary])).toEqual([
+      ['graph_impact', false, 'not_loaded'],
+      ['find_tools', true, 'loaded graph_impact, standard_usage'],
+      ['graph_impact', true, expect.any(String)],
+      ['standard_usage', true, expect.any(String)],
+    ]);
+    expect(res.answer).toBe('loaded: graph_impact,standard_usage');
+    expect((t.model!.requests[1]!.tools ?? []).map((x) => x.name)).not.toContain('spec_update_meta');
+    expect(rankTools('please graph_impact', [{ name: 'graph_path', description: 'impact paths' }, { name: 'graph_impact', description: 'x' }])).toEqual(['graph_impact']);
+    expect(rankTools('impact of a change', [{ name: 'graph_path', description: 'paths' }, { name: 'graph_impact', description: 'what a change affects' }])).toEqual(['graph_impact']);
+  });
+
+  it('caps every tool result the model reads (tiny cap, real tools), with continuation notes', async () => {
+    const t = await askApp(
+      (_r, step) =>
+        step === 1
+          ? {
+              toolCalls: [
+                { id: 'c1', name: 'spec_get', input: { ref: 'mandate://specs/login-sso' } },
+                { id: 'c2', name: 'search', input: { q: 'token' } },
+                { id: 'c3', name: 'graph_neighbors', input: { uri: 'mandate://specs/login-sso' } },
+                { id: 'c4', name: 'work_order_list', input: {} },
+                { id: 'c5', name: 'spec_list', input: {} },
+              ],
+            }
+          : { text: 'ok' },
+      { maxToolResultTokens: 250 },
+    );
+    const res = (await t.ask({ question: 'q' })).body as AskResult;
+    expect(res.toolCalls.every((c) => c.ok), JSON.stringify(res.toolCalls.map((c) => c.summary))).toBe(true);
+    const results = lastToolResults(t.model!.requests[1]!);
+    expect(results).toHaveLength(5);
+    for (const r of results) expect(estimateTokens(r.value), `${r.id}: ${r.value.slice(0, 80)}`).toBeLessThanOrEqual(250);
+    expect(results.filter((r) => r.value.includes('"truncated":true')).length).toBeGreaterThanOrEqual(3);
+    // The UI still gets the rich result.
+    expect(res.toolCalls[1]!.result).toBeTruthy();
+  });
+
+  it('sends compact schemas and descriptions (no length / pattern constraints, first line only in the system prompt)', async () => {
+    const t = await askApp(() => ({ text: 'x' }));
+    await t.ask({ question: 'q' });
+    const req = t.model!.requests[0]!;
+    const search = (req.tools ?? []).find((x) => x.name === 'search') as { description?: string; inputSchema: unknown };
+    const schema = JSON.stringify(search.inputSchema);
+    expect(schema).toContain('"q"');
+    expect(schema).not.toMatch(/maxLength|pattern|additionalProperties/);
+    expect(search.description).not.toContain('Find specs, standards, sections');
+    expect(req.prompt[0]!.content as string).toContain('- search: Find specs, standards, sections');
+    expect(req.prompt[0]!.content as string).toContain('refine the query');
+  });
+
+  it('summarises older tool results once the conversation is large, keeping the latest ones', () => {
+    const big = 'z'.repeat(20_000);
+    const toolMsg = (id: string, name: string) => ({ role: 'tool' as const, content: [{ type: 'tool-result' as const, toolCallId: id, toolName: name, output: { type: 'text' as const, value: big } }] });
+    const call = (id: string, name: string) => ({ role: 'assistant' as const, content: [{ type: 'tool-call' as const, toolCallId: id, toolName: name, input: {} }] });
+    const msgs = [{ role: 'user' as const, content: 'q' }, call('a', 'search'), toolMsg('a', 'search'), call('b', 'spec_get'), toolMsg('b', 'spec_get'), call('c', 'graph_query'), toolMsg('c', 'graph_query')];
+    const out = compactToolHistory(msgs, new Map([['a', '12 hits in 4 documents']]));
+    const values = out.filter((m) => m.role === 'tool').map((m) => (m.content[0] as { output: { value: string } }).output.value);
+    expect(values[0]).toBe('[earlier result of search, already used: 12 hits in 4 documents. Call it again if you need the details.]');
+    expect(values[1]).toBe(big);
+    expect(values[2]).toBe(big);
+    // Small conversations are left alone.
+    const small = msgs.slice(0, 3);
+    expect(compactToolHistory(small, new Map(), 100_000)).toBe(small);
+  });
+
+  it('forces the answer-now step when the projected input would pass the token budget', async () => {
+    const t = await askApp(
+      (req, step) => (req.toolChoice?.type === 'none' ? { text: 'Answer within budget.' } : { toolCalls: [{ id: `b${step}`, name: 'spec_get', input: { ref: 'mandate://specs/login-sso' } }], usage: { inputTokens: 4000, outputTokens: 100 } }),
+      { tokenBudget: 9000, maxOutputTokens: 256 },
+    );
+    const res = (await t.ask({ question: 'q' })).body as AskResult;
+    expect(res.answer).toBe('Answer within budget.');
+    expect(res.stopReason).toBe('done');
+    expect(t.model!.requests.at(-1)!.toolChoice).toEqual({ type: 'none' });
+    expect(JSON.stringify(t.model!.requests.at(-1)!.prompt.at(-1))).toContain('Token budget nearly used');
+    expect(t.model!.requests.length).toBeLessThanOrEqual(3);
+  });
+
+  it('marks the system prompt as a cache breakpoint for Anthropic', async () => {
+    const t = await askApp(() => ({ text: 'x' }));
+    await t.ask({ question: 'q' });
+    expect(t.model!.requests[0]!.prompt[0]).toMatchObject({ role: 'system', providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } } });
+  });
+});
+
+describe('provider failures', () => {
+  const textOf = (events: AskEvent[]) => {
+    // What the UI shows: text deltas, reset by tool_start and by retry (to the event's text).
+    let shown = '';
+    for (const e of events) {
+      if (e.type === 'text') shown += e.delta;
+      else if (e.type === 'tool_start') shown = '';
+      else if (e.type === 'retry') shown = e.text;
+    }
+    return shown;
+  };
+
+  it('retries a step whose stream dropped mid-way and answers, without duplicating text', async () => {
+    let calls = 0;
+    const t = await askApp((_r, step) => {
+      calls++;
+      if (step === 1) return { toolCalls: [{ id: 'r1', name: 'spec_list', input: {} }] };
+      if (step === 2) return { text: 'Partial answer that gets cut', dropStream: 'The stream ended before completion.' };
+      return { text: 'Final answer: see mandate://specs/login-sso' };
+    });
+    const res = (await t.ask({ question: 'q' })).body as AskResult;
+    expect(res.stopReason).toBe('done');
+    expect(res.answer).toBe('Final answer: see mandate://specs/login-sso');
+    expect(res.toolCalls.map((c) => c.name)).toEqual(['spec_list']);
+    expect(res.diagnostics).toMatchObject({ retries: 1, providerErrors: [{ message: 'The stream ended before completion.' }] });
+    expect(calls).toBe(3);
+    // The retried step continues from the completed steps (the tool result is in its prompt; the tool is not re-run).
+    expect(lastToolResults(t.model!.requests[2]!).map((x) => x.id)).toEqual(['r1']);
+    const events = await t.settled();
+    const retry = events.find((e) => e.type === 'retry');
+    expect(retry).toMatchObject({ attempt: 1, max: 2, message: 'Provider interrupted; retrying (1/2)…' });
+    expect(textOf(events)).toBe('Final answer: see mandate://specs/login-sso');
+  });
+
+  it('retries a routing error of the gateway', async () => {
+    const t = await askApp((_r, step) =>
+      step === 1 ? { throwError: new APICallError({ message: 'No compatible route completed this request.', url: 'https://gw.example/v1/chat/completions', requestBodyValues: {}, statusCode: 400, responseHeaders: { 'x-request-id': 'req_123' }, isRetryable: false }) } : { text: 'ok' },
+    );
+    const res = (await t.ask({ question: 'q' })).body as AskResult;
+    expect(res).toMatchObject({ stopReason: 'done', answer: 'ok', diagnostics: { retries: 1, providerErrors: [{ class: 'AI_APICallError', status: 400, requestId: 'req_123' }] } });
+  });
+
+  it('gives up gracefully after the retries: partial answer and tool steps kept, error with the model label', async () => {
+    const warnings: string[] = [];
+    const model = new ScriptedModel((_r, step) => (step === 1 ? { toolCalls: [{ id: 'g1', name: 'spec_list', input: {} }] } : { text: 'Half an answer', dropStream: 'socket hang up' }));
+    const conversations = new ConversationStore();
+    const res = await runAsk({
+      question: 'q',
+      context: [],
+      conversationId: 'failconv01',
+      model,
+      choice: { id: 'haiku', label: 'Claude Haiku 5.5' },
+      tools: askToolset(TOOLS),
+      ctx: { storage: fx.storage, index: fx.index, reads: fx.reads } as unknown as ToolContext,
+      limits: { maxToolCalls: 5, timeoutMs: 60_000, tokenBudget: 100_000, maxOutputTokens: 1000, maxToolResultTokens: 5000, toolResultTokens: {} },
+      conversations,
+      retryBaseMs: 1,
+      log: { warn: (m) => warnings.push(m) },
+    });
+    expect(res.stopReason).toBe('provider_error');
+    expect(res.answer).toBe('Half an answer');
+    expect(res.toolCalls.map((c) => [c.name, c.ok])).toEqual([['spec_list', true]]);
+    expect(res.error).toMatchObject({ code: 'provider_error' });
+    expect(res.error!.message).toContain('Claude Haiku 5.5: the provider kept failing (2 retries): socket hang up');
+    expect(res.diagnostics!.retries).toBe(2);
+    expect(model.requests).toHaveLength(4);
+    expect(warnings.join('\n')).toMatch(/ask 'haiku' \(fake\/scripted\) step 2: provider error Error: socket hang up; retrying \(1\/2\)/);
+    expect(warnings.at(-1)).toContain('giving up after 2 retries');
+    // The failed turn is not kept: "Retry" re-asks in the same conversation.
+    expect(conversations.get('failconv01')).toEqual([]);
+  });
+
+  it('does not retry a permanent error, but still reports it with the partial work', async () => {
+    const t = await askApp(() => ({ throwError: new APICallError({ message: 'invalid x-api-key', url: 'https://api.example/v1', requestBodyValues: {}, statusCode: 401, isRetryable: false }) }));
+    const r = await t.ask({ question: 'q' });
+    expect(r.isError).toBe(false);
+    expect(r.body).toMatchObject({ stopReason: 'error', error: { code: 'error' }, diagnostics: { retries: 0 } });
+    expect(t.model!.requests).toHaveLength(1);
+  });
+
+  it('classifies transient errors and never leaks keys in the description', () => {
+    expect(isTransientProviderError(new Error('The stream ended before completion.'))).toBe(true);
+    expect(isTransientProviderError(new APICallError({ message: 'x', url: 'u', requestBodyValues: {}, statusCode: 503 }))).toBe(true);
+    expect(isTransientProviderError(new APICallError({ message: 'Too many requests', url: 'u', requestBodyValues: {}, statusCode: 429 }))).toBe(true);
+    expect(isTransientProviderError(new APICallError({ message: 'bad key', url: 'u', requestBodyValues: {}, statusCode: 401, isRetryable: false }))).toBe(false);
+    expect(isTransientProviderError(new Error('model refused'))).toBe(false);
+    expect(describeProviderError(new Error('failed with Bearer sk-abcdefghijklmnop and key sk-live-1234567890abcdef')).message).not.toMatch(/sk-/);
   });
 });

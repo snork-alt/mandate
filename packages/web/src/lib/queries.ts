@@ -7,8 +7,8 @@ export function useEntityList(kind: EntityKind) {
   return useQuery({ queryKey: [kind], queryFn: () => api.list(kind) });
 }
 
-export function useSpecs() {
-  return useQuery({ queryKey: ['specs'], queryFn: () => api.list('specs') as Promise<Spec[]> });
+export function useSpecs(enabled = true) {
+  return useQuery({ queryKey: ['specs'], queryFn: () => api.list('specs') as Promise<Spec[]>, enabled });
 }
 
 export function useWorkOrders() {
@@ -23,7 +23,7 @@ export function useSpec(id: string) {
   return useQuery({ queryKey: ['specs', id], queryFn: () => api.get('specs', id) as Promise<Spec> });
 }
 
-export function useHistory(kind: 'specs' | 'standards' | 'components', id: string) {
+export function useHistory(kind: 'specs' | 'standards' | 'components' | 'audits' | 'work-orders', id: string) {
   return useQuery({ queryKey: [kind, id, 'history'], queryFn: () => api.history(kind, id) });
 }
 

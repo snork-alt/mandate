@@ -12,6 +12,10 @@ export interface StepScript {
   toolCalls?: { id: string; name: string; input: unknown }[];
   finish?: 'stop' | 'length' | 'content-filter' | 'tool-calls';
   usage?: { inputTokens: number; outputTokens: number };
+  /** Simulate a provider failure: the stream errors after the text (and tool calls) were sent, before `finish`. */
+  dropStream?: string;
+  /** Simulate a failure before streaming (e.g. a routing error of an inference gateway). */
+  throwError?: unknown;
 }
 export type Script = (req: StepRequest, step: number) => StepScript | Promise<StepScript>;
 
@@ -23,6 +27,10 @@ function parts(r: StepScript): StreamPart[] {
     out.push({ type: 'text-end', id: 't' });
   }
   for (const c of r.toolCalls ?? []) out.push({ type: 'tool-call', toolCallId: c.id, toolName: c.name, input: typeof c.input === 'string' ? c.input : JSON.stringify(c.input) });
+  if (r.dropStream) {
+    out.push({ type: 'error', error: new Error(r.dropStream) });
+    return out;
+  }
   const u = r.usage ?? { inputTokens: 100, outputTokens: 20 };
   const unified = r.finish ?? (r.toolCalls?.length ? 'tool-calls' : 'stop');
   out.push({
@@ -42,7 +50,9 @@ export class ScriptedModel implements AskModel {
     this.languageModel = new MockLanguageModelV4({
       doStream: async (req) => {
         this.requests.push(req);
-        return { stream: convertArrayToReadableStream(parts(await script(req, this.requests.length))) };
+        const r = await script(req, this.requests.length);
+        if (r.throwError) throw r.throwError;
+        return { stream: convertArrayToReadableStream(parts(r)) };
       },
     });
   }

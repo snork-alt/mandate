@@ -21,15 +21,15 @@ import {
 } from '@mandate/shared';
 import { defineTool } from '../define.js';
 
-const REF_NOTE = 'References are accepted exactly as copied: `login-sso`, `mandate://specs/login-sso`, `@mandate:mandate://specs/login-sso@3f2a9c1/sections/auth-flow#L12-L20` (`@sha` reads that version).';
+const REF_NOTE = '';
 
 export const docTools = [
   defineTool({
     name: 'spec_list',
     title: 'List specs',
     kind: 'read',
-    description: `List specs (metadata only, newest change first) with verification rollup and blocked sections.
-Filters: status (${SPEC_STATUSES.join('|')}), category, repo, tags (any), standard (id; direct, section or appliesTo usage), blocked (true/false), verification (verified|failing|stale|unverified|none), q (id/title substring). Paginated: limit (≤200), cursor.
+    description: `List specs (metadata, newest change first) with verification rollup, blocked sections, lastAudit (null = never) and maturity (draft … audited, plus overlays failing | drifted | blocked | stale | archived).
+Filters: status (${SPEC_STATUSES.join('|')}), category, repo, tags (any), standard (id), blocked, verification, audit (never|stale|open_findings|fail|warn|pass), maturity, q (id/title substring). Paginated.
 Example: {"status":["ready"],"blocked":true}`,
     input: specListInputSchema,
     run: (a, ctx) => ctx.reads.specList(a),
@@ -38,8 +38,8 @@ Example: {"status":["ready"],"blocked":true}`,
     name: 'spec_get',
     title: 'Get a spec',
     kind: 'read',
-    description: `Get one spec: frontmatter, sections (id, title, type, summary, file lines, metadata, body), and at HEAD the verification detail, section links and implementation state.
-metadataOnly: outline without bodies. sections: only these section ids. at: a commit (or put @sha in the reference). ${REF_NOTE}
+    description: `Get one spec: frontmatter, sections (with bodies, lines, metadata) and, at HEAD, verification, section links and implementation state.
+metadataOnly: outline only; sections: only these ids; at: a commit. ${REF_NOTE}
 Example: {"ref":"login-sso","metadataOnly":true}`,
     input: specGetInputSchema,
     run: (a, ctx) => ctx.reads.specGet(a),
@@ -48,8 +48,8 @@ Example: {"ref":"login-sso","metadataOnly":true}`,
     name: 'spec_section_get',
     title: 'Get a spec section',
     kind: 'read',
-    description: `Get one spec section (markdown body, type, summary, metadata, file lines). With #Lx-Ly in the reference, also returns that excerpt of the file. ${REF_NOTE}
-Example: {"ref":"mandate://specs/login-sso/sections/auth-flow"} or {"doc":"login-sso","section":"auth-flow","at":"3f2a9c1"}`,
+    description: `Get one spec section (body, type, summary, metadata, lines); #Lx-Ly in the ref also returns that excerpt. ${REF_NOTE}
+Example: {"ref":"mandate://specs/login-sso/sections/auth-flow"}`,
     input: specSectionGetInputSchema,
     run: (a, ctx) => ctx.reads.specSectionGet(a),
   }),
@@ -57,7 +57,7 @@ Example: {"ref":"mandate://specs/login-sso/sections/auth-flow"} or {"doc":"login
     name: 'standard_list',
     title: 'List standards',
     kind: 'read',
-    description: `List standards (metadata, appliesTo rules, number of specs using each). Filters: tags (any), q (id/title substring). Paginated.
+    description: `List standards (metadata, appliesTo rules, number of specs using each, lastAudit: null = never). Filters: tags (any), q (id/title substring). Paginated.
 Example: {"tags":["security"]}`,
     input: standardListInputSchema,
     run: (a, ctx) => ctx.reads.standardList(a),
@@ -66,7 +66,7 @@ Example: {"tags":["security"]}`,
     name: 'standard_get',
     title: 'Get a standard',
     kind: 'read',
-    description: `Get one standard: frontmatter, sections and, at HEAD, its acceptance checklist with per-spec states and section links. Same options as spec_get. ${REF_NOTE}
+    description: `Get one standard: frontmatter, sections and, at HEAD, its acceptance checklist per spec and section links. Options as spec_get. ${REF_NOTE}
 Example: {"ref":"security-baseline","sections":["rules"]}`,
     input: standardGetInputSchema,
     run: (a, ctx) => ctx.reads.standardGet(a),
@@ -84,7 +84,7 @@ Example: {"ref":"mandate://standards/security-baseline/sections/rules"}`,
     name: 'work_order_list',
     title: 'List work orders',
     kind: 'read',
-    description: `List work orders (file order). Filters: status (${WORK_ORDER_STATUSES.join('|')}), kind (${WORK_ORDER_KINDS.join('|')}), spec (id or reference). Paginated.
+    description: `List work orders. Filters: status (${WORK_ORDER_STATUSES.join('|')}), kind (${WORK_ORDER_KINDS.join('|')}), spec (id or ref). Paginated.
 Example: {"status":["pending","in_progress"],"spec":"login-sso"}`,
     input: workOrderListInputSchema,
     run: (a, ctx) => ctx.reads.workOrderList(a),
@@ -93,8 +93,8 @@ Example: {"status":["pending","in_progress"],"spec":"login-sso"}`,
     name: 'work_order_get',
     title: 'Get a work order',
     kind: 'read',
-    description: `Get one work order resolved: the item, its spec, each covered section at specCommit (with headChanged / blocked flags and the latest text when it changed), and the section dependency tree (depth, at).
-Example: {"ref":"mandate://work-orders/wo-01jc..."} or {"ref":"q-0003","depth":2}`,
+    description: `Get one work order resolved: item, spec, each covered section at specCommit (headChanged / blocked flags, latest text if changed) and the section dependency tree (depth, at).
+Example: {"ref":"q-0003","depth":2}`,
     input: workOrderGetInputSchema,
     run: (a, ctx) => ctx.reads.workOrderGet(a),
   }),
@@ -102,7 +102,7 @@ Example: {"ref":"mandate://work-orders/wo-01jc..."} or {"ref":"q-0003","depth":2
     name: 'feedback_list',
     title: 'List feedback',
     kind: 'read',
-    description: `List feedback items with derived changes (commits with a Feedback trailer) and closedAt. Filters: status (${FEEDBACK_STATUSES.join('|')}), kind (${FEEDBACK_KINDS.join('|')}), target (a doc or section reference: items targeting it). Paginated.
+    description: `List feedback items with derived changes (Feedback-trailer commits) and closedAt. Filters: status (${FEEDBACK_STATUSES.join('|')}), kind (${FEEDBACK_KINDS.join('|')}), target (doc or section ref). Paginated.
 Example: {"status":["open"],"target":"mandate://specs/login-sso"}`,
     input: feedbackListInputSchema,
     run: (a, ctx) => ctx.reads.feedbackList(a),
@@ -111,8 +111,8 @@ Example: {"status":["open"],"target":"mandate://specs/login-sso"}`,
     name: 'feedback_get',
     title: 'Get feedback',
     kind: 'read',
-    description: `Get one feedback item with its resolved targets (section text, lines) and derived changes.
-Example: {"ref":"fb-0004"} or {"ref":"mandate://feedback/fb-0004"}`,
+    description: `Get one feedback item with resolved targets (section text, lines) and derived changes.
+Example: {"ref":"fb-0004"}`,
     input: feedbackGetInputSchema,
     run: (a, ctx) => ctx.reads.feedbackGet(a),
   }),
@@ -120,8 +120,8 @@ Example: {"ref":"fb-0004"} or {"ref":"mandate://feedback/fb-0004"}`,
     name: 'verification_list',
     title: 'List verification results',
     kind: 'read',
-    description: `Verification results (verifications.jsonl, newest first) and derived criterion states.
-Filters: criterion (acceptance section reference), spec (id/reference: results applied to it plus the state of each own and inherited criterion), state (verified|failing|stale|unverified|waived: criteria in that state, across all live specs when no spec is given), result (pass|fail|skipped). Paginated.
+    description: `Verification results (newest first) and derived criterion states.
+Filters: criterion (acceptance section ref), spec (its results plus each own and inherited criterion's state), state (verified|failing|stale|unverified|waived; all live specs if no spec), result (pass|fail|skipped). Paginated.
 Example: {"spec":"login-sso","state":["failing","stale"]}`,
     input: verificationListInputSchema,
     run: (a, ctx) => ctx.reads.verificationList(a),
@@ -130,7 +130,7 @@ Example: {"spec":"login-sso","state":["failing","stale"]}`,
     name: 'history_get',
     title: 'Get history',
     kind: 'read',
-    description: `Commit history of a spec, standard, work order or feedback item, newest first (subject, author, agent/branch trailers, change kinds text|metadata|status). A section reference returns only the commits that changed that section, with the action (added|removed|modified|moved) and what changed (title, metadata keys, body).
+    description: `Commit history of a spec, standard, work order or feedback item, newest first (subject, author, trailers, change kinds). A section ref returns only commits changing it, with action and what changed.
 Example: {"ref":"mandate://specs/login-sso","limit":20}`,
     input: historyGetInputSchema,
     run: (a, ctx) => ctx.reads.historyGet(a),
@@ -139,7 +139,7 @@ Example: {"ref":"mandate://specs/login-sso","limit":20}`,
     name: 'diff_get',
     title: 'Diff two versions',
     kind: 'read',
-    description: `Structured diff of a spec or standard between two commits (to defaults to HEAD): frontmatter changes, sections added/removed/modified/moved with word or line ops, per-item changes, stats. A section reference narrows to that section. full: include both parsed documents.
+    description: `Structured diff of a spec or standard between two commits (to defaults to HEAD): frontmatter, sections added / removed / modified / moved with word or line ops, stats. A section ref narrows it; full: include both parsed docs.
 Example: {"ref":"mandate://specs/login-sso","from":"3f2a9c1"}`,
     input: diffGetInputSchema,
     run: (a, ctx) => ctx.reads.diffGet(a),

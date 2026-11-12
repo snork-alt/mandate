@@ -6,7 +6,7 @@ import * as sqliteVec from 'sqlite-vec';
 export type DB = Database.Database;
 
 /** Bump when the schema or the extraction logic changes: the index is rebuilt from scratch. */
-export const SCHEMA_VERSION = 9;
+export const SCHEMA_VERSION = 15; // 15: graph schema v2 (P1-P6: per-rel link kinds, spec_/component_depends_on, uses_standard without applies_to, covers from wo-sections, acts_on / created_by / filed_by / duplicate_finding_of, user nodes, case-folded agents); 14: chunk lines of an empty last section stay inside the file; 13: lineage derivation (L-1 migration / bulk commits, L-6 backlinks, annotations, reason edges)
 
 const DDL = `
 CREATE TABLE IF NOT EXISTS index_state (

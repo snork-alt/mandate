@@ -31,7 +31,7 @@ const edgeKey = (e: { from: string; to: string; kind: string; props?: unknown })
 /** Kinds whose nodes are owned by a file (they appear and disappear); other kinds are created once and kept. */
 const OWNED = ['spec', 'standard', 'section', 'work_order', 'feedback', 'verification'];
 /** Kinds allowed to point at nodes that no longer exist (references into history). */
-const HISTORICAL = new Set<EdgeKind>(['targets', 'covers', 'verifies', 'applied_to', 'changed', 'version_of', 'depends_on', 'links_to', 'uses_standard', 'deviates_from']);
+const HISTORICAL = new Set<EdgeKind>(['targets', 'covers', 'verifies', 'applied_to', 'changed', 'version_of', 'depends_on', 'follows', 'extends', 'supersedes', 'conflicts_with', 'relates_to', 'affects', 'verified_by', 'spec_depends_on', 'component_depends_on', 'uses_standard', 'deviates_from', 'acts_on', 'waived_by', 'filed_by', 'created_by', 'duplicate_finding_of']);
 
 describe('edge integrity', () => {
   it('every edge endpoint resolves, and no edge dangles at HEAD or at any commit', async () => {
@@ -143,7 +143,8 @@ describe('reachability', () => {
     let versions = 0;
     for (const { u } of lives) {
       const chain = rows<{ uri: string; seq: number }>("SELECT uri, point AS seq FROM versions WHERE of_uri = ? ORDER BY abs(point)", u);
-      const changes = rows<{ n: number }>("SELECT COUNT(DISTINCT from_uri) AS n FROM edges WHERE kind = 'changed' AND to_uri = ?", u)[0]!.n;
+      // Legacy work-order lines (work-orders.jsonl, before the migration to documents) have no versions.
+      const changes = rows<{ n: number }>("SELECT COUNT(DISTINCT from_uri) AS n FROM edges WHERE kind = 'changed' AND to_uri = ? AND json_extract(props, '$.legacy') IS NULL", u)[0]!.n;
       expect(chain.length, u).toBe(changes);
       const has = await fx.index.graphNeighbors({ uri: u, direction: 'in', kinds: ['version_of'], limit: 500 });
       expect(new Set(has.nodes.map((n) => n.uri))).toEqual(new Set(chain.map((c) => c.uri)));
@@ -239,7 +240,8 @@ describe('path and impact', () => {
           if (!impactEdge(e) || e.kind !== n!.via) return false;
           const rule = IMPACT.find(([k]) => k === e.kind)!;
           const [src, dst] = rule[1] === 'in' ? [e.to_uri, e.from_uri] : [e.from_uri, e.to_uri];
-          if (dst !== n!.uri) return false;
+          // P4: covers starts at a work-order section; impact reports its work order.
+          if ((e.kind === 'covers' ? dst.split('/sections/')[0] : dst) !== n!.uri) return false;
           const d = depthOf.get(src);
           return d === n!.depth - 1 || src === root || src.startsWith(root) || n!.depth === 1;
         });

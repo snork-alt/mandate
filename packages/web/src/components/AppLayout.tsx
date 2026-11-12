@@ -2,7 +2,7 @@ import { ActionIcon, AppShell, Box, Burger, Group, ScrollArea, Text, Tooltip, Un
 import { useEffect } from 'react';
 import { useDisclosure, useMediaQuery } from '@mantine/hooks';
 import { installCopyHotkeys } from './copy';
-import { IconMoon, IconPlugConnected, IconSearch, IconSun } from '@tabler/icons-react';
+import { IconGitMerge, IconLayoutDashboard, IconMoon, IconPlugConnected, IconSearch, IconSun } from '@tabler/icons-react';
 import { NavLink, Outlet } from 'react-router';
 import { useEntityList } from '../lib/queries';
 import { SECTIONS, type SectionDef } from '../sections';
@@ -16,8 +16,12 @@ import { useLiveQueries } from '../lib/liveQueries';
 import { APP_NAME, Logo } from './Logo';
 import { getCurrentProject } from '../project';
 import { ProjectSwitcher } from '../connect/ProjectSwitcher';
-import { ConnectAgentModal } from '../connect/ConnectAgentModal';
+import { FlowBadge } from './FlowBadge';
+import { AccessBadge } from '../connect/AccessBadge';
+import { useProjects } from '../connect/projects';
+import { ConnectAgentModal, registerConnectAgentOpener } from '../connect/ConnectAgentModal';
 import { UserFooter } from '../connect/UserFooter';
+import { useDecisions } from '../lib/decisions';
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
 
@@ -30,6 +34,19 @@ function NavItem({ section, onClick }: { section: SectionDef; onClick: () => voi
       <span>{label}</span>
       <span className="nav-count">{list.data ? (section.count ? section.count(list.data) : list.data.length) : ''}</span>
     </NavLink>
+  );
+}
+
+/** Open questions from coding agents, on the Overview item (same query as the Overview's decisions card). */
+function QuestionsCount() {
+  const n = useDecisions(50).data?.counts.question ?? 0;
+  if (!n) return <span className="nav-count" />;
+  return (
+    <Tooltip label={`${n} open question${n === 1 ? '' : 's'} from coding agents`} openDelay={300} withinPortal>
+      <span className="nav-count nav-count-alert" data-testid="nav-questions" aria-label={`${n} open question${n === 1 ? '' : 's'}`}>
+        {n}
+      </span>
+    </Tooltip>
   );
 }
 
@@ -54,6 +71,7 @@ function AppLayoutShell() {
   const projectId = getCurrentProject() ?? '';
   const [connectOpened, connect] = useDisclosure();
   useEffect(() => installCopyHotkeys(), []);
+  useEffect(() => registerConnectAgentOpener(connect.open), [connect.open]);
 
   return (
     <AppShell
@@ -84,6 +102,7 @@ function AppLayoutShell() {
               </ActionIcon>
             </Tooltip>
           </Group>
+          <ProjectBadges projectId={projectId} />
           <Box mt={6}>
             <SearchField variant="button" label="Search" keys={[isMac ? '⌘' : 'Ctrl', 'K']} onClick={() => openCommandPalette()} />
           </Box>
@@ -92,9 +111,19 @@ function AppLayoutShell() {
         <AppShell.Section grow component={ScrollArea} mt={4}>
           <div className="section-label">Workspace</div>
           <Box style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+            <NavLink to="/" end onClick={close} className="nav-item" data-testid="nav-overview">
+              <IconLayoutDashboard size={16} stroke={1.7} className="nav-icon" />
+              <span>Overview</span>
+              <QuestionsCount />
+            </NavLink>
             {SECTIONS.map((section) => (
               <NavItem key={section.kind} section={section} onClick={close} />
             ))}
+            <NavLink to="/lineage" onClick={close} className="nav-item" data-testid="nav-lineage">
+              <IconGitMerge size={16} stroke={1.7} className="nav-icon" />
+              <span>Lineage</span>
+              <span className="nav-count" />
+            </NavLink>
           </Box>
         </AppShell.Section>
 
@@ -103,7 +132,7 @@ function AppLayoutShell() {
             <IconPlugConnected size={16} stroke={1.7} className="nav-icon" />
             <span>Connect agent</span>
           </UnstyledButton>
-          <GitStatusControl />
+          <GitStatusControl onNavigate={close} />
           <UserFooter />
         </AppShell.Section>
       </AppShell.Navbar>
@@ -115,5 +144,16 @@ function AppLayoutShell() {
       <CommandPalette />
       <ConnectAgentModal projectId={projectId} opened={connectOpened} onClose={connect.close} />
     </AppShell>
+  );
+}
+
+/** Second header row: what the user may do in this project and whether agents follow the Mandate flow. */
+function ProjectBadges({ projectId }: { projectId: string }) {
+  const access = useProjects().data?.items.find((p) => p.id === projectId)?.access;
+  return (
+    <Group gap={6} wrap="wrap" px={6} mt={2} className="project-badges">
+      {access && <AccessBadge access={access} />}
+      <FlowBadge projectId={projectId} />
+    </Group>
   );
 }

@@ -13,6 +13,7 @@ const DOC_KINDS = [
   ['specs', 'spec'],
   ['standards', 'standard'],
   ['components', 'component'],
+  ['audits', 'audit'],
 ] as const;
 
 export const RESOURCE_TEMPLATES: ResourceTemplate[] = [
@@ -26,6 +27,9 @@ export const RESOURCE_TEMPLATES: ResourceTemplate[] = [
   { uriTemplate: 'mandate://architecture{?focus}', name: 'architecture', title: 'The architecture view (components, depends_on edges, overlays; JSON with a Mermaid flowchart)', mimeType: 'application/json' },
   { uriTemplate: 'mandate://architecture@{sha}{?focus}', name: 'architecture-version', title: 'The architecture view at a commit', mimeType: 'application/json' },
   { uriTemplate: 'mandate://work-orders/{id}', name: 'work-order', title: 'A work order (resolved, JSON)', mimeType: 'application/json' },
+  { uriTemplate: 'mandate://work-orders/{id}/sections/{section}', name: 'work-order-section', title: 'A work-order section: plan, a targeted section (notes, code, deviations), reconciliation, outcome (markdown)', mimeType: 'text/markdown' },
+  { uriTemplate: 'mandate://work-orders/{id}@{sha}', name: 'work-order-version', title: 'A work order document at a commit (markdown)', mimeType: 'text/markdown' },
+  { uriTemplate: 'mandate://comments/{id}', name: 'comment', title: 'A comment thread (JSON)', mimeType: 'application/json' },
   { uriTemplate: 'mandate://feedback/{id}', name: 'feedback', title: 'A feedback item (resolved, JSON)', mimeType: 'application/json' },
   { uriTemplate: 'mandate://{kind}/{name}', name: 'graph-node', title: 'Any other graph node (symbols, code, commits, repos, agents, verifications) as JSON', mimeType: 'application/json' },
 ];
@@ -36,7 +40,7 @@ const MAX_LISTED = 2000;
 export async function listResources(ctx: ToolContext): Promise<Resource[]> {
   const out: Resource[] = [];
   for (const [kind, label] of DOC_KINDS) {
-    const docs = kind === 'specs' ? await ctx.storage.specs.list() : kind === 'standards' ? await ctx.storage.standards.list() : await ctx.storage.components.list();
+    const docs = kind === 'specs' ? await ctx.storage.specs.list() : kind === 'standards' ? await ctx.storage.standards.list() : kind === 'audits' ? await ctx.storage.audits.list() : await ctx.storage.components.list();
     for (const d of docs) {
       out.push({ uri: buildRef({ kind, id: d.id }), name: d.title, title: `${d.title} (${label})`, mimeType: 'text/markdown', ...(d.summary ? { description: d.summary } : {}) });
       for (const s of d.sections) {
@@ -81,16 +85,23 @@ export async function readResource(ctx: ToolContext, rawUri: string): Promise<Re
       return json(uri, await ctx.storage.architecture.get({ ...(at ? { at } : {}), ...(node.focus ? { focus: node.focus } : {}), format: 'mermaid' }));
     }
     const ref = parseRef(uri) ?? (node.kind === 'specs' || node.kind === 'standards' || node.kind === 'work-orders' || node.kind === 'feedback' ? node : null);
-    if (ref && (ref.kind === 'work-orders' || ref.kind === 'feedback')) {
-      return json(uri, ref.kind === 'work-orders' ? await ctx.reads.workOrderGet({ ref: ref.id }) : await ctx.reads.feedbackGet({ ref: ref.id }));
+    if (node.kind === 'comments') {
+      const lines = await ctx.storage.commentService.lines();
+      const c = lines.find((l) => l.id === node.id && 'target' in l) as { target: string } | undefined;
+      if (!c) throw new McpError(-32002, `${uri}: no comment '${node.id}'`);
+      const thread = (await ctx.storage.commentService.threads(c.target)).find((t) => t.id === node.id || t.replies.some((r) => r.id === node.id));
+      return json(uri, thread ?? null);
     }
-    if (ref && (ref.kind === 'specs' || ref.kind === 'standards' || ref.kind === 'components')) {
+    // A work order (plain reference): the resolved JSON; its sections, versions and excerpts: markdown like other documents.
+    if (ref && ref.kind === 'work-orders' && !ref.sectionId && !ref.commit && !ref.lines) return json(uri, await ctx.reads.workOrderGet({ ref: ref.id }));
+    if (ref && ref.kind === 'feedback') return json(uri, await ctx.reads.feedbackGet({ ref: ref.id }));
+    if (ref && (ref.kind === 'specs' || ref.kind === 'standards' || ref.kind === 'components' || ref.kind === 'audits' || ref.kind === 'work-orders')) {
       const commit = ref.commit ? await ctx.reads.commitOf(ref.commit, 'uri') : null;
       const { doc, raw } = await ctx.reads.readDoc(ref.kind, ref.id, commit);
       const docUri = buildRef({ kind: ref.kind, id: ref.id, ...(commit ? { commit } : {}) });
       if (!ref.sectionId && !ref.lines) return md(uri, raw);
       if (ref.sectionId) {
-        const sec = await ctx.reads[ref.kind === 'specs' ? 'specSectionGet' : ref.kind === 'standards' ? 'standardSectionGet' : 'componentSectionGet']({ ref: uri });
+        const sec = await ctx.reads[ref.kind === 'specs' ? 'specSectionGet' : ref.kind === 'standards' ? 'standardSectionGet' : ref.kind === 'audits' ? 'auditSectionGet' : ref.kind === 'work-orders' ? 'workOrderSectionGet' : 'componentSectionGet']({ ref: uri });
         const s = sec.section;
         const meta = s.meta as Record<string, unknown>;
         const head = header({
@@ -107,6 +118,10 @@ export async function readResource(ctx: ToolContext, rawUri: string): Promise<Re
           symbols: meta.symbols,
           refs: (meta.refs as { repo: string; path: string; lines?: string }[] | undefined)?.map((r) => `${r.repo}/${r.path}${r.lines ? `#L${r.lines}` : ''}`),
           links: (meta.links as { to: string; rel: string }[] | undefined)?.map((l) => `${l.rel} ${l.to}`),
+          target: meta.target,
+          sectionStatus: meta.status,
+          codeRefs: (meta.codeRefs as { repo: string; path: string; lines?: string[] }[] | undefined)?.map((r) => `${r.repo}:${r.path}${r.lines?.length ? `#L${r.lines.join(',')}` : ''}`),
+          deviations: meta.deviations,
           ...(sec.excerpt ? { excerpt: `L${sec.excerpt.lines.start}-L${sec.excerpt.lines.end}` } : {}),
         });
         const body = sec.excerpt ? sec.excerpt.text : `## ${s.title}\n\n${s.body ?? ''}`;

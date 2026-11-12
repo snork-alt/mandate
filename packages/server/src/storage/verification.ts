@@ -20,12 +20,13 @@ import {
   type StoredStandard,
   type VerificationRecord,
   type VerificationRollup,
+  userOfTrailers,
 } from '@mandate/shared';
 import type { GitStore } from '../git/GitStore.js';
 import { specCodec, standardCodec } from './codecs.js';
 import type { CommitMeta, WriteContext } from './GitBackedRepository.js';
 import type { HistoryService } from './history.js';
-import { criterionHash, newId } from './ids.js';
+import { criterionHash } from './ids.js';
 import type { JsonlFileRepository } from './JsonlFileRepository.js';
 import type { MarkdownDirRepository } from './MarkdownDirRepository.js';
 import { dependencyState, finder, isCriterion, levelOf, sectionUri, specCriteria, type Kind, type Model } from './model.js';
@@ -117,15 +118,20 @@ export class VerificationService {
     if (!appliedTo) throw new ValidationError('appliedTo (the spec) is required for standard criteria');
     const specCommit = parsed.specCommit ? await this.git.resolveCommit(parsed.specCommit) : await this.git.resolveCommit('HEAD');
     if (!specCommit) throw new ValidationError(parsed.specCommit ? `unknown commit '${parsed.specCommit}'` : 'repository has no commits');
+    // The user is server-set from the commit's trailers (the authenticated principal), never from input.
+    const { byUser: _spoof, ...rest } = parsed as typeof parsed & { byUser?: string };
+    const user = userOfTrailers(meta.trailers);
     const record = verificationRecordSchema.parse({
-      ...parsed,
-      id: parsed.id ?? newId('vr'),
+      ...rest,
+      ...(user ? { byUser: user } : {}),
+      id: parsed.id ?? 'vr-pending',
       appliedTo,
       specCommit,
       at: (meta.date ?? new Date()).toISOString(),
     });
     const { createdAt: _c, updatedAt: _u, ...stored } = record;
-    return this.repo.create(stored as never, { ...meta, message: meta.message ?? `verification: ${record.result} ${record.criterion.replace('mandate://', '')}` });
+    // Sequenced ids (`vr-0001`, ...) are allocated by the repository inside the write lock.
+    return this.repo.create((parsed.id ? stored : { ...stored, id: undefined }) as never, { ...meta, message: meta.message ?? `verification: ${record.result} ${record.criterion.replace('mandate://', '')}` });
   }
 
   /** Storage hook (inside the write lock): the criterion exists (at specCommit too), applies to the spec, spec not archived. */
@@ -134,6 +140,8 @@ export class VerificationService {
     const doc = await this.repoOf(ref.kind as Kind).get(ref.id).catch(() => null);
     const section = doc?.sections.find((s) => s.id === ref.sectionId);
     if (!section || !isCriterion(section)) throw new ValidationError(`${r.criterion} is not an acceptance section`);
+    // MW-7: an archived criterion is no longer in force: nothing to verify.
+    if (section.archived) throw new ValidationError(`${r.criterion} is archived (no longer in force)`);
     const then = await this.docAt(ref.kind as Kind, ref.id, r.specCommit);
     if (!then?.sections.some((s) => s.id === ref.sectionId)) throw new ValidationError(`${r.criterion} does not exist at ${r.specCommit}`);
     const target = parseRef(r.appliedTo);
@@ -141,6 +149,9 @@ export class VerificationService {
     if (ref.kind === 'specs' && target.id !== ref.id) throw new ValidationError(`appliedTo must be ${buildRef({ kind: 'specs', id: ref.id })} for the spec's own criteria`);
     const spec = await this.specs.get(target.id);
     if (spec.status === 'archived') throw new ValidationError(`${spec.id} is archived (read-only)`);
+    // MW-18: the verified code is in a repository the spec names (its repo or a section's code refs), when it names any.
+    const repos = new Set([...(spec.repo ? [spec.repo] : []), ...spec.sections.flatMap((s) => s.refs.map((x) => x.repo))]);
+    if (repos.size && !repos.has(r.code.repo)) throw new ValidationError(`code.repo '${r.code.repo}' is not a repository of ${spec.id} (${[...repos].join(', ')}); add a code ref in that repository to the spec first`);
     if (ref.kind === 'standards') {
       const m = await this.snapshot();
       if (!specCriteria(spec, m).inherited.some((c) => c.uri === r.criterion)) throw new ValidationError(`${r.criterion} does not apply to ${spec.id} (not applicable)`);
@@ -371,10 +382,23 @@ export class VerificationService {
    * trailer of an accepted item. Returns the removed criteria (empty = no shrink).
    */
   async shrunk(next: StoredSpec, current: StoredSpec, m: Model): Promise<string[]> {
-    const before = await this.forSpec(current, [], { ...m, specs: m.specs.map((s) => (s.id === current.id ? current : s)) });
-    const after = await this.forSpec(next, [], { ...m, specs: m.specs.map((s) => (s.id === next.id ? next : s)) });
-    const now = new Set([...after.own, ...after.inherited.flatMap((i) => i.criteria)].map((c) => c.uri));
-    return [...before.own, ...before.inherited.flatMap((i) => i.criteria)].filter((c) => !now.has(c.uri)).map((c) => c.uri);
+    const withSpec = (spec: StoredSpec): Model => ({ ...m, specs: m.specs.map((s) => (s.id === spec.id ? spec : s)) });
+    const after = criteriaUris(next, withSpec(next));
+    let removed = [...criteriaUris(current, withSpec(current))].filter((u) => !after.has(u));
+    if (removed.length) {
+      // DF-6: a scoped rule that drops out only because code refs changed (its scope no longer matches the code) is
+      // not a removed criterion: evaluate the new spec with the old refs and count only what is missing there too.
+      const oldRefs = { ...next, sections: next.sections.map((s) => ({ ...s, refs: current.sections.find((x) => x.id === s.id)?.refs ?? [] })) };
+      const sameCode = criteriaUris(oldRefs, withSpec(oldRefs));
+      removed = removed.filter((u) => !sameCode.has(u));
+    }
+    return removed;
+  }
+
+  /** MW-6: criteria a spec loses when the model changes (e.g. a standard write: archived rule, appliesTo, extends). */
+  shrunkBy(spec: StoredSpec, before: Model, after: Model): string[] {
+    const now = criteriaUris(spec, after);
+    return [...criteriaUris(spec, before)].filter((u) => !now.has(u));
   }
 
   /** Automated checks to run for a spec: inherited rules with a lint / test / script check (for agents and CI). */
@@ -398,6 +422,12 @@ export class VerificationService {
   historyOf(id: string) {
     return this.history.mentioning(id);
   }
+}
+
+/** The criteria in force for a spec: its own live criteria and the inherited ones (URIs). */
+export function criteriaUris(spec: StoredSpec, m: Model): Set<string> {
+  const own = spec.sections.filter((s) => !s.archived && isCriterion(s)).map((s) => sectionUri('specs', spec.id, s.id));
+  return new Set([...own, ...specCriteria(spec, m).inherited.map((c) => c.uri)]);
 }
 
 /** Drift as sentences (MCP `drift` field, tooltips, the Ask agent). */

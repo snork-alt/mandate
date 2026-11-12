@@ -44,7 +44,7 @@ export function uriTarget(uri: string, label = 'section'): CopyTarget {
   return { label, ref: M(uri), link: `${origin()}${sectionHref(uri)}` };
 }
 
-export type DocKind = 'specs' | 'standards' | 'components';
+export type DocKind = 'specs' | 'standards' | 'components' | 'audits' | 'work-orders';
 
 /** Absolute links point into the current project (`/p/<id>/...`). */
 const origin = appOrigin;
@@ -60,7 +60,7 @@ export function docTarget(kind: DocKind | 'work-orders' | 'feedback', id: string
   if (kind === 'work-orders') return workOrderTarget(id);
   if (kind === 'feedback') return { label: 'feedback', ref: refMention({ kind: 'feedback', id }), link: `${origin()}/feedback/${id}` };
   return {
-    label: kind === 'specs' ? 'spec' : kind === 'standards' ? 'standard' : 'component',
+    label: kind === 'specs' ? 'spec' : kind === 'standards' ? 'standard' : kind === 'audits' ? 'audit' : 'component',
     ref: refMention({ kind, id, commit }),
     alt: altRef({ kind, id }, commit, head),
     markdown: async () => (await api.raw(kind, id)) ?? '',

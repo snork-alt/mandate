@@ -1,8 +1,12 @@
 /** MCP tools: listing, a happy path per tool, invalid inputs per tool, structured errors. */
+import { auditTools } from '../../src/mcp/tools/audits.js';
 import http from 'node:http';
 import { writeTools } from '../../src/mcp/tools/write.js';
+import { workOrderDocTools } from '../../src/mcp/tools/work-orders.js';
+import { lineageTools } from '../../src/mcp/tools/lineage.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { TOOLS } from '../../src/mcp/index.js';
+import { questionTools } from '../../src/mcp/tools/questions.js';
+import { AGENT_TOOLS, UI_ONLY_TOOL_NAMES, TOOLS } from '../../src/mcp/index.js';
 import { connect, mcpFixture, type McpFixture } from './fixture.js';
 
 let fx: McpFixture;
@@ -20,7 +24,10 @@ const short = () => fx.older.slice(0, 7);
 
 /** One valid call per tool, with a check of the result shape. */
 /** Write tools have their own suite (write-tools.test.ts: happy paths, error codes, schema checks). */
-const WRITE_SUITE = new Set(writeTools.map((t) => t.name));
+// project_flow_set is a write tool covered by test/mcp/guide.test.ts; upload_url_create by test/mcp/uploads.test.ts.
+// Audit write tools: test/mcp/audits.test.ts. Work-order document and comment write tools: test/mcp/work-orders.test.ts.
+// The flow tools need project settings: covered by test/mcp/flow.test.ts. Questions (and question_get): questions.test.ts.
+const WRITE_SUITE = new Set([...writeTools.map((t) => t.name), 'project_flow_set', 'flow_set', 'flow_policy_set', 'flow_clients_list', 'upload_url_create', 'integrity_snooze', ...auditTools.filter((t) => t.kind === 'write').map((t) => t.name), ...workOrderDocTools.filter((t) => t.kind === 'write').map((t) => t.name), ...lineageTools.filter((t) => t.kind === 'write').map((t) => t.name), ...questionTools.filter((t) => t.kind === 'write' || t.name === 'question_get').map((t) => t.name)]);
 const READ_TOOLS = TOOLS.filter((t) => !WRITE_SUITE.has(t.name));
 const HAPPY: Record<string, { args: () => Record<string, unknown>; check: (b: Record<string, any>) => void }> = {
   // (the security-baseline rule "rotating refresh tokens" competes for the top spot since standards have rule sections)
@@ -49,6 +56,13 @@ const HAPPY: Record<string, { args: () => Record<string, unknown>; check: (b: Re
     check: (b) => expect(JSON.stringify(b)).toContain('security-baseline'),
   },
   graph_impact: { args: () => ({ uri: 'mandate://standards/security-baseline' }), check: (b) => expect(JSON.stringify(b)).toContain('mandate://specs/') },
+  lineage: { args: () => ({ ref: 'mandate://specs/login-sso', depth: 2 }), check: (b) => expect(b.nodes.some((n: any) => n.layer > 0)).toBe(true) },
+  blast_radius: { args: () => ({ ref: 'mandate://standards/security-baseline' }), check: (b) => expect(b.followers.length).toBeGreaterThan(0) },
+  standard_where_used: { args: () => ({ ref: 'mandate://standards/security-baseline' }), check: (b) => expect(b.coverage).toBeTypeOf('object') },
+  code_rules: { args: () => ({ ref: 'mandate://code/app/src/auth/session.ts' }), check: (b) => expect(Array.isArray(b.follows)).toBe(true) },
+  writers_recent: { args: () => ({ limit: 50 }), check: (b) => expect(b.scanned).toBeGreaterThan(0) },
+  contributors: { args: () => ({ refs: ['mandate://specs/login-sso'] }), check: (b) => expect(Array.isArray(b.contributors['mandate://specs/login-sso'])).toBe(true) },
+  users_resolve: { args: () => ({ logins: ['octocat'] }), check: (b) => expect(b.users[0].avatarUrl).toContain('octocat') },
   graph_history: { args: () => ({ uri: 'mandate://specs/login-sso' }), check: (b) => expect(b.events.length).toBeGreaterThan(0) },
   graph_changes: { args: () => ({ from: short(), within: 'mandate://specs/login-sso' }), check: (b) => expect(b).toBeTypeOf('object') },
   graph_evolution: { args: () => ({ uri: 'mandate://specs/login-sso' }), check: (b) => expect(JSON.stringify(b)).toContain('has_section') },
@@ -95,6 +109,8 @@ const HAPPY: Record<string, { args: () => Record<string, unknown>; check: (b: Re
   standard_section_get: { args: () => ({ doc: 'security-baseline', section: 'rules' }), check: (b) => expect(b.section.body.length).toBeGreaterThan(0) },
   work_order_list: { args: () => ({ limit: 5 }), check: (b) => expect(b.items.length).toBeGreaterThan(0) },
   work_order_get: { args: () => ({ ref: `mandate://work-orders/${woId}` }), check: (b) => expect(b.item.id).toBe(woId) },
+  work_order_section_get: { args: () => ({ ref: `mandate://work-orders/${woId}/sections/plan` }), check: (b) => expect(b.section).toMatchObject({ id: 'plan', type: 'markdown' }) },
+  comments_list: { args: () => ({ target: `mandate://work-orders/${woId}` }), check: (b) => expect(b).toMatchObject({ counts: expect.any(Object), threads: expect.any(Array) }) },
   feedback_list: { args: () => ({ status: ['closed'] }), check: (b) => expect(b.items.every((f: any) => f.status === 'closed')).toBe(true) },
   feedback_get: { args: () => ({ ref: fbId }), check: (b) => expect(b.feedback.id).toBe(fbId) },
   verification_list: {
@@ -112,6 +128,7 @@ const HAPPY: Record<string, { args: () => Record<string, unknown>; check: (b: Re
   embedding_jobs_retry: { args: () => ({ contentHashes: ['0000'] }), check: (b) => expect(b).toEqual({ retried: 0 }) },
   git_status: { args: () => ({}), check: (b) => expect(b).toHaveProperty('branch') },
   git_pull: { args: () => ({}), check: (b) => expect(b.pulled).toBe(false) },
+  git_push: { args: () => ({}), check: (b) => expect(['no_remote', 'disabled']).toContain(b.state) },
   activity_list: { args: () => ({ ref: 'mandate://specs/login-sso', limit: 5 }), check: (b) => expect(b.events.length).toBeGreaterThan(0) },
   activity_subscribe: { args: () => ({ types: ['spec.*'] }), check: (b) => expect(b).toMatchObject({ subscribed: true, filter: { types: ['spec.*'] } }) },
   ask: {
@@ -129,24 +146,42 @@ const HAPPY: Record<string, { args: () => Record<string, unknown>; check: (b: Re
   spec_implementation: { args: () => ({ id: 'user-sessions' }), check: (b) => expect(b.sections).toBeTypeOf('object') },
   doc_feedback: { args: () => ({ kind: 'specs', id: 'login-sso' }), check: (b) => expect(b).toMatchObject({ items: expect.any(Array), openBySection: expect.any(Object) }) },
   section_types: { args: () => ({}), check: (b) => expect(b.items.map((t: any) => t.id)).toContain('markdown') },
+  decisions_list: { args: () => ({ limit: 5 }), check: (b) => expect(Array.isArray(b.items)).toBe(true) },
+  decision_access: { args: () => ({}), check: (b) => expect(typeof b.canDecide).toBe('boolean') },
+  project_overview: { args: () => ({ limit: 5 }), check: (b) => expect(b.maturity.total).toBeGreaterThan(0) },
   git_log: { args: () => ({ limit: 3 }), check: (b) => expect(b.items).toHaveLength(3) },
   ask_status: { args: () => ({}), check: (b) => expect(b).toMatchObject({ configured: false, missing: ['provider', 'model'] }) },
+  lifecycle_get: { args: () => ({ kind: 'feedback' }), check: (b) => expect(b.steps.map((s: any) => s.to)).toContain('accepted') },
+  project_info: { args: () => ({}), check: (b) => expect(b.effective).toEqual({ flow: 'on', approval: 'on', questions: 'mandate' }) },
+  questions_list: { args: () => ({ status: 'all', limit: 5 }), check: (b) => expect(b.total).toBeTypeOf('number') },
+  audit_plan: { args: () => ({ target: 'mandate://specs/login-sso' }), check: (b) => expect(b.items.length).toBeGreaterThan(3) },
+  audit_get: { args: () => ({ auditId: 'mandate://audits/2026-11-12-login-sso' }), check: (b) => expect(b.audit.outcome).toBe('fail') },
+  audit_section_get: { args: () => ({ ref: 'mandate://audits/2026-11-12-login-sso/sections/overview' }), check: (b) => expect(b.section.body.length).toBeGreaterThan(20) },
+  audit_list: { args: () => ({ limit: 10 }), check: (b) => expect(b.audits.length).toBeGreaterThanOrEqual(2) },
+  audit_findings: { args: () => ({ status: ['open'] }), check: (b) => expect(b.findings.length).toBeGreaterThan(0) },
+  audit_overview: { args: () => ({}), check: (b) => expect(b.specs['user-sessions']).toMatchObject({ result: 'pass' }) },
+  spec_match: { args: () => ({ request: 'single sign-on login with an identity provider', limit: 3 }), check: (b) => expect(b.candidates.length).toBeGreaterThan(0) },
 };
 
 describe('tools/list', () => {
   it('lists every tool with a description and an object JSON Schema', async () => {
     const { tools } = await fx.client.listTools();
-    expect(tools.map((t) => t.name).sort()).toEqual(TOOLS.map((t) => t.name).sort());
+    // Agent sessions are not served the UI / ops tools (uiOnly, deprecated, web-UI views).
+    expect(tools.map((t) => t.name).sort()).toEqual(AGENT_TOOLS.map((t) => t.name).sort());
+    for (const n of UI_ONLY_TOOL_NAMES) expect(tools.some((t) => t.name === n), n).toBe(false);
+    expect(tools.some((t) => TOOLS.find((x) => x.name === t.name)?.uiOnly)).toBe(false);
+    expect(UI_ONLY_TOOL_NAMES.size).toBe(16);
     for (const t of tools) {
       expect(t.description?.length, t.name).toBeGreaterThan(20);
       expect(t.inputSchema.type, t.name).toBe('object');
       expect(t.annotations?.readOnlyHint !== undefined, t.name).toBe(true);
     }
-    // graph_query embeds the live schema and the example queries.
+    // graph_query embeds the live label / relationship names and one example; graph_schema has the detail.
     const gq = tools.find((t) => t.name === 'graph_query')!;
     expect(gq.description).toContain('Labels: ');
     expect(gq.description).toContain('graph_path');
-    expect(gq.description!.match(/MATCH /g)!.length).toBeGreaterThanOrEqual(5);
+    expect(gq.description).toContain('graph_schema');
+    expect(gq.description).toContain('MATCH (');
   });
 
   it('every tool has a happy-path case', () => {
@@ -155,7 +190,7 @@ describe('tools/list', () => {
 
   it('server info carries the instructions', () => {
     expect(fx.client.getServerVersion()?.name).toBe('mandate');
-    expect(fx.client.getInstructions()).toContain('References are the keys');
+    expect(fx.client.getInstructions()).toContain('Refs are the keys');
   });
 });
 

@@ -74,7 +74,7 @@ afterAll(async () => {
   await cleanupTempDirs();
 });
 
-const SPEC = { id: 'only-in-alpha', title: 'Only in alpha', summary: 'A spec.', sections: [{ id: 'overview', title: 'Overview', summary: 'What.', body: 'Body.' }] };
+const SPEC = { title: 'Only in alpha', summary: 'A spec.', sections: [{ title: 'Overview', summary: 'What.', body: 'Body.' }] };
 
 describe('agent keys', () => {
   it('rejects a missing key, a malformed header and a wrong key with 401 JSON-RPC errors', async () => {
@@ -140,38 +140,38 @@ describe('agent keys', () => {
 });
 
 describe('web UI session (GitHub sign-in cookie)', () => {
-  const cookieHeaders = () => ({ cookie: `${SESSION_COOKIE}=${store.createSession({ login: 'octo', avatarUrl: 'https://x/a.png' })}`, origin: base });
+  const cookieHeaders = async () => ({ cookie: `${SESSION_COOKIE}=${await store.createSession({ login: 'octo', avatarUrl: 'https://x/a.png' })}`, origin: base });
 
   it('reads any project but can never write', async () => {
-    const h = cookieHeaders();
+    const h = await cookieHeaders();
     const c = new Client({ name: 'mandate-web', version: '0' });
     await c.connect(new StreamableHTTPClientTransport(new URL(`${base}/p/beta/mcp`), { requestInit: { headers: h } }));
     clients.push(c);
     expect((await c.callTool({ name: 'doc_list', arguments: { kind: 'specs' } })).isError).toBeFalsy();
-    const w = await c.callTool({ name: 'spec_create', arguments: { ...SPEC, id: 'ui-write' } });
+    const w = await c.callTool({ name: 'spec_create', arguments: { ...SPEC, title: 'UI write' } });
     expect(w.isError).toBe(true);
     expect(w.structuredContent).toMatchObject({ error: { code: 'forbidden' } });
   });
 
   it('requires a same-origin Origin on cookie POSTs (CSRF)', async () => {
-    const { cookie } = cookieHeaders();
+    const { cookie } = await cookieHeaders();
     expect((await raw('/p/alpha/mcp', { cookie })).status).toBe(403);
     expect((await raw('/p/alpha/mcp', { cookie, origin: 'http://evil.example' })).status).toBe(403);
     expect((await raw('/p/alpha/mcp', { cookie, origin: base })).status).toBe(200);
   });
 
   it('rejects forged, expired and logged-out sessions', async () => {
-    const cookie = store.createSession({ login: 'octo', avatarUrl: 'a' });
+    const cookie = await store.createSession({ login: 'octo', avatarUrl: 'a' });
     expect((await raw('/p/alpha/mcp', { cookie: `${SESSION_COOKIE}=${cookie}x`, origin: base })).status).toBe(401);
-    store.deleteSession(cookie);
+    await store.deleteSession(cookie);
     expect((await raw('/p/alpha/mcp', { cookie: `${SESSION_COOKIE}=${cookie}`, origin: base })).status).toBe(401);
-    const old = store.createSession({ login: 'octo', avatarUrl: 'a' }, -1);
+    const old = await store.createSession({ login: 'octo', avatarUrl: 'a' }, -1);
     expect((await raw('/p/alpha/mcp', { cookie: `${SESSION_COOKIE}=${old}`, origin: base })).status).toBe(401);
   });
 
   it('lists every project on the unscoped endpoint; a key sees only its own', async () => {
     const ui = new Client({ name: 'web', version: '0' });
-    await ui.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: cookieHeaders() } }));
+    await ui.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: await cookieHeaders() } }));
     clients.push(ui);
     const all = (await ui.callTool({ name: 'project_list', arguments: {} })).structuredContent as { items: { id: string; counts: { specs: number } }[]; defaultProject: string };
     expect(all.items.map((p) => p.id)).toEqual(['alpha', 'beta']);
@@ -189,7 +189,7 @@ describe('web UI session (GitHub sign-in cookie)', () => {
     const get = (h: Record<string, string>) => fetch(`${base}/ui/p/alpha/connect`, { headers: h });
     expect((await get({ 'x-mandate-ui': '1' })).status).toBe(401);
     expect((await get({ 'x-mandate-ui': '1', authorization: `Bearer ${keyOf('alpha')}` })).status).toBe(403);
-    const { cookie } = cookieHeaders();
+    const { cookie } = await cookieHeaders();
     expect((await get({ cookie })).status).toBe(403);
     const ok = await get({ cookie, 'x-mandate-ui': '1' });
     expect(ok.status).toBe(200);

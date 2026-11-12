@@ -19,6 +19,8 @@ import { deriveCommitEvents } from './derive.js';
 export interface ActivityFilter {
   types?: string[];
   agent?: string;
+  /** Server mode: only events triggered by this user. */
+  user?: string;
   ref?: string;
   includeHeartbeats?: boolean;
 }
@@ -26,6 +28,7 @@ export interface ActivityFilter {
 export function matchesFilter(e: ActivityEvent, f: ActivityFilter): boolean {
   if (f.types && !f.types.some((p) => activityTypeMatches(e.type, p))) return false;
   if (f.agent && e.agent !== f.agent) return false;
+  if (f.user && e.user !== f.user) return false;
   if (f.ref && !activityTouches(e, f.ref)) return false;
   if (f.includeHeartbeats === false && e.heartbeat) return false;
   return true;

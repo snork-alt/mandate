@@ -14,6 +14,8 @@ export const GUTTER = 136;
 /** Group header height (title row above the children). */
 export const GROUP_HEAD = 46;
 const PAD = 26;
+/** Rough width of a group header for its title (13px semibold ≈ 7.6px per char) plus icon, count and toggle. */
+export const groupHeadWidth = (title: string) => Math.min(520, Math.round(110 + title.length * 7.6));
 
 export interface Box {
   x: number;
@@ -155,7 +157,12 @@ export async function layoutArchitecture(g: ArchitectureGraph, collapsed: Readon
     if (!children?.length) return { id: n.id, width: NODE_W, height: NODE_H, layoutOptions: partition };
     return {
       id: n.id,
-      layoutOptions: { ...partition, 'elk.padding': `[top=${GROUP_HEAD + 10},left=16,bottom=16,right=16]`, 'elk.layered.spacing.nodeNodeBetweenLayers': '44', 'elk.spacing.nodeNode': '24' },
+      layoutOptions: {
+        ...partition,
+        // Let the group grow to its title (icon + title + count + toggle) instead of truncating it.
+        'elk.nodeSize.constraints': 'MINIMUM_SIZE',
+        'elk.nodeSize.minimum': `(${groupHeadWidth(n.title)}, ${GROUP_HEAD + 40})`,
+        'elk.padding': `[top=${GROUP_HEAD + 10},left=16,bottom=16,right=16]`, 'elk.layered.spacing.nodeNodeBetweenLayers': '44', 'elk.spacing.nodeNode': '24' },
       children: children.map(elkNode),
     };
   };

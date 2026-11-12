@@ -8,6 +8,8 @@ export interface ActivityFilters {
   agents?: string[];
   /** Any of these event types or type prefixes (`spec`, `work_order.section_done`). */
   types?: string[];
+  /** Any of these users (server mode only; local mode records no users). */
+  users?: string[];
 }
 
 /** Renders the body of one event type (like section renderers); register per type or `prefix.*`. */
@@ -28,6 +30,7 @@ export function filterEvents(events: ActivityEvent[], f: ActivityFilters, docUri
   return events.filter(
     (e) =>
       (!f.agents?.length || (!!e.agent && f.agents.includes(e.agent))) &&
+      (!f.users?.length || (!!e.user && f.users.includes(e.user))) &&
       (!f.types?.length || f.types.some((t) => e.type === t || activityTypeMatches(e.type, t.includes('.') || t === '*' ? t : `${t}.*`))) &&
       (!docUri || activityTouches(e, docUri)),
   );

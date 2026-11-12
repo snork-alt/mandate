@@ -23,6 +23,14 @@ export const ACTIVITY_TYPES = [
   'standard.section.updated',
   'standard.section.moved',
   'standard.section.deleted',
+  'component.created',
+  'component.updated',
+  'component.status_changed',
+  'component.deleted',
+  'component.section.inserted',
+  'component.section.updated',
+  'component.section.moved',
+  'component.section.deleted',
   'work_order.created',
   'work_order.updated',
   'work_order.claimed',
@@ -32,14 +40,31 @@ export const ACTIVITY_TYPES = [
   'work_order.completed',
   'work_order.status_changed',
   'work_order.deleted',
+  'work_order.plan_set',
+  'work_order.touched',
+  'work_order.git_updated',
+  'comment.added',
+  'comment.resolved',
+  'comment.reopened',
+  'question.asked',
+  'question.answered',
+  'question.cancelled',
   'feedback.created',
   'feedback.updated',
   'feedback.closed',
   'feedback.deleted',
   'verification.recorded',
+  'audit.started',
+  'audit.item_recorded',
+  'audit.completed',
+  'audit.abandoned',
+  'audit.finding_resolved',
+  'approval.override',
   'git.pulled',
   'git.pushed',
   'git.push_failed',
+  'project.settings_changed',
+  'integrity.changed',
   'commit',
 ] as const;
 export type ActivityType = (typeof ACTIVITY_TYPES)[number];
@@ -62,6 +87,10 @@ export interface ActivityEvent {
   branch?: string;
   /** Name of the agent key that made the write (`Agent-Key:` trailer); never the key itself. */
   source?: string;
+  /** Server mode: the GitHub user the agent acted as (`Mandate-User:` / legacy `Agent-User:` trailer); never in local mode. */
+  user?: string;
+  /** Recorded causes of the write (`Caused-By:` trailer). */
+  causes?: string[];
   /** The main subject first (doc, section, work order, ...), then related references. */
   refs: string[];
   summary: string;
@@ -75,7 +104,8 @@ export interface ActivityEvent {
     progress?: { done: number; total: number };
     kind?: string;
     resolution?: string;
-    result?: 'pass' | 'fail' | 'skipped';
+    /** Verification (pass | fail | skipped) or audit item result (pass | fail | partial | n_a). */
+    result?: string;
     title?: string;
     sectionTitle?: string;
     fields?: string[];
@@ -112,6 +142,8 @@ export const activityListInputSchema = z
     until: when.optional(),
     types: z.array(typePattern).min(1).max(20).optional(),
     agent: z.string().trim().min(1).max(200).optional(),
+    /** Server mode: events triggered by this user (GitHub login or service:<name>). */
+    user: z.string().trim().min(1).max(200).optional(),
     /** Events touching this reference; a document matches its sections, work orders and feedback on it. */
     ref: refFilter.optional(),
     includeHeartbeats: z.boolean().default(true),
@@ -127,6 +159,7 @@ export const activitySubscribeInputSchema = z
     types: z.array(typePattern).min(1).max(20).optional(),
     ref: refFilter.optional(),
     agent: z.string().trim().min(1).max(200).optional(),
+    user: z.string().trim().min(1).max(200).optional(),
     /** false: stop notifications for this session. */
     enabled: z.boolean().default(true),
   })

@@ -5,9 +5,10 @@
  * and the document is serialized and validated (round trip) before anything is written: never a partial write.
  */
 import { diffDocs, sectionAdvice, type DocFormat, type Section } from '@mandate/doc';
-import { buildRef, parseRef, type SectionCreate, type StoredComponent, type StoredSpec, type StoredStandard } from '@mandate/shared';
+import { buildRef, idFromTitle, parseRef, slugify, type SectionCreate, type StoredComponent, type StoredSpec, type StoredStandard } from '@mandate/shared';
 import { componentCodec, componentFormat, specCodec, specFormat, standardCodec, standardFormat } from './codecs.js';
 import { NotFoundError, type CommitMeta } from './GitBackedRepository.js';
+import { presetIds } from './preset-ids.js';
 import type { Storage } from './index.js';
 
 export type DocKind = 'specs' | 'standards' | 'components';
@@ -41,7 +42,7 @@ export interface WriteOutcome<T> {
   warnings: string[];
 }
 
-const SECTION_PATCH_KEYS = ['title', 'type', 'summary', 'body', 'refs', 'symbols', 'verifiedBy', 'method', 'threshold', 'level', 'rationale', 'scope', 'check', 'examples'] as const;
+const SECTION_PATCH_KEYS = ['title', 'type', 'summary', 'body', 'refs', 'symbols', 'verifiedBy', 'method', 'threshold', 'level', 'rationale', 'scope', 'check', 'examples', 'provenance', 'confidence'] as const;
 
 export class DocWriteService {
   constructor(
@@ -106,17 +107,42 @@ export class DocWriteService {
     return { value, commits };
   }
 
-  private async saveSections(kind: DocKind, doc: Doc, sections: Section[], touched: string[], meta: CommitMeta, message: string): Promise<WriteOutcome<Doc>> {
-    const next = { ...doc, sections } as Doc;
-    const warnings = this.check(kind, next, touched);
-    const { value, commits } = await this.write((m) => this.repo(kind).update(doc.id, { sections } as never, { ...m, message: m.message ?? message }) as Promise<Doc>, meta);
-    return { value, commits, warnings };
+  /**
+   * Read-modify-write of the sections INSIDE the write lock (no lost updates between concurrent section writes):
+   * `edit` gets the current document and returns the new sections plus the touched section ids.
+   */
+  private async editSections(kind: DocKind, ref: string, edit: (doc: Doc, sectionId: string | undefined) => Promise<{ sections: Section[]; touched: string[]; message: string; result?: string }> | { sections: Section[]; touched: string[]; message: string; result?: string }, meta: CommitMeta): Promise<WriteOutcome<Doc> & { result?: string }> {
+    const { id, sectionId } = await this.resolveDoc(kind, ref);
+    let warnings: string[] = [];
+    let result: string | undefined;
+    let msg = '';
+    const { value, commits } = await this.write(
+      (m) =>
+        this.repo(kind).modify(
+          id,
+          async (current) => {
+            const doc = current as Doc;
+            const out = await edit(doc, sectionId);
+            const next = { ...doc, sections: out.sections } as Doc;
+            warnings = this.check(kind, next, out.touched);
+            result = out.result;
+            msg = out.message;
+            return next as never;
+          },
+          { ...m, get message() { return m.message ?? msg; } } as CommitMeta,
+        ) as Promise<Doc>,
+      meta,
+    );
+    return { value, commits, warnings, ...(result ? { result } : {}) };
   }
 
   /* ---------------------------------------------------------------- documents */
 
   async create(kind: DocKind, input: Record<string, unknown> & { sections?: SectionCreate[] }, meta: CommitMeta): Promise<WriteOutcome<Doc>> {
-    const sections = (input.sections ?? []).map((s) => ({ type: 'markdown', body: '', ...s }));
+    const preset = presetIds();
+    let sections = assignSectionIds(input.sections ?? [], new Set()).map((s) => ({ type: 'markdown', body: '', ...s }));
+    if (preset?.sections) sections = sections.map((s, i) => ({ ...s, id: preset.sections![i] ?? s.id }));
+    if (preset?.doc) input = { ...input, id: preset.doc };
     const { value, commits } = await this.write((m) => this.repo(kind).create({ ...input, sections } as never, m) as Promise<Doc>, meta);
     return { value, commits, warnings: this.check(kind, value, value.sections.map((s) => s.id)) };
   }
@@ -153,66 +179,112 @@ export class DocWriteService {
 
   /* ---------------------------------------------------------------- sections */
 
-  async sectionInsert(kind: DocKind, docRef: string, section: SectionCreate, place: Placement, meta: CommitMeta): Promise<WriteOutcome<Doc>> {
-    const { doc } = await this.resolveDoc(kind, docRef);
-    if (doc.sections.some((s) => s.id === section.id)) throw new WriteError('validation', `section '${section.id}' already exists in ${kind}/${doc.id}`, 409, 'pick another id (ids are never reused)');
-    const created = { type: 'markdown', body: '', refs: [], symbols: [], links: [], verifiedBy: [], ...section } as Section;
-    const sections = [...doc.sections];
-    sections.splice(this.index(doc, place, section.id), 0, created);
-    return this.saveSections(kind, doc, sections, [section.id], meta, `${label(kind)}(${doc.id}): insert section ${section.id}`);
+  /** Insert a section; Mandate assigns its id (slug of the title, de-duplicated against current and former ids) inside the lock. */
+  async sectionInsert(kind: DocKind, docRef: string, section: SectionCreate, place: Placement, meta: CommitMeta): Promise<WriteOutcome<Doc> & { sectionId: string }> {
+    const out = await this.editSections(
+      kind,
+      docRef,
+      async (doc) => {
+        const ever = await this.storage.docRules.everSectionIds(kind, doc.id);
+        const taken = new Set([...ever, ...doc.sections.map((s) => s.id)]);
+        let [withId] = assignSectionIds([section], taken);
+        const preset = presetIds()?.section;
+        if (preset) {
+          if (taken.has(preset)) throw new WriteError('id_reused', `section '${preset}' already exists in ${kind}/${doc.id}`, 409);
+          withId = { ...withId!, id: preset };
+        }
+        const sid = (withId as { id: string }).id;
+        const created = { type: 'markdown', body: '', refs: [], symbols: [], links: [], verifiedBy: [], ...withId } as Section;
+        const sections = [...doc.sections];
+        sections.splice(this.index(doc, place, sid), 0, created);
+        return { sections, touched: [sid], message: `${label(kind)}(${doc.id}): insert section ${sid}`, result: sid };
+      },
+      meta,
+    );
+    return { ...out, sectionId: out.result! };
   }
 
   async sectionUpdate(kind: DocKind, ref: string, patch: Partial<Record<(typeof SECTION_PATCH_KEYS)[number], unknown>>, meta: CommitMeta): Promise<WriteOutcome<Doc>> {
-    const { doc, sectionId } = await this.resolveDoc(kind, ref);
-    const current = this.section(kind, doc, sectionId!);
-    if (current.archived) throw new WriteError('validation', `section '${sectionId}' is archived; archived sections are kept as they were`, 409, 'insert a new section instead');
-    const next: Record<string, unknown> = { ...current };
-    for (const k of SECTION_PATCH_KEYS) {
-      if (!(k in patch)) continue;
-      if (patch[k] === null) delete next[k];
-      else next[k] = patch[k];
-    }
-    const sections = doc.sections.map((s) => (s.id === sectionId ? (next as Section) : s));
-    return this.saveSections(kind, doc, sections, [sectionId!], meta, `${label(kind)}(${doc.id}): update section ${sectionId}`);
+    return this.editSections(
+      kind,
+      ref,
+      (doc, sectionId) => {
+        const current = this.section(kind, doc, sectionId!);
+        if (current.archived) throw new WriteError('validation', `section '${sectionId}' is archived; archived sections are kept as they were`, 409, 'insert a new section instead');
+        const next: Record<string, unknown> = { ...current };
+        for (const k of SECTION_PATCH_KEYS) {
+          if (!(k in patch)) continue;
+          if (patch[k] === null) delete next[k];
+          else next[k] = patch[k];
+        }
+        const sections = doc.sections.map((s) => (s.id === sectionId ? (next as Section) : s));
+        return { sections, touched: [sectionId!], message: `${label(kind)}(${doc.id}): update section ${sectionId}` };
+      },
+      meta,
+    );
   }
 
   async sectionMove(kind: DocKind, ref: string, place: Placement, meta: CommitMeta): Promise<WriteOutcome<Doc>> {
-    const { doc, sectionId } = await this.resolveDoc(kind, ref);
-    const s = this.section(kind, doc, sectionId!);
-    if (place.after === sectionId || place.before === sectionId) throw new WriteError('validation', 'a section cannot be moved relative to itself', 400);
-    const rest = doc.sections.filter((x) => x.id !== sectionId);
-    const sections = [...rest];
-    sections.splice(this.index({ ...doc, sections: rest } as Doc, place, sectionId!), 0, s);
-    return this.saveSections(kind, doc, sections, [sectionId!], meta, `${label(kind)}(${doc.id}): move section ${sectionId}`);
+    return this.editSections(
+      kind,
+      ref,
+      (doc, sectionId) => {
+        const s = this.section(kind, doc, sectionId!);
+        if (place.after === sectionId || place.before === sectionId) throw new WriteError('validation', 'a section cannot be moved relative to itself', 400);
+        const rest = doc.sections.filter((x) => x.id !== sectionId);
+        const sections = [...rest];
+        sections.splice(this.index({ ...doc, sections: rest } as Doc, place, sectionId!), 0, s);
+        return { sections, touched: [sectionId!], message: `${label(kind)}(${doc.id}): move section ${sectionId}` };
+      },
+      meta,
+    );
   }
 
   /** Archive (sections are never deleted): kept in the document, no longer in force. */
   async sectionArchive(kind: DocKind, ref: string, meta: CommitMeta, reason?: string): Promise<WriteOutcome<Doc>> {
-    const { doc, sectionId } = await this.resolveDoc(kind, ref);
-    const s = this.section(kind, doc, sectionId!);
-    if (s.archived) throw new WriteError('validation', `section '${sectionId}' is already archived`, 409);
-    const sections = doc.sections.map((x) => (x.id === sectionId ? { ...x, archived: true } : x));
-    return this.saveSections(kind, doc, sections, [], meta, `${label(kind)}(${doc.id}): archive section ${sectionId}${reason ? `\n\n${reason}` : ''}`);
+    return this.editSections(
+      kind,
+      ref,
+      (doc, sectionId) => {
+        const s = this.section(kind, doc, sectionId!);
+        if (s.archived) throw new WriteError('validation', `section '${sectionId}' is already archived`, 409);
+        const sections = doc.sections.map((x) => (x.id === sectionId ? { ...x, archived: true } : x));
+        return { sections, touched: [], message: `${label(kind)}(${doc.id}): archive section ${sectionId}${reason ? `\n\n${reason}` : ''}` };
+      },
+      meta,
+    );
   }
 
   async linkAdd(kind: DocKind, ref: string, link: { to: string; rel: Section['links'][number]['rel']; note?: string; feedback?: string }, meta: CommitMeta): Promise<WriteOutcome<Doc>> {
-    const { doc, sectionId } = await this.resolveDoc(kind, ref);
-    const s = this.section(kind, doc, sectionId!);
     const to = canonicalTarget(link.to);
-    if (s.links.some((l) => l.to === to && l.rel === link.rel)) throw new WriteError('validation', `section '${sectionId}' already has ${link.rel} -> ${to}`, 409);
-    const added = { to, rel: link.rel, ...(link.note ? { note: link.note } : {}), ...(link.feedback ? { feedback: link.feedback } : {}) };
-    const sections = doc.sections.map((x) => (x.id === sectionId ? { ...x, links: [...x.links, added] } : x));
-    return this.saveSections(kind, doc, sections, [sectionId!], meta, `${label(kind)}(${doc.id}): link ${sectionId} ${link.rel} ${to.replace('mandate://', '')}`);
+    return this.editSections(
+      kind,
+      ref,
+      (doc, sectionId) => {
+        const s = this.section(kind, doc, sectionId!);
+        if (s.links.some((l) => l.to === to && l.rel === link.rel)) throw new WriteError('validation', `section '${sectionId}' already has ${link.rel} -> ${to}`, 409);
+        const added = { to, rel: link.rel, ...(link.note ? { note: link.note } : {}), ...(link.feedback ? { feedback: link.feedback } : {}) };
+        const sections = doc.sections.map((x) => (x.id === sectionId ? { ...x, links: [...x.links, added] } : x));
+        return { sections, touched: [sectionId!], message: `${label(kind)}(${doc.id}): link ${sectionId} ${link.rel} ${to.replace('mandate://', '')}` };
+      },
+      meta,
+    );
   }
 
   async linkRemove(kind: DocKind, ref: string, link: { to: string; rel?: string }, meta: CommitMeta): Promise<WriteOutcome<Doc>> {
-    const { doc, sectionId } = await this.resolveDoc(kind, ref);
-    const s = this.section(kind, doc, sectionId!);
     const to = canonicalTarget(link.to);
-    const keep = s.links.filter((l) => !(l.to === to && (!link.rel || l.rel === link.rel)));
-    if (keep.length === s.links.length) throw new WriteError('not_found', `section '${sectionId}' has no ${link.rel ?? ''} link to ${to}`.replace('  ', ' '), 404, `links: ${s.links.map((l) => `${l.rel} ${l.to}`).join(', ') || 'none'}`);
-    const sections = doc.sections.map((x) => (x.id === sectionId ? { ...x, links: keep } : x));
-    return this.saveSections(kind, doc, sections, [sectionId!], meta, `${label(kind)}(${doc.id}): unlink ${sectionId} ${to.replace('mandate://', '')}`);
+    return this.editSections(
+      kind,
+      ref,
+      (doc, sectionId) => {
+        const s = this.section(kind, doc, sectionId!);
+        const keep = s.links.filter((l) => !(l.to === to && (!link.rel || l.rel === link.rel)));
+        if (keep.length === s.links.length) throw new WriteError('not_found', `section '${sectionId}' has no ${link.rel ?? ''} link to ${to}`.replace('  ', ' '), 404, `links: ${s.links.map((l) => `${l.rel} ${l.to}`).join(', ') || 'none'}`);
+        const sections = doc.sections.map((x) => (x.id === sectionId ? { ...x, links: keep } : x));
+        return { sections, touched: [sectionId!], message: `${label(kind)}(${doc.id}): unlink ${sectionId} ${to.replace('mandate://', '')}` };
+      },
+      meta,
+    );
   }
 
   private index(doc: Doc, place: Placement, self: string): number {
@@ -271,6 +343,24 @@ export class DocWriteService {
 }
 
 const label = (kind: DocKind) => SINGULAR[kind];
+
+/**
+ * Section ids for new sections: a slug of the title (max 48 chars), de-duplicated (-2, -3, ...) against `taken` and
+ * each other. `verifiedBy` entries naming a sibling by the slug of its title are mapped to the sibling's assigned id.
+ */
+export function assignSectionIds<S extends { title: string; verifiedBy?: string[] }>(sections: S[], taken: Set<string>): (S & { id: string })[] {
+  const used = new Set(taken);
+  const bySlug = new Map<string, string>();
+  const out = sections.map((s) => {
+    const base = idFromTitle(s.title, 'section');
+    let id = base;
+    for (let i = 2; used.has(id); i++) id = `${base}-${i}`;
+    used.add(id);
+    if (!bySlug.has(slugify(s.title))) bySlug.set(slugify(s.title), id);
+    return { ...s, id };
+  });
+  return out.map((s) => (s.verifiedBy?.length ? { ...s, verifiedBy: s.verifiedBy.map((v) => bySlug.get(v) ?? v) } : s));
+}
 
 /** Link targets are stored canonical (no `@mandate:`, `@sha` or `#L`). */
 export function canonicalTarget(to: string): string {

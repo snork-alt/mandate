@@ -1,9 +1,10 @@
 import { Button, Menu } from '@mantine/core';
 import { IconArrowsSort, IconCheck } from '@tabler/icons-react';
-import type { Priority } from '@mandate/shared';
+import type { Priority, SpecMaturity } from '@mandate/shared';
+import { compareMaturity } from '../lib/maturity';
 import { priorityRank } from '../lib/specs';
 
-export type SortKey = 'updated' | 'created' | 'priority' | 'versions' | 'title' | 'usedBy';
+export type SortKey = 'updated' | 'created' | 'priority' | 'versions' | 'title' | 'usedBy' | 'audited' | 'maturity';
 
 export const SORT_LABEL: Record<SortKey, string> = {
   updated: 'Updated',
@@ -12,6 +13,8 @@ export const SORT_LABEL: Record<SortKey, string> = {
   versions: 'Versions',
   title: 'Title',
   usedBy: 'Used by',
+  audited: 'Last audited',
+  maturity: 'Maturity',
 };
 
 interface Sortable {
@@ -21,6 +24,10 @@ interface Sortable {
   versionCount: number;
   priority?: Priority;
   usedBy?: number;
+  /** Specs: the last completed audit (`audited` sort: never audited first, then oldest first). */
+  lastAudit?: { at: string } | null;
+  /** Specs: derived maturity (`maturity` sort: needs-attention overlays first, then least mature). */
+  maturity?: SpecMaturity;
 }
 
 /** Sort a copy of `items`: dates and counts descending, title ascending, priority urgent first. */
@@ -32,6 +39,8 @@ export function sortItems<T extends Sortable>(items: T[], key: SortKey): T[] {
     versions: (a, b) => b.versionCount - a.versionCount || b.updatedAt.localeCompare(a.updatedAt),
     title: (a, b) => a.title.localeCompare(b.title),
     usedBy: (a, b) => (b.usedBy ?? 0) - (a.usedBy ?? 0) || a.title.localeCompare(b.title),
+    maturity: compareMaturity,
+    audited: (a, b) => (a.lastAudit?.at ?? '').localeCompare(b.lastAudit?.at ?? '') || a.title.localeCompare(b.title),
   };
   return [...items].sort(cmp[key]);
 }

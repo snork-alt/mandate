@@ -1,16 +1,19 @@
 import { parseNodeUri, parseRef } from './refs.js';
+import { auditCodeRefSchema, findingUriSchema, type LastAudit, type SpecAudits, type StandardAudits } from './audits.js';
+import type { SpecMaturity } from './maturity.js';
+import { gitContextSchema, pastClaimSchema, touchedFileSchema, type CommentCounts, type CommentThread, type GitContext, type PastClaim, type TouchedFile } from './work-orders.js';
 import { z } from 'zod';
 import { layerSchema, type LayerInfo } from './layers.js';
-import { idSchema, STORED_SPEC_STATUSES, PRIORITIES, exemptionSchema, appliesToSchema, WORK_ORDER_KINDS, FEEDBACK_KINDS, FEEDBACK_RESOLUTIONS, VERIFICATION_RESULTS, VERIFICATION_METHODS, SPEC_STATUSES, WORK_ORDER_STATUSES, FEEDBACK_STATUSES, CRITERION_STATES, STANDARD_STATUSES } from './base.js';
+import { idSchema, STORED_SPEC_STATUSES, PRIORITIES, exemptionSchema, appliesToSchema, WORK_ORDER_KINDS, FEEDBACK_KINDS, FEEDBACK_RESOLUTIONS, VERIFICATION_RESULTS, VERIFICATION_METHODS, SPEC_STATUSES, WORK_ORDER_STATUSES, FEEDBACK_STATUSES, CRITERION_STATES, STANDARD_STATUSES, COMPONENT_STATUSES } from './base.js';
 // Leaf module (no imports from this file): modules re-exported below can use these at load time without a cycle.
-export { idSchema, STORED_SPEC_STATUSES, PRIORITIES, exemptionSchema, appliesToSchema, WORK_ORDER_KINDS, FEEDBACK_KINDS, FEEDBACK_RESOLUTIONS, VERIFICATION_RESULTS, VERIFICATION_METHODS, SPEC_STATUSES, WORK_ORDER_STATUSES, FEEDBACK_STATUSES, CRITERION_STATES, STANDARD_STATUSES } from './base.js';
+export { idSchema, STORED_SPEC_STATUSES, PRIORITIES, exemptionSchema, appliesToSchema, WORK_ORDER_KINDS, FEEDBACK_KINDS, FEEDBACK_RESOLUTIONS, VERIFICATION_RESULTS, VERIFICATION_METHODS, SPEC_STATUSES, WORK_ORDER_STATUSES, FEEDBACK_STATUSES, CRITERION_STATES, STANDARD_STATUSES, COMPONENT_STATUSES } from './base.js';
 import { parseLinkTarget, sectionSchema, type CodeRef, type Section, type SectionInput, type SectionType } from '@mandate/doc';
 
 /**
  * Entity kinds stored in the git repo: specs and standards as one markdown
- * file per entity (`<kind>/<id>.md`), work orders as a single `work-orders.jsonl` (one JSON object per line).
+ * file per entity (`<kind>/<id>.md`, work orders and audits too), feedback / verifications / comments as JSON Lines.
  */
-export const ENTITY_KINDS = ['specs', 'standards', 'components', 'work-orders', 'feedback'] as const;
+export const ENTITY_KINDS = ['specs', 'standards', 'components', 'work-orders', 'feedback', 'audits'] as const;
 export type EntityKind = (typeof ENTITY_KINDS)[number];
 
 /** Slug used as the file name: `<kind>/<id>.md`. */
@@ -29,6 +32,10 @@ export interface FileMeta {
   versionCount: number;
   /** Latest commit that changed the file (null when uncommitted). */
   lastCommit: string | null;
+  /** Who created the file (first commit): user (server mode only) and coding agent. */
+  createdBy?: import('./lineage.js').Attribution;
+  /** Who made the last change. */
+  lastEditedBy?: import('./lineage.js').Attribution;
 }
 
 /** One commit in a file's history. `Agent:` / `Branch:` commit trailers are surfaced separately. */
@@ -42,6 +49,12 @@ export interface HistoryEntry {
   trailers: Record<string, string>;
   agent?: string;
   branch?: string;
+  /** Server mode: the user who triggered the write (`Mandate-User` / `Agent-User` trailer); never set in local mode. */
+  user?: string;
+  /** Recorded causes of the write (`Caused-By` trailer). */
+  causes?: string[];
+  /** Server mode: co-authors (`Co-authored-by:` logins: contributors of the causes). */
+  coAuthors?: string[];
   /** What the commit changed in the document: section text, the status field, other metadata. */
   changes?: ('text' | 'status' | 'metadata')[];
 }
@@ -77,16 +90,6 @@ export type StoredSpecStatus = (typeof STORED_SPEC_STATUSES)[number];
 /** Reads tolerate the legacy stored `in_progress` (it means `ready` + a claimed work order). */
 export const storedSpecStatusSchema = z.preprocess((v) => (v === 'in_progress' ? 'ready' : v), z.enum(STORED_SPEC_STATUSES));
 
-/**
- * Allowed status transitions (the same status is always allowed). `done` passes the done gate;
- * `done -> ready` reopens a spec (e.g. for an update work order); archived specs only go back to draft.
- */
-export const SPEC_TRANSITIONS: Record<StoredSpecStatus, StoredSpecStatus[]> = {
-  draft: ['ready', 'archived'],
-  ready: ['draft', 'done', 'archived'],
-  done: ['ready', 'archived'],
-  archived: ['draft'],
-};
 
 /** p0 = urgent ... p3 = low. */
 export const prioritySchema = z.enum(PRIORITIES);
@@ -94,7 +97,11 @@ export type Priority = z.infer<typeof prioritySchema>;
 
 const commitish = z.preprocess((v) => (typeof v === 'number' ? String(v) : v), z.string().min(4));
 
-/** Which agent works on a work order, where (present only while the work order is open). */
+/**
+ * Which agent works on a work order, where (present only while the work order is open). `heartbeatAt` is NOT stored in
+ * git: reads fill it from the server's runtime state (the last heartbeat; after a server restart, the claim counts as
+ * fresh until CLAIM_STALE_AFTER_MS since startup).
+ */
 export const claimSchema = z.object({
   agent: z.string().min(1),
   branch: z.string().min(1).optional(),
@@ -170,6 +177,12 @@ export type Spec = Omit<StoredSpec, 'status'> &
     links?: DocLinks;
     /** Sections blocked by section-level depends_on (lists). */
     blockedSections?: string[];
+    /** Last completed audit (null = never audited). */
+    lastAudit?: LastAudit | null;
+    /** Detail: latest audit, history and findings. */
+    audits?: SpecAudits;
+    /** How far the feature really is (derived ladder + overlays; the stored status is unchanged). */
+    maturity?: SpecMaturity;
   } & Partial<SpecDerived>;
 
 /** One criterion involved in a spec's drift: each criterion appears once, with every reason that applies. */
@@ -225,11 +238,6 @@ export interface SectionTypeInfo {
 
 /** Standard lifecycle: drafts never apply; deprecated standards still apply but point at their successor. */
 export type StandardStatus = (typeof STANDARD_STATUSES)[number];
-export const STANDARD_TRANSITIONS: Record<StandardStatus, StandardStatus[]> = {
-  draft: ['active'],
-  active: ['deprecated'],
-  deprecated: ['active'],
-};
 
 /** Standard frontmatter (everything except `sections`). */
 export const standardFrontmatterSchema = z.object({
@@ -255,6 +263,10 @@ export type StoredStandard = z.infer<typeof standardSchema>;
 export type Standard = StoredStandard & FileMeta & {
   /** Checklist + per-spec matrix (GET by id). */
   verification?: StandardVerification;
+  /** Detail: audits of the standard and the compliance view (latest result per rule per spec audited against it). */
+  audits?: StandardAudits;
+  /** Last completed audit of the standard itself (null = never audited). */
+  lastAudit?: LastAudit | null;
   links?: DocLinks;
   /** Number of non-archived specs using this standard (any way). */
   usedBy?: number;
@@ -313,13 +325,6 @@ export function inScope(scope: { paths?: string[]; languages?: string[] } | unde
 
 export const COMPONENT_KINDS = ['service', 'module', 'library', 'datastore', 'external'] as const;
 export type ComponentKind = (typeof COMPONENT_KINDS)[number];
-/** Component lifecycle: active -> deprecated -> archived, active -> archived; archived is final (ids never reused). */
-export const COMPONENT_STATUSES = ['active', 'deprecated', 'archived'] as const;
-export const COMPONENT_TRANSITIONS: Record<(typeof COMPONENT_STATUSES)[number], (typeof COMPONENT_STATUSES)[number][]> = {
-  active: ['deprecated', 'archived'],
-  deprecated: ['active', 'archived'],
-  archived: [],
-};
 
 /** Code a component owns: path globs in one repository. */
 export const ownsSchema = z.object({ repo: z.string().min(1), paths: z.array(z.string().min(1)).min(1) });
@@ -415,6 +420,16 @@ export interface ComponentDerived {
   specStates: { drifted: number; blocked: number; failing: number };
   /** Coverage: owns globs that match no known code ref. */
   emptyGlobs: string[];
+  /** Reference gaps of an active component (the `component_*` integrity warnings), each with a suggested fix. */
+  gaps?: ComponentGap[];
+}
+
+/** A reference gap of an active component: nothing affects it, it follows no standard, or it declares no code. */
+export interface ComponentGap {
+  rule: 'component_unreferenced' | 'component_no_standards' | 'component_no_code';
+  message: string;
+  /** One-line suggested fix. */
+  hint: string;
 }
 export type Component = StoredComponent & FileMeta & Partial<ComponentDerived> & { links?: DocLinks };
 
@@ -615,14 +630,6 @@ export const workOrderStatusSchema = z.enum(WORK_ORDER_STATUSES);
 export type WorkOrderStatus = z.infer<typeof workOrderStatusSchema>;
 /** Statuses of work orders still to be worked on. */
 export const OPEN_WORK_ORDER_STATUSES: WorkOrderStatus[] = ['pending', 'in_progress'];
-/** Allowed explicit status changes (`done` is also derived once every section is finished). */
-export const WORK_ORDER_TRANSITIONS: Record<WorkOrderStatus, WorkOrderStatus[]> = {
-  pending: ['in_progress', 'done', 'failed', 'cancelled'],
-  in_progress: ['pending', 'done', 'failed', 'cancelled'],
-  failed: ['pending', 'in_progress', 'cancelled'],
-  done: [],
-  cancelled: [],
-};
 /** Kinds that change a section (at most one open implement/update work order per spec section). */
 export const CHANGING_WORK_ORDER_KINDS = ['implement', 'update'] as const;
 
@@ -638,8 +645,10 @@ export const workOrderSectionSchema = z.object({
 export type WorkOrderSection = z.infer<typeof workOrderSectionSchema>;
 
 /**
- * A work order on specific sections of one spec, at a given spec version (`specCommit`).
- * Stored as one line of `work-orders.jsonl`.
+ * A work order on specific sections of one spec, at a given spec version (`specCommit`): the flat projection of the
+ * markdown document `work-orders/<id>.md` (see work-orders.ts) that services and lists use. `sections` are the
+ * targeted SPEC section ids with their status. (Before the migration, work orders were lines of `work-orders.jsonl`;
+ * this schema still reads those lines.)
  */
 export const workOrderSchema = z.object({
   id: idSchema,
@@ -653,11 +662,22 @@ export const workOrderSchema = z.object({
   createdBy: z.string().min(1).optional(),
   /** Feedback items this work order acts on (work order -> feedback; backlinks derived). */
   reason: z.array(idSchema).default([]),
+  /** Fix work orders: the audit findings it fixes (`mandate://audits/<id>/findings/<fid>`; backlinks derived). */
+  findings: z.array(findingUriSchema).optional(),
   /** The agent working on it (only while open). */
   claim: claimSchema.optional(),
-  // A single work-orders.jsonl holds every item, so per-item times are stored rather than derived from git.
   createdAt: z.string(),
   updatedAt: z.string(),
+  /* Markdown work orders (optional so legacy jsonl lines still parse). */
+  title: z.string().optional(),
+  fastPath: z.boolean().optional(),
+  dependencies: z.array(idSchema).optional(),
+  claims: z.array(pastClaimSchema).optional(),
+  completedAt: z.string().optional(),
+  touched: z.array(touchedFileSchema).optional(),
+  git: z.array(gitContextSchema).optional(),
+  /** The `plan` section is non-empty. */
+  hasPlan: z.boolean().optional(),
 });
 export type WorkOrder = z.infer<typeof workOrderSchema>;
 
@@ -690,6 +710,21 @@ export interface ResolvedWorkOrder {
   specMovedTo: string | null;
   /** Upstream / downstream dependency graph of the work order (at `dependencies.commit` when given). */
   dependencies?: DependencyTree;
+  /** The markdown document: plan, per-section notes / code / deviations, reconciliation, outcome. */
+  doc?: {
+    plan: string;
+    reconciliation: string;
+    outcome: string;
+    history?: string;
+    /** Per targeted spec section: the work-order section (`mandate://work-orders/<id>/sections/<sid>`). */
+    sections: { id: string; uri: string; target: string; title: string; status: WorkOrderSection['status']; notes: string; verifications: string[]; codeRefs: TouchedFile[]; deviations: string[] }[];
+  };
+  /** Comment threads on the work order and its sections (open ones; resolved ones counted). */
+  comments?: { counts: CommentCounts; threads: CommentThread[] };
+  /** Claim history (current claim excluded), git context and touched code (also on `item`). */
+  claims?: PastClaim[];
+  git?: GitContext[];
+  touched?: TouchedFile[];
 }
 
 /* ---------- Work-order dependency graph (derived from section links) ---------- */
@@ -787,17 +822,26 @@ export const isVerificationTarget = (t: string) => parseNodeUri(t)?.kind === 've
  * A section of a spec or standard (`mandate://specs/<id>/sections/<sid>[#Lx-Ly]`, or standards) or a
  * verification result (`mandate://verifications/<id>`). Whole documents are not targets.
  */
+/** DF-10: an audit item (`mandate://audits/<id>/sections/<sid>`) or finding (`mandate://audits/<id>/findings/<fid>`). */
+export const isAuditTarget = (t: string) => {
+  const r = parseRef(t);
+  return (r?.kind === 'audits' && !!r.sectionId) || parseNodeUri(t)?.kind === 'findings';
+};
 export const feedbackTargetSchema = z
   .string()
   .refine(
-    (t) => (/^mandate:\/\/(specs|standards|components)\//.test(t) && parseRef(t) !== null) || isVerificationTarget(t),
-    'target must be a mandate://specs/..., mandate://standards/... or mandate://verifications/... reference',
+    (t) => (/^mandate:\/\/(specs|standards|components)\//.test(t) && parseRef(t) !== null) || isVerificationTarget(t) || isAuditTarget(t),
+    'target must be a mandate://specs/..., mandate://standards/..., mandate://verifications/... or audit item / finding reference',
   );
-const isSectionTarget = (t: string) => !!parseRef(t)?.sectionId || isVerificationTarget(t);
+const isSectionTarget = (t: string) => !!parseRef(t)?.sectionId || isVerificationTarget(t) || isAuditTarget(t);
 const SECTION_HINT = 'feedback targets sections or verification results: pick the section, e.g. mandate://specs/<id>/sections/<sid>';
 
+/** A feedback item's `relatedTo` entry: a feedback id, or a canonical element reference (`mandate://...`). */
+export const relatedRefSchema = z.union([idSchema, z.string().max(400).refine((v) => !!parseNodeUri(v), 'an element reference (mandate://...)')]);
+
 const feedbackFields = {
-  targets: z.array(feedbackTargetSchema).min(1, 'feedback needs at least one target'),
+  /** Empty only for an intake request (improvement / bug) filed before its sections are known. */
+  targets: z.array(feedbackTargetSchema).default([]),
   quote: z.string().optional(),
   kind: feedbackKindSchema,
   body: z.string().min(1),
@@ -808,16 +852,21 @@ const feedbackFields = {
   resolutionNote: z.string().optional(),
   /** Required when the resolution is `duplicate`. */
   duplicateOf: idSchema.optional(),
-  /** Earlier (e.g. closed) feedback this item follows up on. */
-  relatedTo: z.array(idSchema).default([]),
+  /** Related elements: feedback ids (e.g. a closed item this one follows up on) or element references (DF-7). */
+  relatedTo: z.array(relatedRefSchema).default([]),
   /** Author (server-set from the commit's agent / author; legacy items: derived from history). */
   createdBy: z.string().min(1).optional(),
-};
-/** Allowed status changes; `closed` is final (closed items are immutable). */
-export const FEEDBACK_TRANSITIONS: Record<FeedbackStatus, FeedbackStatus[]> = {
-  open: ['accepted', 'closed'],
-  accepted: ['open', 'closed'],
-  closed: [],
+  /** Server mode: the user who triggered the creation (server-set from the principal; never client input). */
+  createdByUser: z.string().min(1).optional(),
+  /** The audit finding this item was filed from (spec_wrong / ambiguous findings). */
+  fromFinding: findingUriSchema.optional(),
+  /** Who accepted it (server-set principal: the server-mode user, else the agent); legacy items: derived from history. */
+  acceptedBy: z.string().min(1).optional(),
+  /**
+   * Approval override (server-set by feedback_accept with override: true): the acceptance may approve the accepter's
+   * own waivers / exemptions / criteria removals. Only for the sole active user or an admin; recorded and warned on.
+   */
+  approvalOverride: z.object({ by: z.string().min(1), reason: z.string().min(1), at: z.string().min(1) }).optional(),
 };
 
 /** Resolution rules shared by stored items and create inputs. */
@@ -833,6 +882,8 @@ function checkResolution(
   if (f.duplicateOf && f.duplicateOf === f.id) ctx.addIssue({ code: 'custom', path: ['duplicateOf'], message: 'an item cannot duplicate itself' });
   // Whole-document targets are only tolerated on legacy closed (immutable) items.
   const targets = (f as { targets?: string[] }).targets ?? [];
+  const kind = (f as { kind?: string }).kind;
+  if (!targets.length && kind !== 'improvement' && kind !== 'bug') ctx.addIssue({ code: 'custom', path: ['targets'], message: 'feedback needs at least one target (only improvement / bug requests may start without one)' });
   if (f.status !== 'closed') {
     targets.forEach((t, i) => {
       if (!isSectionTarget(t)) ctx.addIssue({ code: 'custom', path: ['targets', i], message: `${t} is a whole document; ${SECTION_HINT}` });
@@ -888,7 +939,7 @@ export const updateFeedbackSchema = z.object({
   resolution: feedbackResolutionSchema.nullable().optional(),
   resolutionNote: z.string().nullable().optional(),
   duplicateOf: idSchema.nullable().optional(),
-  relatedTo: z.array(idSchema).optional(),
+  relatedTo: z.array(relatedRefSchema).optional(),
   body: z.string().min(1).optional(),
   targets: z.array(feedbackTargetSchema.refine(isSectionTarget, SECTION_HINT)).min(1).optional(),
 });
@@ -896,7 +947,7 @@ export type UpdateFeedbackInput = z.input<typeof updateFeedbackSchema>;
 
 export interface ResolvedFeedbackTarget {
   ref: string;
-  kind: 'specs' | 'standards' | 'components' | 'verifications';
+  kind: 'specs' | 'standards' | 'components' | 'verifications' | 'audits' | 'findings';
   id: string;
   title: string | null;
   sectionId?: string;
@@ -978,7 +1029,7 @@ export interface ResolvedLink {
 export interface WaiverState {
   effective: boolean;
   /** Why it does not waive: no feedback, feedback not accepted, same author, criteria changed since approval. */
-  reason?: 'no_feedback' | 'feedback_missing' | 'not_accepted' | 'same_author' | 'stale';
+  reason?: 'no_feedback' | 'feedback_missing' | 'not_accepted' | 'same_author' | 'self_approved' | 'stale';
   feedback?: string;
 }
 
@@ -1043,7 +1094,14 @@ export const verificationRecordSchema = z.object({
       output: z.string().max(20_000).optional(),
     })
     .default({}),
+  /**
+   * Code locations the result applies to (`repo:path#Lx-Ly`): explicit refs that place the criterion / rule in code
+   * (a rule passing there: `applies_at`; failing: `violated_at`).
+   */
+  codeRefs: z.array(auditCodeRefSchema).max(30).optional(),
   by: z.string().min(1),
+  /** Server mode: the user who triggered the write (server-set from the principal; never client input). */
+  byUser: z.string().min(1).optional(),
   at: z.string(),
   createdAt: z.string().optional(),
   updatedAt: z.string().optional(),
@@ -1120,11 +1178,15 @@ export type SectionImplementation = Record<string, { implementedCommit?: string;
 /* ---------- Integrity (repo lint after pulls / merges) ---------- */
 
 export interface IntegrityIssue {
-  /** Rule id, e.g. `depends_on_cycle`, `dangling_link`, `duplicate_open_work_order`, `short_sha`. */
+  /** Rule id, e.g. `depends_on_cycle`, `dangling_link`, `duplicate_open_work_order`, `short_sha` (INTEGRITY_RULES). */
   rule: string;
   /** The element concerned (a mandate:// URI). */
   uri: string;
   message: string;
+  /** `error`: a broken invariant (writes that would introduce one are rejected); `warning`: a gap worth fixing. */
+  severity?: 'error' | 'warning';
+  /** One-line suggested fix. */
+  hint?: string;
 }
 
 export interface IntegrityReport {
@@ -1132,6 +1194,21 @@ export interface IntegrityReport {
   head: string | null;
   at: string;
   issues: IntegrityIssue[];
+}
+
+/** What a write changed in the integrity report (every write tool returns it as `integrity`). */
+export interface IntegrityDelta {
+  /** Issues the write introduced (warnings: fix them now or tell the user why not). */
+  introduced: IntegrityIssue[];
+  /** Issues the write resolved. */
+  resolved: IntegrityIssue[];
+}
+
+/** Counts of a report (the `integrity.changed` activity event, the sidebar). */
+export interface IntegrityCounts {
+  errors: number;
+  warnings: number;
+  total: number;
 }
 
 /* ---------- API inputs ---------- */
@@ -1185,6 +1262,7 @@ export const createWorkOrderSchema = z.object({
   sections: z.array(workOrderSectionSchema).min(1),
   createdBy: z.string().min(1).optional(),
   reason: z.array(idSchema).optional(),
+  findings: z.array(findingUriSchema).optional(),
 });
 export type CreateWorkOrderInput = z.input<typeof createWorkOrderSchema>;
 export const updateWorkOrderSchema = z.object({
@@ -1296,6 +1374,29 @@ export function slugify(input: string): string {
     .slice(0, 80);
 }
 
+/** Longest generated id (documents, sections, projects) before a `-2`, `-3` de-duplication suffix. */
+export const GENERATED_ID_MAX = 48;
+
+/**
+ * A readable id from a title or name: lowercase ascii slug with hyphens, at most GENERATED_ID_MAX chars (cut at a hyphen
+ * when one is close); `fallback` when nothing ascii is left. Ids are assigned by Mandate, never by agents.
+ */
+export function idFromTitle(title: string, fallback: string): string {
+  let s = slugify(title);
+  if (s.length > GENERATED_ID_MAX) {
+    const cut = s.slice(0, GENERATED_ID_MAX);
+    const i = cut.lastIndexOf('-');
+    s = (i >= GENERATED_ID_MAX / 2 ? cut.slice(0, i) : cut).replace(/-+$/, '');
+  }
+  return s || fallback;
+}
+
+/** `base`, else the first free `base-2`, `base-3`, ... (`taken` sees every candidate; call it inside the write lock). */
+export async function uniqueId(base: string, taken: (id: string) => boolean | Promise<boolean>): Promise<string> {
+  if (!(await taken(base))) return base;
+  for (let i = 2; ; i++) if (!(await taken(`${base}-${i}`))) return `${base}-${i}`;
+}
+
 export * from './refs.js';
 export * from './layers.js';
 export * from './search.js';
@@ -1304,3 +1405,11 @@ export * from './read-schemas.js';
 export * from './activity.js';
 export * from './ask.js';
 export * from './write-schemas.js';
+export * from './audits.js';
+export * from './maturity.js';
+export * from './work-orders.js';
+export * from './comments.js';
+export * from './questions.js';
+export * from './lifecycle.js';
+export * from './lineage.js';
+export * from './overview.js';

@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { buildArchitectureRef, createComponentSchema, createSpecSchema, createStandardSchema, ownerOf, parseNodeUri, globSpecificity, nodeKindOf } from '@mandate/shared';
 import { checkLinks } from '@mandate/doc';
 import { coverage, createStorage, deriveComponents, resolveReference } from '../src/storage/index.js';
+import { componentGaps } from '../src/storage/components.js';
+import { COMPONENT_KINDS } from '@mandate/shared';
 import { componentEdges } from '../src/index/rules.js';
 import { cleanupTempDirs, newStore, tempDir } from './helpers.js';
 
@@ -82,7 +84,7 @@ describe('derived states and coverage', () => {
     await comp('db', [sec('schema')], { kind: 'datastore', owns: [{ repo: 'app', paths: ['db/**', 'nothing/**'] }] });
     await comp('auth', [sec('api', { links: [dep(C('db', 'schema'))] })], { owns: [{ repo: 'app', paths: ['src/auth/**'] }] });
     await spec('s', [sec('a', { refs: [{ repo: 'app', path: 'src/auth/oidc.ts' }] }), sec('b', { links: [{ to: C('db'), rel: 'affects' }], refs: [{ repo: 'app', path: 'lib/x.ts' }] })], { status: 'ready' });
-    const w = await storage.workOrderService.create({ spec: 's', kind: 'implement', status: 'pending', sections: [{ id: 'a' }] });
+    const w = await storage.workOrderService.create({ spec: 's', kind: 'implement', status: 'pending', sections: [{ id: 'a' }], plan: 'p' });
     await storage.workOrderService.claim({ id: w.id, agent: 'claude' });
     await storage.feedbackService.create({ targets: [C('db', 'schema')], kind: 'bug', body: 'index missing' });
     // An interface change of db/schema -> "upstream changed" on auth/api.
@@ -100,6 +102,44 @@ describe('derived states and coverage', () => {
     // Work orders and specs see the components they touch.
     const tree = (await storage.workOrderService.resolve(w.id)).dependencies!;
     expect(tree.nodes[0]!.components).toEqual(['auth']);
+  });
+});
+
+describe('component reference gaps (integrity warnings)', () => {
+  it('kind enum includes external and rejects unknown kinds', () => {
+    expect(COMPONENT_KINDS).toContain('external');
+    expect(createComponentSchema.safeParse({ id: 'x', title: 'x', kind: 'external' }).success).toBe(true);
+    expect(createComponentSchema.safeParse({ id: 'x', title: 'x', kind: 'saas' }).success).toBe(false);
+  });
+
+  it('flags unreferenced, no-standards and no-code components; external, indirect code refs, follows links and inactive components pass', async () => {
+    const { storage, comp, spec } = await setup();
+    await storage.standards.create(createStandardSchema.parse({ id: 'sec', title: 'Security', sections: [{ id: 'r', title: 'R', type: 'rule', level: 'must', rationale: 'x', body: 'y' }] }));
+    const follows = { links: [{ to: 'mandate://standards/sec', rel: 'follows' }] };
+    await comp('bare', [sec('a')]); // all three gaps
+    await comp('linked', [sec('a', follows)], { owns: [{ repo: 'app', paths: ['src/linked/**'] }] }); // affects link: no gaps
+    await comp('indirect', [sec('a', follows)], { owns: [{ repo: 'app', paths: ['src/indirect/**'] }] }); // code ref only: no gaps
+    await comp('ext', [sec('a', follows)], { kind: 'external' }); // external without owns: no no_code gap
+    await comp('old', [sec('a')], { status: 'deprecated' }); // not active: skipped
+    await spec('s', [sec('x', { links: [{ to: C('linked'), rel: 'affects' }, { to: C('ext'), rel: 'affects' }], refs: [{ repo: 'app', path: 'src/indirect/a.ts' }] })], { status: 'ready' });
+    const gaps = componentGaps(await storage.model());
+    expect(gaps.get('bare')!.map((g) => g.rule)).toEqual(['component_unreferenced', 'component_no_standards', 'component_no_code']);
+    for (const g of gaps.get('bare')!) expect(g.hint).toContain('mandate://components/bare');
+    expect([...gaps.keys()]).toEqual(['bare']);
+    const issues = (await storage.integrity.run()).issues.filter((i) => i.rule.startsWith('component_'));
+    expect(issues).toHaveLength(3);
+    expect(issues.every((i) => i.severity === 'warning' && i.uri === C('bare') && i.hint)).toBe(true);
+    const d = await deriveComponents(await storage.components.list(), await storage.model());
+    expect(d.bare!.gaps).toHaveLength(3);
+    expect(d.linked!.gaps).toEqual([]);
+  });
+
+  it('an appliesTo standard counts as followed; a non-external component without owns is flagged even when referenced', async () => {
+    const { storage, comp, spec } = await setup();
+    await storage.standards.create(createStandardSchema.parse({ id: 'svc', title: 'Services', appliesTo: ['componentKind:service'], sections: [{ id: 'r', title: 'R', type: 'rule', level: 'must', rationale: 'x', body: 'y' }] }));
+    await comp('api', [sec('a')]);
+    await spec('s', [sec('x', { links: [{ to: C('api'), rel: 'affects' }] })], { status: 'ready' });
+    expect(componentGaps(await storage.model()).get('api')!.map((g) => g.rule)).toEqual(['component_no_code']);
   });
 });
 

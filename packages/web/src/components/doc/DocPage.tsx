@@ -1,7 +1,8 @@
+import { scrollBehavior } from '../../lib/ui';
 import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { useQuoteHighlights, type QuoteMark } from '../../lib/useQuoteHighlights';
-import { Alert, Button, Menu, Skeleton } from '@mantine/core';
-import { IconAlertTriangle, IconListTree } from '@tabler/icons-react';
+import { Button, Menu, Skeleton } from '@mantine/core';
+import { IconListTree } from '@tabler/icons-react';
 import type { CriterionState, DocLinks, HistoryEntry, Section } from '@mandate/shared';
 import { DocLinksContext } from './LinkParts';
 import { DocSourceProvider, useDocSourceValue } from './DocSourceContext';
@@ -19,6 +20,10 @@ import { CopyRef, copyTargetProps } from '../copy';
 import { SelectionCopy } from './SelectionCopy';
 import { DocInfoContext } from './DocInfoContext';
 import { RailDetails } from '../rail/RailDetails';
+import { DocAttribution, type AttributionSource } from '../attribution/Attribution';
+import { LineagePanel } from '../lineage/LineagePanel';
+import { DocContributors } from '../people/People';
+import { buildRef } from '@mandate/shared/refs';
 import { LevelBadge, RuleCard } from '../rules/RuleParts';
 
 export interface DocPageProps {
@@ -63,10 +68,14 @@ export interface DocPageProps {
   versionHref?: (commit: string) => string;
   /** The history entry shown as active (with `versionHref`). */
   activeCommit?: string;
+  /** Who created / last edited the document ("Created by X via Y · date"), shown under the header. */
+  attribution?: AttributionSource;
+  /** Lineage panel reference (default: the document itself; `null` hides the panel). */
+  lineageRef?: string | null;
 }
 
 function scrollToSection(id: string) {
-  document.getElementById(sectionAnchor(id))?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  document.getElementById(sectionAnchor(id))?.scrollIntoView({ behavior: scrollBehavior(), block: 'start' });
   history.replaceState(null, '', `${location.pathname}${location.search}#${sectionAnchor(id)}`);
 }
 
@@ -131,6 +140,7 @@ const NO_TRACKING: TrackedState = {
   view: 'changes',
   setView: () => undefined,
   loading: false,
+  notFound: false,
   select: () => undefined,
   setCompare: () => undefined,
   exit: () => undefined,
@@ -159,6 +169,8 @@ export function DocPage({
   onQuoteClick,
   versionHref,
   activeCommit,
+  attribution,
+  lineageRef,
 }: DocPageProps) {
   const mainRef = useRef<HTMLElement>(null);
   // Deep link to a section that no longer exists at HEAD (only meaningful when viewing an old version).
@@ -206,7 +218,7 @@ export function DocPage({
     tracked.commit ? (tracked.version?.after ?? null) : undefined,
   );
   const target = useMemo(() => docTarget(doc.kind, doc.id, pin, headCommit ?? undefined), [doc.kind, doc.id, pin, headCommit]);
-  const sectionDocKind = doc.kind === 'work-orders' || doc.kind === 'feedback' ? 'specs' : doc.kind;
+  const sectionDocKind = doc.kind === 'feedback' ? 'specs' : doc.kind;
 
   let body: ReactNode;
   if (content && !tracked.commit) {
@@ -259,9 +271,11 @@ export function DocPage({
   } else if (tracked.error) {
     body = (
       <>
-        <Alert color="red" variant="light" icon={<IconAlertTriangle size={16} />} radius="md" mt="lg" title="Could not show this version">
-          {tracked.error.message}. Showing the current document below.
-        </Alert>
+        {/* The banner says what happened in plain words; the technical reason stays one click away. */}
+        <details className="version-details" data-testid="version-error-details">
+          <summary>Details</summary>
+          <pre>{tracked.error.message}</pre>
+        </details>
         {sections.map((s) => (
           <SectionBlock key={s.id} section={s} standardTitles={standardTitles} target={sectionTarget(sectionDocKind, doc.id, s)} />
         ))}
@@ -270,7 +284,22 @@ export function DocPage({
   } else if (!diff) {
     body = <Skeleton height={300} radius="md" mt="lg" />;
   } else {
-    body = diff.sections.map((s) => (
+    const notes = tracked.data?.notes ?? [];
+    body = [
+      notes.length > 0 && (
+        <details key="notes" className="version-details" data-testid="version-notes">
+          <summary>
+            This version has {notes.length} validation {notes.length === 1 ? 'note' : 'notes'}
+          </summary>
+          <p>It was written before some of today's document rules and is shown as it was.</p>
+          <ul>
+            {notes.map((n) => (
+              <li key={n.message}>{n.message}</li>
+            ))}
+          </ul>
+        </details>
+      ),
+      ...diff.sections.map((s) => (
       <TrackedSection
         key={`${s.status}-${s.id}`}
         diff={s}
@@ -279,7 +308,8 @@ export function DocPage({
         target={s.status === 'removed' ? undefined : sectionTarget(sectionDocKind, doc.id, (s.after ?? s.before)!, pin)}
         plain={tracked.view === 'version'}
       />
-    ));
+      )),
+    ];
   }
 
   return (
@@ -299,6 +329,8 @@ export function DocPage({
               <CopyRef target={target} />
             </span>
             {header}
+            {attribution && !tracked.commit && <DocAttribution item={attribution} />}
+            {!tracked.commit && <DocContributors refUri={buildRef({ kind: doc.kind, id: doc.id })} />}
             <OutlineMenu sections={outline} />
           </div>
           {body}
@@ -320,6 +352,11 @@ export function DocPage({
             />
           </PropGroup>
           {panels}
+          {lineageRef !== null && !tracked.commit && (
+            <PropGroup title="Lineage">
+              <LineagePanel refUri={lineageRef ?? buildRef({ kind: doc.kind, id: doc.id })} />
+            </PropGroup>
+          )}
         </RailDetails>
       </div>
     </TrackedFieldsProvider>

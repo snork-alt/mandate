@@ -7,11 +7,14 @@ import { mcpFixture, type McpFixture } from './fixture.js';
 let fx: McpFixture;
 let woId: string;
 let fbId: string;
+let commentId: string;
 
 beforeAll(async () => {
   fx = await mcpFixture();
   woId = (await fx.storage.workOrderService.list())[0]!.id;
   fbId = (await fx.storage.feedback.list())[0]!.id;
+  const open = (await fx.storage.workOrderService.list()).find((w) => w.status === 'pending')!;
+  commentId = (await fx.storage.commentService.add({ target: `mandate://work-orders/${open.id}`, body: 'A question about the plan.' }, { agent: 'reviewer' })).id;
 }, 120_000);
 afterAll(async () => fx?.close());
 
@@ -40,9 +43,10 @@ describe('resources', () => {
       ['specs', 'login-sso', 'auth-flow'],
       ['standards', 'security-baseline', 'rules'],
       ['components', 'auth-service', 'sessions-api'],
+      ['audits', '2026-11-12-login-sso', 'overview'],
     ] as const) {
-      // Components are newer than fx.older: pin them at the commit that last changed the file.
-      const pinned = k === 'components' ? execFileSync('git', ['-C', fx.dir, 'log', '-1', '--format=%H', '--', `components/${id}.md`], { encoding: 'utf8' }).trim() : fx.older;
+      // Components and audits are newer than fx.older: pin them at the commit that last changed the file.
+      const pinned = k === 'components' || k === 'audits' ? execFileSync('git', ['-C', fx.dir, 'log', '-1', '--format=%H', '--', `${k}/${id}.md`], { encoding: 'utf8' }).trim() : fx.older;
       const sha = pinned.slice(0, 7);
       out[`mandate://${k}/{id}`] = { uri: `mandate://${k}/${id}`, check: (c) => expect(c.text).toContain(`<!-- @section ${sid} -->`) };
       out[`mandate://${k}/{id}/sections/{section}`] = {
@@ -72,6 +76,9 @@ describe('resources', () => {
     out['mandate://architecture@{sha}{?focus}'] = { uri: `mandate://architecture@${sha}`, check: (c) => expect(JSON.parse(c.text).commit).toBe(fx.older) };
     out['mandate://work-orders/{id}'] = { uri: `mandate://work-orders/${woId}`, check: (c) => expect(JSON.parse(c.text).item.id).toBe(woId) };
     out['mandate://feedback/{id}'] = { uri: `mandate://feedback/${fbId}`, check: (c) => expect(JSON.parse(c.text).feedback.id).toBe(fbId) };
+    out['mandate://work-orders/{id}/sections/{section}'] = { uri: `mandate://work-orders/${woId}/sections/plan`, check: (c) => expect(c.text).toContain('section: plan') };
+    out['mandate://work-orders/{id}@{sha}'] = { uri: `mandate://work-orders/${woId}@${fx.head}`, check: (c) => expect(c.text).toContain('<!-- @section plan -->') };
+    out['mandate://comments/{id}'] = { uri: `mandate://comments/${commentId}`, check: (c) => expect(JSON.parse(c.text)).toMatchObject({ id: commentId, status: 'open' }) };
     out['mandate://{kind}/{name}'] = { uri: 'mandate://symbols/AuthService.login', check: (c) => expect(JSON.parse(c.text).node.kind).toBe('symbol') };
     return out;
   };

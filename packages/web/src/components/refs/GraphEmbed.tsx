@@ -1,7 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Tooltip } from '@mantine/core';
 import { IconHash } from '@tabler/icons-react';
-import { useQueries, useQuery } from '@tanstack/react-query';
+import { useQueries } from '@tanstack/react-query';
 import { useNavigate } from 'react-router';
 import { mentionOf } from '@mandate/shared';
 import { callTool } from '../../mcp/client';
@@ -9,7 +9,7 @@ import { CanvasViewer } from '../doc/CanvasViewer';
 import { roundedPath, midOf } from '../architecture/layout';
 import { KIND_ICON, fallbackLabel, refHref, refKind } from './kinds';
 import type { RefNode } from './useRefNode';
-import { bestLayout, collapseLeaves, COLLAPSE_ABOVE, edgeKindLabel, mergeEdges, mergeNeighbors, type GraphLayout, type Neighbors, type PlacedEdge, type PlacedNode } from './graphLayout';
+import { bestLayout, collapseLeaves, collapseThreshold, edgeKindLabel, mergeEdges, mergeNeighbors, type Graph, type GraphLayout, type Neighbors, type PlacedEdge, type PlacedNode } from './graphLayout';
 
 /** Kind tints, the same as the Ask context picker (rail.css `.ask-picker-icon`). */
 const KIND_TINT: Record<string, string> = {
@@ -24,12 +24,22 @@ const tint = (k: string) => KIND_TINT[k] ?? 'var(--app-text-muted)';
 /** Edge colours per relation kind (legend); unknown kinds stay neutral. */
 const EDGE_TINT: Record<string, string> = {
   depends_on: 'var(--mantine-color-blue-5)',
+  spec_depends_on: 'var(--mantine-color-blue-3)',
+  component_depends_on: 'var(--mantine-color-blue-3)',
   uses_standard: 'var(--mantine-color-teal-5)',
+  follows: 'var(--mantine-color-teal-7)',
+  deviates_from: 'var(--mantine-color-orange-7)',
   inherits_rule: 'var(--mantine-color-grape-5)',
-  applies_to: 'var(--mantine-color-orange-5)',
   affects: 'var(--mantine-color-pink-5)',
   covers: 'var(--mantine-color-cyan-5)',
   verifies: 'var(--mantine-color-green-5)',
+  extends: 'var(--mantine-color-lime-7)',
+  supersedes: 'var(--mantine-color-lime-7)',
+  relates_to: 'var(--mantine-color-lime-7)',
+  conflicts_with: 'var(--mantine-color-red-6)',
+  acts_on: 'var(--mantine-color-pink-7)',
+  similar_to: 'var(--mantine-color-yellow-5)',
+  in_repo: 'var(--mantine-color-gray-5)',
 };
 const NEUTRAL = 'var(--app-text-faint)';
 const edgeTint = (e: PlacedEdge) => (e.kinds.length === 1 ? (EDGE_TINT[e.kinds[0]!.kind] ?? NEUTRAL) : NEUTRAL);
@@ -84,36 +94,28 @@ export function GraphEmbed({ refs, depth }: { refs: string[]; depth: number }) {
 
   const pending = results.some((r) => r.isPending) || seeds.some((r) => r.isPending);
   const dataKey = [...results, ...seeds].map((r) => r.dataUpdatedAt).join(',');
-  const full = useMemo(() => {
+  const full = useMemo((): Graph | null => {
     if (pending) return null;
     const titles = new Map(refs.map((r, i) => [r.trim().replace(/^@mandate:/, ''), seeds[i]?.data?.label]));
     const m = mergeNeighbors(refs, results.map((r) => r.data), refKind, (u) => titles.get(u) ?? fallbackLabel(u));
     return { nodes: m.nodes, edges: mergeEdges(m.edges) };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pending, dataKey, refs.join('\n')]);
-  const graph = useMemo(() => (full && !showAll ? collapseLeaves(full, expanded) : full), [full, expanded, showAll]);
-  // Round the width so small resizes do not re-run the layout.
-  const avail = Math.max(280, Math.floor((width - 2) / 40) * 40);
-  const layout = useQuery({
-    queryKey: ['graph-embed-layout', refs, depth, dataKey, showAll, [...expanded].sort(), avail],
-    queryFn: () => bestLayout(graph!, avail),
-    enabled: !!graph && width > 0 && graph.nodes.length > 0,
-    staleTime: Infinity,
-    placeholderData: (prev) => prev,
-  });
+  const inline = useGraphLayout(full, expanded, showAll, width);
+  const graph = inline.graph;
+  const layout = inline.layout;
+  const expand = (id: string) => setExpanded((s) => new Set([...s, id]));
+  const toggleAll = () => setShowAll((s) => !s);
 
   const failed = results.find((r) => r.error);
   let body: React.ReactNode;
   if (pending) body = <div className="embed-sub">Loading graph…</div>;
   else if (failed && results.every((r) => r.error)) body = <div className="embed-sub">Graph unavailable: {(failed.error as Error).message}</div>;
   else if (graph && graph.nodes.length <= refs.length && graph.edges.length === 0) body = <div className="embed-sub">No relations found.</div>;
-  else if (layout.error) body = <div className="embed-sub">Layout failed: {(layout.error as Error).message}</div>;
+  else if (layout.error) body = <div className="embed-sub">Layout failed: {layout.error.message}</div>;
   else if (!layout.data) body = <div className="embed-sub">Laying out…</div>;
   else {
     const l = layout.data;
-    const collapsible = !!full && full.nodes.length > COLLAPSE_ABOVE;
-    const toggle = collapsible ? { label: showAll ? 'Group leaves' : `Show all ${full!.nodes.length}`, onClick: () => setShowAll((s) => !s) } : undefined;
-    const expand = (id: string) => setExpanded((s) => new Set([...s, id]));
     body = (
       <CanvasViewer
         title="Graph"
@@ -122,7 +124,13 @@ export function GraphEmbed({ refs, depth }: { refs: string[]; depth: number }) {
         interactive
         reference={() => refs.map((r) => mentionOf(r.trim().replace(/^@mandate:/, ''))).join(' ')}
         maxInlineHeight={460}
-        render={({ fullscreen, exitFullscreen }) => <GraphCanvas layout={l} onExpand={expand} toggle={toggle} onNavigate={fullscreen ? exitFullscreen : undefined} />}
+        render={({ fullscreen, exitFullscreen }) =>
+          fullscreen ? (
+            <FullscreenGraph full={full!} expanded={expanded} showAll={showAll} onExpand={expand} onToggle={toggleAll} onNavigate={exitFullscreen} />
+          ) : (
+            <GraphCanvas layout={l} onExpand={expand} toggle={toggleOf(full!, graph!, showAll, width, toggleAll)} />
+          )
+        }
       />
     );
   }
@@ -131,6 +139,42 @@ export function GraphEmbed({ refs, depth }: { refs: string[]; depth: number }) {
       {body}
     </div>
   );
+}
+
+/** Summary (collapsed) or full graph for a container width, and its ELK layout (async; the previous one stays until ready). */
+function useGraphLayout(full: Graph | null, expanded: ReadonlySet<string>, showAll: boolean, width: number) {
+  // Round the width so small resizes do not re-run the layout.
+  const avail = Math.max(280, Math.floor(((width || 600) - 2) / 40) * 40);
+  const threshold = collapseThreshold(avail);
+  const graph = useMemo(() => (full && !showAll ? collapseLeaves(full, expanded, threshold) : full), [full, expanded, showAll, threshold]);
+  const [layout, setLayout] = useState<{ data?: GraphLayout; error?: Error }>({});
+  useEffect(() => {
+    if (!graph || !graph.nodes.length) return;
+    let live = true;
+    bestLayout(graph, avail).then(
+      (data) => live && setLayout({ data }),
+      (error: Error) => live && setLayout({ error }),
+    );
+    return () => {
+      live = false;
+    };
+  }, [graph, avail]);
+  return { graph, layout };
+}
+
+/** "Show all" / "Summarise" when the graph is big enough to be summarised at this width. */
+function toggleOf(full: Graph, graph: Graph, showAll: boolean, width: number, onClick: () => void) {
+  if (full.nodes.length <= collapseThreshold(width)) return undefined;
+  const hidden = graph.hiddenEdges ?? 0;
+  return { label: showAll ? 'Summarise' : `Show all ${full.nodes.length} nodes${hidden ? ` · ${hidden} more links` : ''}`, onClick };
+}
+
+/** Fullscreen: laid out again for the screen width (roomier, summarised only above the wide threshold). */
+function FullscreenGraph({ full, expanded, showAll, onExpand, onToggle, onNavigate }: { full: Graph; expanded: ReadonlySet<string>; showAll: boolean; onExpand: (id: string) => void; onToggle: () => void; onNavigate: () => void }) {
+  const width = Math.max(600, window.innerWidth - 80);
+  const { graph, layout } = useGraphLayout(full, expanded, showAll, width);
+  if (!layout.data || !graph) return <div className="embed-sub">{layout.error ? `Layout failed: ${layout.error.message}` : 'Laying out…'}</div>;
+  return <GraphCanvas layout={layout.data} onExpand={onExpand} toggle={toggleOf(full, graph, showAll, width, onToggle)} onNavigate={onNavigate} />;
 }
 
 const S = {

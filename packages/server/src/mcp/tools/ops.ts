@@ -19,7 +19,7 @@ export const opsTools = [
     name: 'index_status',
     title: 'Index status',
     kind: 'read',
-    description: `Search index state: HEAD vs indexed commit, counts (docs, sections, chunks, nodes, edges, commits), embedding progress (provider, model, embedded, pending) and the last error. embedding.queue: job counts per status (pending, running, failed), the oldest pending age, whether the provider is paused, the last error and a few failed jobs (content hash + doc / section refs, never the text). Semantic search is partial while vectors are pending.
+    description: `Search index state: HEAD vs indexed commit, counts, embedding progress and queue (job counts, oldest pending, paused, failed jobs), last error. Semantic search is partial while vectors are pending.
 Example: {}`,
     input: indexStatusInputSchema,
     run: (_a, ctx) => needIndex(ctx).status({}),
@@ -28,8 +28,8 @@ Example: {}`,
     name: 'embedding_jobs',
     title: 'Embedding jobs',
     kind: 'read',
-    description: `Embedding jobs of the current model (the queue that turns chunk texts into vectors for semantic search), most urgent first: content hash, status, attempts, next attempt, last error and the docs / sections using the text (never the text). Default status: failed and pending. Failed jobs can be re-armed with embedding_jobs_retry.
-Example: {"status":["failed"],"limit":10}`,
+    description: `Embedding jobs of the current model, most urgent first (hash, status, attempts, next attempt, error, docs using the text). Default status: failed + pending. Retry with embedding_jobs_retry.
+Example: {"status":["failed"]}`,
     input: embeddingJobsInputSchema,
     run: async (a, ctx) => needIndex(ctx).embeddingJobs(a),
   }),
@@ -40,8 +40,8 @@ Example: {"status":["failed"],"limit":10}`,
     kind: 'ops',
     agentOnly: true,
     annotations: { idempotentHint: true },
-    description: `Re-arm failed embedding jobs (all, or the given content hashes from embedding_jobs / index_status) with a fresh attempt budget, and wake the embedding worker. Returns how many were re-armed.
-Example: {} or {"contentHashes":["3f2a..."]}`,
+    description: `Re-arm failed embedding jobs (all, or the given contentHashes) and wake the worker. Returns the count.
+Example: {}`,
     input: embeddingJobsRetryInputSchema,
     run: async (a, ctx) => needIndex(ctx).retryEmbeddingJobs(a),
   }),
@@ -49,7 +49,7 @@ Example: {} or {"contentHashes":["3f2a..."]}`,
     name: 'git_status',
     title: 'Git status',
     kind: 'read',
-    description: `Status of the Mandate repository: branch, HEAD, remote, uncommitted files, the integrity report (repo lint after the last pull or startup) and autoPush (background push: state, ahead / behind, last push time and result, next scheduled push, last error).
+    description: `Mandate repo status: branch, HEAD, remote, uncommitted files, integrity report and autoPush state (ahead / behind, last push, next push, last error).
 Example: {}`,
     input: gitStatusInputSchema,
     run: async (_a, ctx) => ({ ...(await ctx.storage.git.status()), integrity: await ctx.storage.integrity.current(), ...(ctx.autoPush ? { autoPush: await ctx.autoPush.status() } : {}) }),
@@ -60,7 +60,7 @@ Example: {}`,
     // Pushes local commits now (normally automatic, debounced after commits); never force. Not a document write.
     kind: 'ops',
     annotations: { idempotentHint: true, openWorldHint: true },
-    description: `Push this project's local commits to its remote now (normally done automatically a few seconds after commits). Never force-pushes; if the remote moved it integrates like git_pull, then pushes. Returns the autoPush status (state, ahead, behind, lastPushAt, lastError). No-op without a remote.
+    description: `Push local commits now (normally automatic). Never force-pushes; integrates like git_pull if the remote moved. Returns autoPush status; no-op without a remote.
 Example: {}`,
     input: z.object({}).strict(),
     run: async (_a, ctx) => {
@@ -74,7 +74,7 @@ Example: {}`,
     // Fetch + pull only (never push); it changes the local checkout and reaches the remote, so it is not a read.
     kind: 'ops',
     annotations: { idempotentHint: true, openWorldHint: true },
-    description: `Fetch and pull the configured remote (never pushes); the index re-syncs afterwards. No-op without a remote.
+    description: `Fetch and pull the remote (never pushes); the index re-syncs. No-op without a remote.
 Example: {}`,
     input: gitPullInputSchema,
     run: async (_a, ctx): Promise<GitSyncResult> => {
@@ -93,7 +93,7 @@ Example: {}`,
     name: 'ask_status',
     title: 'Ask model status',
     kind: 'read',
-    description: `The models configured for answering in the web UI's Ask panel (\`ask\` block of ~/.mandate/config.json) and the default one: per model its id, label, provider, model, baseUrl, the env var name for the key and whether it is set (never the key), whether it is configured, what is missing (model | apiKey | baseUrl) and why. Without models: missing provider + model. Changes to the config file and ~/.mandate/secrets.env apply without a restart.
+    description: `Configured Ask models (\`ask\` block of ~/.mandate/config.json) and the default: per model id, label, provider, baseUrl, key env var and whether set (never the key), configured, missing fields and why. Config changes apply without restart.
 Example: {}`,
     input: z.object({}).strict(),
     run: async (_a, ctx) => askStatus(liveAskConfig(ctx.ask ?? DEFAULT_ASK_CONFIG)),

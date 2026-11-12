@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
 import { refreshSecrets } from './secrets.js';
+import { DEFAULT_DATABASE_CONFIG, databaseConfigSchema, resolveDatabase, type ResolvedDatabase } from './db/config.js';
 
 /**
  * Credentials for the git remote (resolved from the config file + env, never stored in the file).
@@ -39,9 +40,45 @@ export const embeddingConfigSchema = z
     batchSize: z.number().int().positive().max(2048).default(32),
     documentPrefix: z.string().default('search_document: '),
     queryPrefix: z.string().default('search_query: '),
+    /** Endpoint preset the UI picked (ollama | openai | cheaperinference | custom); informational, optional. */
+    preset: z.enum(['ollama', 'openai', 'cheaperinference', 'custom']).nullable().optional(),
+    /**
+     * Shortened vector size sent as the `dimensions` request parameter (models that support it, e.g. OpenAI
+     * text-embedding-3-*). When set, `dimensions` follows it. Null / unset: the model's full size, no parameter sent.
+     */
+    requestDimensions: z.number().int().min(16).max(8192).nullable().optional(),
   })
   .strict();
 export type EmbeddingConfig = z.infer<typeof embeddingConfigSchema>;
+/** Embedding config with the key read from its env var; `source` (live process only) enables hot reload. */
+export type ResolvedEmbeddingConfig = EmbeddingConfig & { apiKey?: string; source?: string };
+
+/**
+ * `embedding` block + `MANDATE_EMBEDDING_*` env overrides + the key from `apiKeyEnv`. `requestDimensions` wins over
+ * `dimensions` (the vectors come back that size).
+ */
+export function resolveEmbeddingConfig(e: EmbeddingConfig, env: NodeJS.ProcessEnv, configPath: string, source?: string): ResolvedEmbeddingConfig {
+  const intVar = (name: string) => {
+    const v = env[name];
+    if (v === undefined || v === '') return undefined;
+    const n = Number(v);
+    if (!Number.isInteger(n) || n <= 0) throw new ConfigError(configPath, [`env ${name}: expected a positive integer, got "${v}"`]);
+    return n;
+  };
+  const embedding: ResolvedEmbeddingConfig = {
+    ...e,
+    provider: ((env.MANDATE_EMBEDDING_PROVIDER || undefined) as EmbeddingConfig['provider'] | undefined) ?? e.provider,
+    baseUrl: env.MANDATE_EMBEDDING_BASE_URL || e.baseUrl,
+    model: env.MANDATE_EMBEDDING_MODEL || e.model,
+    dimensions: intVar('MANDATE_EMBEDDING_DIMENSIONS') ?? e.requestDimensions ?? e.dimensions,
+    apiKey: env.MANDATE_EMBEDDING_API_KEY || (e.apiKeyEnv ? env[e.apiKeyEnv] || undefined : undefined),
+  };
+  if (!['openai-compatible', 'local', 'none'].includes(embedding.provider)) {
+    throw new ConfigError(configPath, [`env MANDATE_EMBEDDING_PROVIDER: expected openai-compatible | local | none, got "${embedding.provider}"`]);
+  }
+  if (source) Object.defineProperty(embedding, 'source', { value: source, enumerable: false });
+  return embedding;
+}
 
 /**
  * Models for answering questions in the web UI's Ask panel. Keys are read only from the env var `apiKeyEnv` names
@@ -57,7 +94,11 @@ const askLimitFields = {
   /** Input + output tokens across the whole agent loop of one question. */
   tokenBudget: z.number().int().min(2_000).max(2_000_000).optional(),
   maxOutputTokens: z.number().int().min(256).max(64_000).optional(),
+  /** Hard cap (estimated tokens) of every tool result the model reads; bigger results are compacted and cut. */
+  maxToolResultTokens: z.number().int().min(200).max(50_000).optional(),
 };
+/** Per-tool overrides of maxToolResultTokens (tools that legitimately need more, e.g. spec_section_get). */
+const toolResultTokensSchema = z.record(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/, 'a tool name'), z.number().int().min(200).max(50_000)).optional();
 export const ASK_MODEL_ID = /^[A-Za-z0-9_-]{1,64}$/;
 export const askModelConfigSchema = z
   .object({
@@ -91,6 +132,7 @@ export const askConfigSchema = z.preprocess(
       default: z.string().regex(ASK_MODEL_ID).nullable().optional(),
       models: z.array(askModelConfigSchema).max(20).default([]),
       ...askLimitFields,
+      toolResultTokens: toolResultTokensSchema,
     })
     .strict()
     .superRefine((c, ctx) => {
@@ -106,7 +148,9 @@ export const askConfigSchema = z.preprocess(
 export type AskConfig = z.output<typeof askConfigSchema>;
 /** In memory: each model's key (from its env var) and the config file for hot reload; never written or returned. */
 export type ResolvedAskConfig = Omit<AskConfig, 'models'> & { models: (AskModelConfig & { apiKey?: string })[]; source?: string };
-export const ASK_LIMITS = { maxToolCalls: 12, timeoutMs: 120_000, tokenBudget: 300_000, maxOutputTokens: 16_000 } as const;
+export const ASK_LIMITS = { maxToolCalls: 12, timeoutMs: 120_000, tokenBudget: 150_000, maxOutputTokens: 16_000, maxToolResultTokens: 5_000 } as const;
+/** Default per-tool result caps: a section's full text may exceed the general cap. */
+export const ASK_TOOL_RESULT_TOKENS: Readonly<Record<string, number>> = { spec_section_get: 8_000, standard_section_get: 8_000, component_section_get: 8_000 };
 /** Written into config files that have no `ask` block. */
 export const DEFAULT_ASK_BLOCK = { models: [] } as const;
 export const DEFAULT_ASK_CONFIG: AskConfig = { default: null, models: [] };
@@ -156,6 +200,14 @@ export const autoPushSchema = z
   })
   .strict();
 export type AutoPushConfig = z.infer<typeof autoPushSchema>;
+/** Per-project override: only the fields given (no defaults, so the global block still applies). */
+export const autoPushOverrideSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    debounceSeconds: z.number().int().min(1).max(3600).optional(),
+    intervalSeconds: z.number().int().min(30).max(86_400).optional(),
+  })
+  .strict();
 export const DEFAULT_AUTO_PUSH: AutoPushConfig = { enabled: true, debounceSeconds: 10, intervalSeconds: 300 };
 
 /** Project ids: kebab-case slugs (they appear in URLs `/p/<id>/mcp` and in key prefixes `mnd_<id>_...`). */
@@ -168,6 +220,16 @@ const gitAuthSchema = z
     sshPassphraseEnv: envName,
     username: z.string().min(1).nullable().default(null),
     tokenEnv: envName,
+  })
+  .strict();
+
+/** Per-project auth override: only the fields given (no null defaults that would mask the global block). */
+const gitAuthOverrideSchema = z
+  .object({
+    sshKeyPath: z.string().min(1).nullable().optional(),
+    sshPassphraseEnv: envName.unwrap().optional(),
+    username: z.string().min(1).nullable().optional(),
+    tokenEnv: envName.unwrap().optional(),
   })
   .strict();
 
@@ -195,9 +257,9 @@ export const projectConfigSchema = z
       .object({
         remote: z.string().min(1).nullable().optional(),
         branch: z.string().min(1).optional(),
-        auth: gitAuthSchema.partial().strict().optional(),
+        auth: gitAuthOverrideSchema.optional(),
         /** Overrides the top-level `git.autoPush` for this project. */
-        autoPush: autoPushSchema.partial().strict().optional(),
+        autoPush: autoPushOverrideSchema.optional(),
       })
       .strict()
       .optional(),
@@ -250,11 +312,22 @@ export const fileConfigSchema = z
       .object({
         port: z.number().int().positive().max(65535).default(4000),
         host: z.string().min(1).default('127.0.0.1'),
+        /**
+         * `local` (this machine: projects folder, local one-time sign-in, no GitHub) or `server` (remote: GitHub
+         * sign-in with an allow-list, GitHub repos). Unset: `server` when `auth.github` exists (legacy installs), else `local`.
+         */
+        mode: z.enum(['local', 'server']).optional(),
+        /** Address to listen on (alias of `host`, written by the getmandate CLI). */
+        bind: z.string().min(1).optional(),
+        /** Public URL (server mode: `https://mandate.example.com`); default http://localhost:<port>. */
+        publicUrl: z.string().url().optional(),
+        /** Behind a reverse proxy: trust X-Forwarded-Proto / -Host. */
+        trustProxy: z.boolean().default(false),
         /** Extra browser origins allowed for the web UI's cookie session (loopback only; same-origin is always allowed). */
         uiOrigins: z.array(z.string().regex(/^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/, 'a loopback origin like http://localhost:5173')).default([]),
       })
       .strict()
-      .default({ port: 4000, host: '127.0.0.1', uiOrigins: [] }),
+      .default({ port: 4000, host: '127.0.0.1', trustProxy: false, uiOrigins: [] }),
     git: z
       .object({
         /** `embedded` = libgit2 via es-git (default); `cli` = the system `git` binary (>= 2.30). */
@@ -284,6 +357,13 @@ export const fileConfigSchema = z
     index: indexConfigSchema.default(indexConfigSchema.parse({})),
     ask: askConfigSchema.default(DEFAULT_ASK_CONFIG),
     auth: authConfigSchema.default({ sessionTtlHours: 168 }),
+    /** Server state (and, later, the index) backend: SQLite (default) or Postgres (`urlEnv` names the URL's env var). */
+    database: databaseConfigSchema.default(DEFAULT_DATABASE_CONFIG),
+    /** Local mode: the projects folder (each project a git repo in it; pushed with the user's git credentials). */
+    local: z
+      .object({ baseDir: z.string().min(1).default('~/mandate') })
+      .strict()
+      .default({ baseDir: '~/mandate' }),
   })
   .strict();
 export type FileConfig = z.infer<typeof fileConfigSchema>;
@@ -324,9 +404,21 @@ export interface AppConfig {
   keysPath: string;
   /** `~/.mandate` (MANDATE_HOME): session store, session secret. */
   home: string;
+  /** Server-state database (SQLite file or Postgres; the URL is a secret read from the env var `urlEnv` names). */
+  database: ResolvedDatabase;
   /** Sign-in config at startup (the server re-reads the file's `auth` block on change). */
   auth: AuthConfig;
-  /** Problems worth a warning (deprecated fields). */
+  /** Deployment mode (see `server.mode`); `legacyMode`: inferred from an existing `auth.github` without `server.mode`. */
+  mode: 'local' | 'server';
+  legacyMode: boolean;
+  /** Where the UI is reached (`server.publicUrl`, default http://localhost:<port>). */
+  publicUrl: string;
+  trustProxy: boolean;
+  /** Local mode projects folder (absolute). */
+  localBaseDir: string;
+  /** `~/.mandate/projects.json`: the server-owned project registry. */
+  projectsPath: string;
+  /** Notices and warnings for the log (registry migration, deprecated fields). */
   warnings: string[];
   /** The default project's settings, kept for single-project callers (scripts, tests). */
   /** Absolute git working tree. */
@@ -335,7 +427,7 @@ export interface AppConfig {
   remote?: RemoteConfig;
   author: { name: string; email: string };
   git: GitBackendConfig;
-  embedding: EmbeddingConfig & { apiKey?: string };
+  embedding: ResolvedEmbeddingConfig;
   index: IndexConfig;
   /** Keys are held in memory only (from the env var each model's `apiKeyEnv` names), never written or returned. */
   ask: ResolvedAskConfig;
@@ -407,25 +499,15 @@ export function readRawConfig(configPath: string): Record<string, unknown> {
   return json as Record<string, unknown>;
 }
 
-/** Read (or create) the config file and validate it. Throws ConfigError with every problem and the file path. */
+/**
+ * Read and validate the config file. The server never writes config.json (it is user-owned): a missing file means
+ * defaults, and legacy shapes (top-level `dataDir`, `projects`) are only read, to seed projects.json once.
+ */
 export function readConfigFile(configPath: string, env: NodeJS.ProcessEnv = process.env): FileConfig {
-  if (!existsSync(configPath)) {
-    const defaults = defaultFileConfig(env);
-    writeConfigFile(configPath, defaults);
-    return defaults;
-  }
+  if (!existsSync(configPath)) return defaultFileConfig(env);
   let json = readRawConfig(configPath);
-  let changed = false;
-  // Blocks added after the file was created are written in with their defaults (other values untouched).
-  if (!('ask' in json)) {
-    json = { ...json, ask: { ...DEFAULT_ASK_BLOCK } };
-    changed = true;
-  }
   const migrated = migrateLegacyConfig(json);
-  if (migrated) {
-    json = migrated;
-    changed = true;
-  }
+  if (migrated) json = migrated;
   const r = fileConfigSchema.safeParse(json);
   if (!r.success) {
     throw new ConfigError(
@@ -433,18 +515,140 @@ export function readConfigFile(configPath: string, env: NodeJS.ProcessEnv = proc
       r.error.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`),
     );
   }
-  if (!r.data.projects.length) throw new ConfigError(configPath, ['projects: register at least one project (npm run mandate -- project add <id> --dir <path>)']);
-  if (r.data.defaultProject && !r.data.projects.some((p) => p.id === r.data.defaultProject)) {
-    throw new ConfigError(configPath, [`defaultProject: no project '${r.data.defaultProject}'`]);
-  }
-  if (changed) {
-    try {
-      writeConfigFile(configPath, json);
-    } catch {
-      // read-only config: the migration still applies in memory
-    }
-  }
   return r.data;
+}
+
+/* ------------------------------------------------------------------ projects.json (server-owned registry) */
+
+/** One registered project in `~/.mandate/projects.json`. */
+export const projectEntrySchema = z
+  .object({
+    id: projectIdSchema,
+    name: z.string().trim().min(1).max(100),
+    description: z.string().trim().max(500).optional(),
+    dataDir: z.string().min(1),
+    /** GitHub storage (UI-created projects). */
+    github: z
+      .object({
+        owner: z.string().regex(/^[A-Za-z0-9-]{1,39}$/, 'a GitHub owner'),
+        repo: z.string().regex(/^[A-Za-z0-9._-]{1,100}$/, 'a repository name'),
+        branch: z.string().min(1).max(200).optional(),
+        path: z.string().regex(/^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*$/, 'a relative folder like docs/specs').refine((p) => !p.split('/').some((x) => x === '.' || x === '..'), 'no . or .. segments').optional(),
+      })
+      .strict()
+      .optional(),
+    /** GitHub login whose stored token pulls / pushes (GitHub projects). */
+    connectedBy: z.string().regex(/^[A-Za-z0-9-]{1,39}$/).optional(),
+    createdAt: z.string().min(1),
+    /** Coding-agent flow (MCP project_info / project_flow_set; Settings → Agent flow). Absent = both true. */
+    /** Legacy (migrated to flowPolicy / approvalPolicy at startup): `{ enabled, approval }`. */
+    flow: z.object({ enabled: z.boolean(), approval: z.boolean() }).strict().optional(),
+    /** Coding-agent flow policy (admin): required | optional (default; each client chooses) | off (read-only context). */
+    flowPolicy: z.enum(['required', 'optional', 'off']).optional(),
+    /** Approval checkpoint policy (admin): required | optional (default; each client chooses). */
+    approvalPolicy: z.enum(['required', 'optional']).optional(),
+    /** Per-project overrides of the config.json `git` block. */
+    git: z
+      .object({
+        remote: z.string().min(1).nullable().optional(),
+        branch: z.string().min(1).optional(),
+        auth: gitAuthOverrideSchema.optional(),
+        autoPush: autoPushOverrideSchema.optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict()
+  .refine((p) => !p.github || !!p.connectedBy, { message: 'GitHub projects need connectedBy', path: ['connectedBy'] });
+export type ProjectEntry = z.infer<typeof projectEntrySchema>;
+
+export const projectsFileSchema = z
+  .object({
+    version: z.literal(1),
+    projects: z.array(projectEntrySchema).superRefine((ps, c) => {
+      const seen = new Set<string>();
+      ps.forEach((p, i) => {
+        if (seen.has(p.id)) c.addIssue({ code: 'custom', path: [i, 'id'], message: `duplicate project id '${p.id}'` });
+        seen.add(p.id);
+      });
+    }),
+  })
+  .strict();
+export type ProjectsFile = z.infer<typeof projectsFileSchema>;
+
+/** `~/.mandate/projects.json` (`MANDATE_PROJECTS_FILE` overrides). */
+export function projectsPathOf(rawEnv: NodeJS.ProcessEnv = process.env): string {
+  const env = Object.fromEntries(Object.entries(rawEnv).filter(([, v]) => v !== undefined && v !== '')) as NodeJS.ProcessEnv;
+  return path.resolve(expandHome(env.MANDATE_PROJECTS_FILE ?? path.join(mandateHome(env), 'projects.json'), env.HOME ?? os.homedir()));
+}
+
+/** A legacy config.json project (`projects[]` before projects.json) as a registry entry. */
+export function entryFromLegacy(p: ProjectFileConfig, createdAt = new Date().toISOString()): ProjectEntry {
+  const [owner, repo] = p.github ? p.github.repo.split('/') : [];
+  return {
+    id: p.id,
+    name: p.name,
+    ...(p.description ? { description: p.description } : {}),
+    dataDir: p.dataDir,
+    ...(p.github ? { github: { owner: owner!, repo: repo!, ...(p.git?.branch ? { branch: p.git.branch } : {}), ...(p.github.path ? { path: p.github.path } : {}) }, connectedBy: p.github.connectedBy } : {}),
+    createdAt,
+    ...(p.git ? { git: p.git } : {}),
+  };
+}
+
+/** A registry entry in the internal shape the resolver uses. */
+function legacyFromEntry(e: ProjectEntry): ProjectFileConfig {
+  const branch = e.github?.branch ?? e.git?.branch;
+  const git = { ...(e.git ?? {}), ...(branch ? { branch } : {}) };
+  return {
+    id: e.id,
+    name: e.name,
+    ...(e.description ? { description: e.description } : {}),
+    dataDir: e.dataDir,
+    ...(e.github ? { github: { repo: `${e.github.owner}/${e.github.repo}`, ...(e.github.path ? { path: e.github.path } : {}), connectedBy: e.connectedBy! } } : {}),
+    ...(Object.keys(git).length ? { git } : {}),
+  };
+}
+
+export function parseProjectsFile(file: string, text: string): ProjectsFile {
+  let json: unknown;
+  try {
+    json = JSON.parse(text);
+  } catch (e) {
+    throw new ConfigError(file, [`not valid JSON: ${(e as Error).message}`]);
+  }
+  const r = projectsFileSchema.safeParse(json);
+  if (!r.success) throw new ConfigError(file, r.error.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`));
+  return r.data;
+}
+
+/** Atomic write (temp + rename), mode 0600. */
+export function writeProjectsFile(file: string, value: ProjectsFile): void {
+  const checked = projectsFileSchema.parse(value);
+  mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
+  writeFileSync(tmp, `${JSON.stringify(checked, null, 2)}\n`, { mode: 0o600 });
+  renameSync(tmp, file);
+}
+
+/**
+ * The registry: projects.json when it exists (config.json `projects` / `dataDir` are then stale: warning).
+ * Otherwise it is created once from config.json (`projects`, legacy `dataDir`, or the default project); config.json
+ * itself is never edited (a notice says the key can be removed).
+ */
+export function loadProjectsRegistry(projectsPath: string, file: FileConfig, configPath: string, rawJson: Record<string, unknown> | null): { projects: ProjectFileConfig[]; notices: string[] } {
+  const notices: string[] = [];
+  const staleKeys = rawJson ? ['projects', 'dataDir'].filter((k) => k in rawJson) : [];
+  if (existsSync(projectsPath)) {
+    const reg = parseProjectsFile(projectsPath, readFileSync(projectsPath, 'utf8'));
+    if (staleKeys.length) notices.push(`warning: ${configPath} still has ${staleKeys.map((k) => `"${k}"`).join(' and ')}; ${projectsPath} is the project registry and wins (delete the stale key from config.json)`);
+    return { projects: reg.projects.map(legacyFromEntry), notices };
+  }
+  const now = new Date().toISOString();
+  const reg: ProjectsFile = { version: 1, projects: file.projects.map((p) => entryFromLegacy(p, now)) };
+  writeProjectsFile(projectsPath, reg);
+  notices.push(`created ${projectsPath} with ${reg.projects.length} project(s) from ${staleKeys.length ? configPath : 'defaults'}${staleKeys.length ? `; you can delete the ${staleKeys.map((k) => `"${k}"`).join(' / ')} key from config.json (it is no longer read)` : ''}`);
+  return { projects: reg.projects.map(legacyFromEntry), notices };
 }
 
 const intEnv = (v: string | undefined, name: string, configPath: string): number | undefined => {
@@ -465,6 +669,10 @@ export function loadConfig(rawEnv: NodeJS.ProcessEnv = process.env): AppConfig {
   const home = env.HOME ?? os.homedir();
   const configPath = configPathOf(env);
   const file = readConfigFile(configPath, env);
+  const rawJson = existsSync(configPath) ? readRawConfig(configPath) : null;
+  const projectsPath = projectsPathOf(env);
+  const registry = loadProjectsRegistry(projectsPath, file.projects.length ? file : { ...file, projects: defaultFileConfig(env).projects }, configPath, rawJson);
+  if (!registry.projects.length) throw new ConfigError(projectsPath, ['projects: no projects registered (create one in the web UI: New project)']);
   const baseDir = env.INIT_CWD ?? process.cwd();
   const resolvePath = (p: string, base: string) => path.resolve(base, expandHome(p, home));
 
@@ -475,22 +683,12 @@ export function loadConfig(rawEnv: NodeJS.ProcessEnv = process.env): AppConfig {
   const gitBackend: GitBackendConfig = { backend, cliPath: env.MANDATE_GIT_CLI_PATH ?? file.git.cliPath, cliEnv: file.git.cliEnv };
   const author = { name: env.MANDATE_AUTHOR_NAME ?? file.git.author.name, email: env.MANDATE_AUTHOR_EMAIL ?? file.git.author.email };
 
-  const e = file.embedding;
-  const embedding = {
-    ...e,
-    provider: (env.MANDATE_EMBEDDING_PROVIDER as EmbeddingConfig['provider'] | undefined) ?? e.provider,
-    baseUrl: env.MANDATE_EMBEDDING_BASE_URL ?? e.baseUrl,
-    model: env.MANDATE_EMBEDDING_MODEL ?? e.model,
-    dimensions: intEnv(env.MANDATE_EMBEDDING_DIMENSIONS, 'MANDATE_EMBEDDING_DIMENSIONS', configPath) ?? e.dimensions,
-    apiKey: env.MANDATE_EMBEDDING_API_KEY ?? (e.apiKeyEnv ? env[e.apiKeyEnv] : undefined),
-  };
-  if (!['openai-compatible', 'local', 'none'].includes(embedding.provider)) {
-    throw new ConfigError(configPath, [`env MANDATE_EMBEDDING_PROVIDER: expected openai-compatible | local | none, got "${embedding.provider}"`]);
-  }
+  const embedding = resolveEmbeddingConfig(file.embedding, env, configPath, rawEnv === process.env ? configPath : undefined);
 
-  const defaultProject = file.defaultProject ?? file.projects[0]!.id;
+  const port = intEnv(env.MANDATE_PORT ?? env.PORT, 'MANDATE_PORT', configPath) ?? file.server.port;
+  const defaultProject = file.defaultProject && registry.projects.some((p) => p.id === file.defaultProject) ? file.defaultProject : registry.projects[0]!.id;
   const indexTemplate = env.MANDATE_INDEX_PATH ?? file.index.path;
-  const projects = file.projects.map((p): ProjectConfig => {
+  const projects = registry.projects.map((p): ProjectConfig => {
     const isDefault = p.id === defaultProject;
     const dataDir = isDefault && env.MANDATE_DATA_DIR ? resolvePath(env.MANDATE_DATA_DIR, baseDir) : resolvePath(p.dataDir, path.dirname(configPath));
     const branch = (isDefault ? env.MANDATE_BRANCH : undefined) ?? p.git?.branch ?? file.git.branch;
@@ -540,15 +738,22 @@ export function loadConfig(rawEnv: NodeJS.ProcessEnv = process.env): AppConfig {
 
   return {
     configPath,
-    port: intEnv(env.MANDATE_PORT ?? env.PORT, 'MANDATE_PORT', configPath) ?? file.server.port,
-    host: env.MANDATE_HOST ?? file.server.host,
+    port,
+    host: env.MANDATE_HOST ?? file.server.bind ?? file.server.host,
+    mode: file.server.mode ?? (file.auth.github ? 'server' : 'local'),
+    legacyMode: !file.server.mode && !!file.auth.github,
+    publicUrl: (file.server.publicUrl ?? `http://localhost:${port}`).replace(/\/+$/, ''),
+    trustProxy: file.server.trustProxy,
+    localBaseDir: resolvePath(file.local.baseDir, home),
     uiOrigins: file.server.uiOrigins,
     projects,
     defaultProject,
     keysPath: path.resolve(expandHome(env.MANDATE_KEYS_FILE ?? path.join(mandateHome(env), 'keys.json'), home)),
     home: mandateHome(env),
+    database: resolveDatabaseOrThrow(file.database, env, configPath),
     auth: file.auth,
-    warnings: file.auth.required !== undefined ? ['auth.required is deprecated and ignored: sign-in is always on (GitHub for the web UI, keys for agents)'] : [],
+    projectsPath,
+    warnings: [...registry.notices, ...(file.auth.required !== undefined ? ['auth.required is deprecated and ignored: sign-in is always on (GitHub for the web UI, keys for agents)'] : [])],
     dataDir: def.dataDir,
     branch: def.branch,
     remote: def.remote,
@@ -558,6 +763,14 @@ export function loadConfig(rawEnv: NodeJS.ProcessEnv = process.env): AppConfig {
     ask: resolveAskConfig(file.ask, env, rawEnv === process.env ? configPath : undefined),
     index: def.index,
   };
+}
+
+function resolveDatabaseOrThrow(d: FileConfig['database'], env: NodeJS.ProcessEnv, configPath: string): ResolvedDatabase {
+  try {
+    return resolveDatabase(d, env, mandateHome(env));
+  } catch (e) {
+    throw new ConfigError(configPath, [`database: ${(e as Error).message}`]);
+  }
 }
 
 /** The config file path (`MANDATE_CONFIG`, default `~/.mandate/config.json`). */

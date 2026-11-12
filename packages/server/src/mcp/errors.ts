@@ -1,5 +1,6 @@
 /** Structured tool errors: every failure becomes `{ code, message, path, hint }` (an MCP tool error, `isError: true`). */
 import { ZodError } from 'zod';
+import { ERROR_ACTIONS } from '@mandate/shared';
 import { CypherError } from '../index/cypher/index.js';
 import { GraphError } from '../index/resolve.js';
 import { ReadError } from '../storage/read.js';
@@ -52,6 +53,12 @@ function zodError(e: ZodError, allowed?: string[]): ToolErrorBody {
     }
     return { path, message, code: i.code };
   });
+  // Ids are assigned by Mandate: a create given an id gets a clear message, not just "unknown key".
+  const idIssue = issues.find((i) => i.code === 'unrecognized_keys' && /(^|\.)id$/.test(i.path) && i.message === 'unknown key: id');
+  if (idIssue && idIssue === issues[0]) {
+    const message = `${idIssue.path}: ids are assigned by Mandate; omit id`;
+    return { code: 'invalid_input', message, path: idIssue.path, hint: 'ids are assigned by Mandate; omit id and use the id / ref the create result returns', issues: issues.map((i) => (i === idIssue ? { ...i, message: 'ids are assigned by Mandate; omit id' } : i)) };
+  }
   const first = issues[0] ?? { path: '', message: 'invalid input' };
   const unknown = e.issues.find((i) => i.code === 'unrecognized_keys');
   const hint = unknown && allowed?.length
@@ -70,8 +77,11 @@ function zodError(e: ZodError, allowed?: string[]): ToolErrorBody {
 
 /** Map anything a service function throws to a structured error (never rethrows). */
 export function toToolError(e: unknown, allowedKeys?: string[]): ToolErrorBody {
-  return normalizeMissing(rawToolError(e, allowedKeys));
+  return withHint(normalizeMissing(rawToolError(e, allowedKeys)));
 }
+
+/** Every structured error carries a hint: its own, else the recommended action from the lifecycle registry. */
+export const withHint = (b: ToolErrorBody): ToolErrorBody => (b.hint || !ERROR_ACTIONS[b.code] ? b : { ...b, hint: ERROR_ACTIONS[b.code] });
 
 function rawToolError(e: unknown, allowedKeys?: string[]): ToolErrorBody {
   if (e instanceof ZodError) return zodError(e, allowedKeys);
@@ -90,6 +100,12 @@ function rawToolError(e: unknown, allowedKeys?: string[]): ToolErrorBody {
   const message = typeof err?.message === 'string' ? err.message : String(e);
   if (err?.name === 'DocError') return { code: 'invalid_document', message, path: '' };
   const status = typeof err?.statusCode === 'number' ? err.statusCode : 500;
+  // Domain errors with a structured detail (e.g. audit_incomplete lists the missing items).
+  const d = (e as { detail?: unknown })?.detail;
+  if (status >= 400 && status < 500 && status !== 404 && typeof err.code === 'string' && d && typeof d === 'object' && typeof (d as { kind?: unknown }).kind === 'string') {
+    const h = (e as { hint?: unknown }).hint;
+    return { code: err.code, message, path: '', detail: d as ToolErrorBody['detail'], ...(typeof h === 'string' && h ? { hint: h } : {}) };
+  }
   if (status === 404) return { code: 'not_found', message, path: '', hint: 'list or search to find valid ids and references' };
   if (status === 409) return { code: typeof err.code === 'string' ? err.code : 'conflict', message, path: '' };
   if (status >= 400 && status < 500) return { code: typeof err.code === 'string' ? err.code : 'invalid_request', message, path: '' };
@@ -98,21 +114,16 @@ function rawToolError(e: unknown, allowedKeys?: string[]): ToolErrorBody {
 
 /* ---------------------------------------------------------------- write tools */
 
-const WRITE_HINTS: Record<string, string> = {
-  transition_not_allowed: 'see the transition table in the tool description; reopen or go through the intermediate status',
-  done_gate: 'verify (verification_record) or waive the listed criteria, unblock sections and finish open implement/update work orders, then retry',
-  claim_conflict: 'another agent holds a fresh claim; pick another work order (work_order_next) or wait',
-  stale_claim: 'the holder stopped heartbeating; work_order_claim takes the stale claim over',
-  cycle: 'the link would close a dependency cycle; link in the other direction or drop a link',
-  superseded_target: 'link to the successor section instead (the message names it)',
-  feedback_closed: 'closed feedback is immutable; file a new item (relatedTo the closed one)',
-  append_only: 'verification results are append-only; record a new result instead',
-  archive_only: 'documents are never deleted; archive them (spec_archive / section archive)',
-  section_referenced: 'the section is referenced; archive it instead of removing it',
-  id_reused: 'ids are never reused; pick a new id',
-  criteria_shrink: 'pass addresses: [an accepted feedback item] to remove criteria from a done or claimed spec',
-  stale_version: 're-read the document and retry with its current reference',
-  validation: 'fix the input (see message) and retry',
+/** Raw service codes -> the codes agents act on (cycle / superseded_target are refined from invalid_links). */
+export const WRITE_CODE_MAP: Record<string, string> = {
+  invalid_transition: 'transition_not_allowed',
+  claimed: 'claim_conflict',
+  invalid_links: 'validation',
+  invalid_request: 'validation',
+  invalid_document: 'validation',
+  conflict: 'validation',
+  unknown_section: 'not_found',
+  invalid_input: 'validation',
 };
 
 /**
@@ -132,11 +143,11 @@ export function toWriteError(e: unknown, allowedKeys?: string[]): ToolErrorBody 
   else if (code === 'claimed') code = 'claim_conflict';
   else if (code === 'invalid_links') {
     const details = Array.isArray(err.details) ? (err.details as string[]) : [msg];
-    code = details.some((d) => /cycle/i.test(d)) ? 'cycle' : details.some((d) => /supersed/i.test(d)) ? 'superseded_target' : 'validation';
+    code = details.some((d) => /cycle/i.test(d)) ? 'cycle' : details.some((d) => /supersed|is archived; link to what replaced it/i.test(d)) ? 'superseded_target' : 'validation';
     detail = { kind: 'links', problems: details };
   } else if (code === 'done_gate') detail = { kind: 'gate', failures: (err.details as unknown[]) ?? [] };
   else if (code === 'section_referenced' || code === 'criteria_shrink') detail = { kind: code, problems: err.details ?? [] };
-  else if (code === 'invalid_request' || code === 'invalid_document' || code === 'conflict' || code === 'unknown_section') code = code === 'unknown_section' ? 'not_found' : 'validation';
-  const message = msg.replace(/^(invalid_transition|claimed|stale_claim|invalid_links|done_gate|feedback_closed|append_only|archive_only|section_referenced|id_reused|criteria_shrink): /, '');
-  return { ...base, code, message, ...(detail ? { detail } : {}), hint: base.hint && base.code === code ? base.hint : (WRITE_HINTS[code] ?? base.hint) };
+  else if (code === 'invalid_request' || code === 'invalid_document' || code === 'conflict' || code === 'unknown_section') code = WRITE_CODE_MAP[code]!;
+  const message = msg.replace(/^(invalid_transition|claimed|stale_claim|invalid_links|done_gate|feedback_closed|append_only|archive_only|section_referenced|id_reused|criteria_shrink|integrity_violation): /, '');
+  return { ...base, code, message, ...(detail ? { detail } : {}), hint: base.hint && base.code === code ? base.hint : (ERROR_ACTIONS[code] ?? base.hint) };
 }

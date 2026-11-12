@@ -2,6 +2,8 @@
 import { refreshSecrets } from '../secrets.js';
 import type { AskModelConfig, ResolvedAskConfig } from '../config.js';
 import { DEFAULT_ANTHROPIC_MODEL } from './model.js';
+import { askLimits } from './limits.js';
+import type { AskLimits } from './agent.js';
 
 export type AskMissing = 'provider' | 'model' | 'apiKey' | 'baseUrl';
 
@@ -28,6 +30,8 @@ export interface AskStatus {
   models: AskModelStatus[];
   /** Without any model: what to configure. */
   missing: AskMissing[];
+  /** Limits per question (the `ask` block's; models may override some): tool calls, timeout, token budget, output tokens and the tool-result caps. */
+  limits: AskLimits;
 }
 
 type ModelEntry = AskModelConfig & { apiKey?: string };
@@ -68,12 +72,13 @@ export function askModelStatus(m: ModelEntry, env: NodeJS.ProcessEnv = process.e
   };
 }
 
-export function askStatus(cfg: Pick<ResolvedAskConfig, 'default' | 'models'>, env: NodeJS.ProcessEnv = process.env): AskStatus {
+export function askStatus(cfg: Pick<ResolvedAskConfig, 'default' | 'models'> & Partial<ResolvedAskConfig>, env: NodeJS.ProcessEnv = process.env): AskStatus {
   const models = cfg.models.map((m) => askModelStatus(m, env));
   return {
     configured: models.some((m) => m.configured),
     default: cfg.default ?? models[0]?.id ?? null,
     models,
     missing: models.length ? [] : ['provider', 'model'],
+    limits: askLimits(cfg),
   };
 }

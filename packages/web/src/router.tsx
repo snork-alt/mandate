@@ -10,6 +10,11 @@ import { StandardDetailPage } from './pages/StandardDetailPage';
 import { StandardListPage } from './pages/StandardListPage';
 import { sectionOf } from './sections';
 import { ComponentDetailPage, ComponentsPage } from './pages/ComponentPages';
+import { AuditDetailPage, AuditListPage } from './pages/AuditPages';
+import { LineagePage } from './pages/LineagePage';
+import { OverviewPage } from './pages/OverviewPage';
+import { IntegrityPage } from './pages/IntegrityPage';
+import { QuestionPage } from './pages/QuestionPage';
 
 /**
  * `/specs/<id>@<sha>#<section>` (a pasted versioned reference) opens that version read-only;
@@ -47,7 +52,9 @@ export const projectRoutes: RouteObject[] = [
     path: '/',
     element: <AppLayout />,
     children: [
-      { index: true, element: <Navigate to="/specs" replace /> },
+      // The project landing: state, attention, work in progress, blocked, recent changes, coverage.
+      { index: true, element: <OverviewPage /> },
+      { path: 'overview', element: <Navigate to="/" replace /> },
       { path: 'specs', element: <SpecListPage /> },
       {
         path: 'specs/:id',
@@ -77,11 +84,32 @@ export const projectRoutes: RouteObject[] = [
           </Versioned>
         ),
       },
+      { path: 'audits', element: <AuditListPage /> },
+      {
+        path: 'audits/:id',
+        element: (
+          <Versioned kind="audits">
+            <AuditDetailPage />
+          </Versioned>
+        ),
+      },
+      { path: 'audits/:id/history/:commit', element: version('audits') },
       { path: 'work-orders', element: <WorkOrderListPage key="work-orders" section={workOrders} /> },
-      { path: 'work-orders/:id', element: <WorkOrderPage /> },
+      {
+        path: 'work-orders/:id',
+        element: (
+          <Versioned kind="work-orders">
+            <WorkOrderPage />
+          </Versioned>
+        ),
+      },
+      { path: 'work-orders/:id/history/:commit', element: version('work-orders') },
       { path: 'queue/*', element: <QueueRedirect /> },
       { path: 'feedback', element: <FeedbackListPage /> },
       { path: 'feedback/:id', element: <FeedbackItemPage /> },
+      { path: 'lineage', element: <LineagePage /> },
+      { path: 'integrity', element: <IntegrityPage /> },
+      { path: 'questions/:id', element: <QuestionPage /> },
       { path: '*', element: <Navigate to="/specs" replace /> },
     ],
   },

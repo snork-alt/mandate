@@ -9,15 +9,18 @@ export function reduceAskEvent(s: AskLiveState, e: AskEvent): AskLiveState {
   switch (e.type) {
     case 'start':
       return { ...s, model: e.model };
+    case 'retry':
+      // The provider dropped the step: its partial text is discarded (the retried step streams it again).
+      return { ...s, text: e.text, notice: e.message };
     case 'text':
-      return { ...s, text: s.text + e.delta };
+      return { ...s, text: s.text + e.delta, notice: undefined };
     case 'tool_start':
       // Narration before a tool call is not part of the answer.
-      return { ...s, text: '', running: [...s.running, { id: e.id, name: e.name, args: e.args }] };
+      return { ...s, text: '', notice: undefined, running: [...s.running, { id: e.id, name: e.name, args: e.args }] };
     case 'tool_end':
       return { ...s, running: s.running.filter((r) => r.id !== e.call.id), toolCalls: [...s.toolCalls.filter((c) => c.id !== e.call.id), e.call] };
     case 'done':
-      return { ...s, running: [], toolCalls: e.result.toolCalls, text: e.result.answer, result: e.result };
+      return { ...s, running: [], notice: undefined, toolCalls: e.result.toolCalls, text: e.result.answer, result: e.result };
     case 'error':
       return { ...s, running: [], error: e.error };
   }

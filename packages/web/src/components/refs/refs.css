@@ -21,3 +21,6 @@
 .embed-table td { padding: 4px 8px; border-bottom: 1px solid var(--app-border); vertical-align: middle; }
 .embed-table-wrap { overflow-x: auto; }
 .embed-table .ref-chips { margin-top: 0; }
+/* Graph embed: the canvas frame is the card (no double border); nodes and edges are styled inline (fullscreen portal). */
+.embed-card.embed-graph:has(.canvas-viewer) { padding: 0; border: 0; background: none; }
+.rail .embed-graph .canvas-frame { padding-left: 8px; padding-right: 8px; padding-bottom: 10px; }

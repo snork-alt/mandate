@@ -8,7 +8,7 @@ export const ruleTools = [
     name: 'rules_for_code',
     title: 'Rules for code',
     kind: 'read',
-    description: `Which standard rules apply to the code you are editing: active rules whose scope (path globs, languages) matches the file, plus the rules inherited by spec sections that reference this code. Sorted must, should, may; each with rationale and check.
+    description: `Standard rules applying to code you are editing: active rules whose scope matches the file, plus rules inherited by sections referencing it. Sorted must, should, may; with rationale and check.
 Example: {"repo":"app","path":"src/auth/session.ts","lines":"10-40"}`,
     input: rulesForCodeInputSchema,
     run: async (a, ctx) => ({ rules: rulesForCode(a, await ctx.storage.model()) }),
@@ -17,7 +17,7 @@ Example: {"repo":"app","path":"src/auth/session.ts","lines":"10-40"}`,
     name: 'rule_check_plan',
     title: 'Rule check plan',
     kind: 'read',
-    description: `Automated checks (lint / test / script with their commands) to run for a spec: every inherited rule that has a check, with its level and current state. Record results with evidence.command / evidence.output.
+    description: `Automated checks (lint / test / script commands) to run for a spec: each inherited rule with a check, its level and state. Record results with evidence.command / evidence.output.
 Example: {"spec":"mandate://specs/login-sso"}`,
     input: ruleCheckPlanInputSchema,
     run: async (a, ctx) => ({ checks: await ctx.storage.verificationService.ruleCheckPlan(a) }),

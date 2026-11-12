@@ -8,6 +8,8 @@ export interface FilterOption {
   label: string;
   icon?: ReactNode;
   count?: number;
+  /** Section heading: consecutive options with the same group are listed under it, groups split by a divider. */
+  group?: string;
 }
 
 interface Props {
@@ -21,10 +23,14 @@ interface Props {
   clearable?: boolean;
   /** `colon` reads "Agent: first +1" (default `inline`: "Agent first" / "2 selected"). */
   summary?: 'inline' | 'colon';
+  /** Max list height before it scrolls (default 300). */
+  maxHeight?: number;
+  /** Dropdown width (default 220). */
+  width?: number;
 }
 
 /** Compact toolbar button opening a checkbox list; shows the active selection inline. */
-export function FilterButton({ label, options, selected, onChange, searchable, clearable, summary: summaryStyle = 'inline' }: Props) {
+export function FilterButton({ label, options, selected, onChange, searchable, clearable, summary: summaryStyle = 'inline', maxHeight = 300, width = 220 }: Props) {
   const [query, setQuery] = useState('');
   const active = selected.length > 0;
   const firstLabel = options.find((o) => o.value === selected[0])?.label ?? selected[0];
@@ -32,7 +38,7 @@ export function FilterButton({ label, options, selected, onChange, searchable, c
   const shown = searchable && options.length > 8 && query ? options.filter((o) => o.label.toLowerCase().includes(query.toLowerCase())) : options;
   const toggle = (v: string) => onChange(selected.includes(v) ? selected.filter((x) => x !== v) : [...selected, v]);
   return (
-    <Popover position="bottom-start" shadow="md" radius="md" width={220} withinPortal onClose={() => setQuery('')}>
+    <Popover position="bottom-start" shadow="md" radius="md" width={width} withinPortal onClose={() => setQuery('')}>
       <Popover.Target>
         <Button
           variant={active ? 'light' : 'default'}
@@ -66,21 +72,26 @@ export function FilterButton({ label, options, selected, onChange, searchable, c
         {searchable && options.length > 8 && (
           <SearchField variant="input" size="sm" autoFocus value={query} onChange={setQuery} placeholder={`Search ${label.toLowerCase()}…`} ariaLabel={`Search ${label}`} style={{ marginBottom: 6 }} />
         )}
-        <ScrollArea.Autosize mah={300}>
+        <ScrollArea.Autosize mah={maxHeight}>
           <Stack gap={1}>
             {options.length === 0 && (
               <Text size="sm" c="var(--app-text-faint)" p={6}>
                 Nothing to filter
               </Text>
             )}
-            {shown.map((o) => (
+            {shown.map((o, i) => [
+              o.group && o.group !== shown[i - 1]?.group && (
+                <div key={`g-${o.group}`} className="filter-group" data-first={i === 0 || undefined} role="presentation">
+                  {o.group}
+                </div>
+              ),
               <UnstyledButton key={o.value} className="filter-option" onClick={() => toggle(o.value)}>
                 <Checkbox checked={selected.includes(o.value)} readOnly size="xs" tabIndex={-1} styles={{ input: { cursor: 'pointer' } }} />
                 {o.icon}
                 <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{o.label}</span>
                 {o.count !== undefined && <span className="filter-count">{o.count}</span>}
-              </UnstyledButton>
-            ))}
+              </UnstyledButton>,
+            ])}
           </Stack>
         </ScrollArea.Autosize>
         {active && (

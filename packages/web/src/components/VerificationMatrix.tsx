@@ -1,4 +1,5 @@
 import type { StandardVerification } from '@mandate/shared';
+import { Tooltip } from '@mantine/core';
 import { Link } from 'react-router';
 import { CriterionStateIcon } from './doc';
 
@@ -17,8 +18,10 @@ export function VerificationMatrix({ v }: { v?: StandardVerification }) {
               <tr>
                 <th>Spec</th>
                 {v.criteria.map((c) => (
-                  <th key={c.uri} title={c.title}>
-                    <a href={`#section-${c.sectionId}`}>{c.title}</a>
+                  <th key={c.uri}>
+                    <Tooltip label={c.title} multiline maw={320} openDelay={300}>
+                      <a href={`#section-${c.sectionId}`}>{c.title}</a>
+                    </Tooltip>
                   </th>
                 ))}
               </tr>

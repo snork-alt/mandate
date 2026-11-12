@@ -7,8 +7,10 @@ import { htmlRenderer } from './html';
 import { markdownRenderer } from './markdown';
 import { mermaidRenderer } from './mermaid';
 import { ruleRenderer } from './rule';
+import { auditItemRenderer } from './audit-item';
+import { woSectionRenderer } from './wo-section';
 import { registerSectionRenderer } from './registry';
 
-for (const r of [markdownRenderer, mermaidRenderer, htmlRenderer, acceptanceRenderer, ruleRenderer]) registerSectionRenderer(r);
+for (const r of [markdownRenderer, mermaidRenderer, htmlRenderer, acceptanceRenderer, ruleRenderer, auditItemRenderer, woSectionRenderer]) registerSectionRenderer(r);
 
 export { getSectionRenderer, registerSectionRenderer, type SectionBodyProps, type SectionRenderer } from './registry';

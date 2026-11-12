@@ -17,7 +17,7 @@ import { createStorage, type CommitMeta } from '../src/storage/index.js';
 import { FEEDBACK, WORK_ORDERS, SPECS, STANDARDS, type SeedSection, type SeedSpec } from './seed-data.js';
 import { createFeedbackSchema } from '@mandate/shared';
 import { applyFeedback, finishFeedback } from './feedback-ops.js';
-import { seedVerification } from './verification-seed.js';
+import { seedVerification, verifyForDone, withCriteria } from './verification-seed.js';
 import { seedLinks, seedSummaries } from './links-seed.js';
 import { applyRichStandards } from './rules-seed.js';
 import { applyComponents } from './components-seed.js';
@@ -53,7 +53,7 @@ type Step = {
   spec: string;
   meta: Omit<CommitMeta, 'date'>;
   /** Patch to apply, or the full input for the first step. */
-  change: { create: CreateSpecInput } | { update: (ctx: { lastCommit: string }) => UpdateSpecInput };
+  change: { create: CreateSpecInput } | { update: (ctx: { lastCommit: string; current: SectionInput[] }) => UpdateSpecInput } | { verify: true };
 };
 
 function stepsFor(s: SeedSpec, index: number): Step[] {
@@ -114,30 +114,33 @@ function stepsFor(s: SeedSpec, index: number): Step[] {
   }
   if (s.final === 'draft') return steps;
 
-  add(5 * HOUR, { ...human, message: `spec(${s.id}): ready for implementation` }, { update: () => ({ status: 'ready' }) });
+  // Ready gate: every section has an acceptance criterion before ready (criteria written with the ready step).
+  add(5 * HOUR, { ...human, message: `spec(${s.id}): ready for implementation` }, { update: ({ current }) => ({ status: 'ready', sections: withCriteria(s.id, current) }) });
   if (s.final === 'ready') return steps;
 
   // In progress = a claimed work order (claims live on work orders; see WORK_ORDER_CLAIMS).
   if (s.final === 'in_progress' || s.final === 'in_progress_stale') return steps;
 
-  // done / reopened (the agent's claim was on its work order; the spec only records the result)
-  add(9 * HOUR + 42 * MIN, { ...agent, message: `spec(${s.id}): done\n\nImplemented on ${agent.branch}; all acceptance checks pass.` }, {
+  // done / reopened (the agent's claim was on its work order; the spec only records the result). The agent verifies
+  // the criteria first (the done gate).
+  add(9 * HOUR + 40 * MIN, { ...agent }, { verify: true });
+  add(2 * MIN, { ...agent, message: `spec(${s.id}): done\n\nImplemented on ${agent.branch}; all acceptance checks pass.` }, {
     // Spec-level and per-section implementedCommit point at the version that was implemented (full sha).
-    update: ({ lastCommit }) => {
+    update: ({ lastCommit, current }) => {
       implemented = lastCommit;
       return {
         status: 'done',
         implementedCommit: implemented,
-        sections: s.sections.map((x) => ({ ...final(x), implementedCommit: implemented })),
+        sections: current.map((x) => ({ ...x, implementedCommit: implemented })),
       };
     },
   });
   if (s.final === 'reopened') {
     // The aggregation rules change after implementation, so those sections become outdated.
     add(2 * DAY, { ...human, message: `spec(${s.id}): tighten aggregation rules`, trailers: { Feedback: 'fb-0005' } }, {
-      update: ({ lastCommit: _l }) => ({
-        sections: s.sections.map((x) => {
-          const sec = { ...final(x), implementedCommit: implemented };
+      update: ({ current }) => ({
+        sections: current.map((x) => {
+          const sec = { ...x, implementedCommit: implemented };
           return x.id === 'aggregation'
             ? { ...sec, body: `${sec.body}\n- Retries reuse the idempotency key of the first attempt; never generate a new one.` }
             : sec;
@@ -213,7 +216,7 @@ async function main() {
     events.push({
       at,
       run: () =>
-        storage.workOrderService.create(item, {
+        storage.workOrderService.create({ ...item, ...(item.id === 'q-0001' ? { plan: '1. Wire the OIDC client.\n2. Handle the callback and create the session.\n3. Tests with a fake IdP.' } : {}) }, {
           date: new Date(at),
           author: person(item.createdBy),
           message: `work order: ${item.kind} ${item.spec} (${item.sections.map((x) => x.id).join(', ')})`,
@@ -238,8 +241,12 @@ async function main() {
       run: async () => {
         if ('create' in step.change) {
           await storage.specs.create(createSpecSchema.parse(step.change.create), meta);
+        } else if ('verify' in step.change) {
+          await verifyForDone(storage, step.spec, meta);
+          return;
         } else {
-          const patch = updateSpecSchema.parse(step.change.update({ lastCommit: lastCommit.get(step.spec) ?? '' }));
+          const current = (await storage.specs.get(step.spec)).sections as SectionInput[];
+          const patch = updateSpecSchema.parse(step.change.update({ lastCommit: lastCommit.get(step.spec) ?? '', current }));
           await storage.specs.update(step.spec, patch, meta);
         }
         lastCommit.set(step.spec, (await git.log(1))[0]!.id);

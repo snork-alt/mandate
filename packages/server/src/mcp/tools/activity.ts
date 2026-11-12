@@ -13,9 +13,9 @@ export const activityTools = [
     name: 'activity_list',
     title: 'Activity feed',
     kind: 'read',
-    description: `Events derived from commits, newest first (git-backed, survives restarts): spec.* / standard.* (created, updated, status_changed, deleted, section.inserted|updated|moved|deleted with a word-diff preview), work_order.* (created, claimed, heartbeat (flagged heartbeat: true), section_done, completed, released, ...), feedback.* (created, updated, closed), verification.recorded, git.pulled, commit.
-Filters: since (commit sha, exclusive, or ISO date: reconnect backfill; pass the returned head), until, types (exact or patterns like spec.* or *.created), agent, ref (a document matches events on its sections, work orders and feedback), includeHeartbeats. Paginated (limit ≤ 500, cursor).
-Example: {"ref":"mandate://specs/login-sso","limit":20} or {"since":"<head from the last call>"}`,
+    description: `Events derived from commits, newest first: spec.* / standard.* (incl. section.* with word-diff preview), work_order.*, feedback.*, verification.recorded, git.pulled, commit.
+Filters: since (sha, exclusive, or ISO date; pass the returned head to backfill), until, types (exact or patterns like spec.*, *.created), agent, user (server mode), ref (a doc also matches its sections, work orders, feedback), includeHeartbeats. Paginated.
+Example: {"ref":"mandate://specs/login-sso","limit":20}`,
     input: activityListInputSchema,
     run: (a, ctx) => needBus(ctx).list(a),
   }),
@@ -23,13 +23,13 @@ Example: {"ref":"mandate://specs/login-sso","limit":20} or {"since":"<head from 
     name: 'activity_subscribe',
     title: 'Subscribe to activity',
     kind: 'read',
-    description: `Filter the live \`${ACTIVITY_NOTIFICATION}\` notifications this session receives over the SSE stream (default: every event). types (exact or patterns), ref, agent; enabled: false stops them. Replaces the previous filter. Backfill with activity_list({ since }).
+    description: `Filter the live \`${ACTIVITY_NOTIFICATION}\` notifications this session receives (default: all). types (exact or patterns), ref, agent, user; enabled: false stops them. Replaces the previous filter; backfill with activity_list({ since }).
 Example: {"types":["work_order.*"],"ref":"mandate://specs/login-sso"}`,
     input: activitySubscribeInputSchema,
     run: async (a, ctx) => {
       needBus(ctx);
       if (!ctx.session) throw new ToolError('no_session', 'subscriptions need a Streamable HTTP session', 'connect over /mcp');
-      ctx.session.subscription = { enabled: a.enabled, ...(a.types ? { types: a.types } : {}), ...(a.ref ? { ref: a.ref } : {}), ...(a.agent ? { agent: a.agent } : {}) };
+      ctx.session.subscription = { enabled: a.enabled, ...(a.types ? { types: a.types } : {}), ...(a.ref ? { ref: a.ref } : {}), ...(a.agent ? { agent: a.agent } : {}), ...(a.user ? { user: a.user } : {}) };
       return { subscribed: a.enabled, filter: ctx.session.subscription };
     },
   }),

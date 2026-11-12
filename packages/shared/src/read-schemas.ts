@@ -63,6 +63,10 @@ export const specListInputSchema = z
     blocked: z.boolean().optional(),
     /** Verification rollup: all criteria verified, any failing, any stale, some unverified, or no criteria. */
     verification: list(z.enum(VERIFICATION_FILTER_STATES), 5).optional(),
+    /** Audit state: never (no completed audit), stale, open_findings, or the last outcome (fail | warn | pass). */
+    audit: list(z.enum(['never', 'stale', 'open_findings', 'fail', 'warn', 'pass']), 6).optional(),
+    /** Maturity step (draft | specified | in_progress | implemented | verified | audited) or overlay (failing | drifted | blocked | stale | archived). */
+    maturity: list(z.enum(['draft', 'specified', 'in_progress', 'implemented', 'verified', 'audited', 'failing', 'drifted', 'blocked', 'stale', 'archived']), 11).optional(),
     /** Case-insensitive substring of the id or title. */
     q: shortText(200).optional(),
     ...page,
@@ -174,7 +178,14 @@ const anyDocRef = z
   .max(400)
   .refine((v) => parseRef(v) !== null, 'expected a mandate:// reference to a spec, standard, section, work order or feedback item');
 
-export const historyGetInputSchema = z.object({ ref: anyDocRef, limit: z.number().int().min(1).max(500).default(100) }).strict();
+export const historyGetInputSchema = z
+  .object({
+    ref: anyDocRef,
+    limit: z.number().int().min(1).max(500).default(100),
+    /** Server mode: only commits triggered by this user (GitHub login or service:<name>). */
+    user: z.string().trim().min(1).max(200).optional(),
+  })
+  .strict();
 export type HistoryGetInput = z.input<typeof historyGetInputSchema>;
 
 export const diffGetInputSchema = z
@@ -203,8 +214,8 @@ export const gitPullInputSchema = z.object({}).strict();
 
 /* ------------------------------------------------------------------ UI views (full derived payloads) */
 
-const FILE_KINDS = ['specs', 'standards', 'components'] as const;
-const ENTITY_KIND_VALUES = ['specs', 'standards', 'components', 'work-orders', 'feedback'] as const;
+const FILE_KINDS = ['specs', 'standards', 'components', 'audits', 'work-orders'] as const;
+const ENTITY_KIND_VALUES = ['specs', 'standards', 'components', 'work-orders', 'feedback', 'audits'] as const;
 
 /** Every entity of a kind with git-derived times and the list rollups the UI shows. */
 export const docListInputSchema = z.object({ kind: z.enum(ENTITY_KIND_VALUES) }).strict();

@@ -82,10 +82,12 @@ function ModelPicker({ status, value, onPick }: { status: AskStatus; value: stri
   return (
     <Menu position="top-end" withinPortal shadow="sm">
       <Menu.Target>
-        <button type="button" className="ask-model" aria-label={`Model: ${current?.label ?? 'none'}`} title="Model for the next question">
-          <span>{current?.label ?? 'Model'}</span>
-          <IconChevronDown size={11} />
-        </button>
+        <Tooltip label="Model for the next question" openDelay={300}>
+          <button type="button" className="ask-model" aria-label={`Model: ${current?.label ?? 'none'}`}>
+            <span>{current?.label ?? 'Model'}</span>
+            <IconChevronDown size={11} />
+          </button>
+        </Tooltip>
       </Menu.Target>
       <Menu.Dropdown>
         {status.models.map((m) => {
@@ -156,7 +158,13 @@ export function AskView() {
         {configured && turns.length > 0 && (
           <>
             {turns.map((t) => (
-              <AskTurnView key={t.id} turn={t} stepsOpen={t.id === turns[turns.length - 1]!.id} />
+              <AskTurnView
+                key={t.id}
+                turn={t}
+                stepsOpen={t.id === turns[turns.length - 1]!.id}
+                otherModels={(status.data?.models ?? []).filter((m) => m.configured)}
+                onRetry={t.id === turns[turns.length - 1]!.id && !streaming ? (m) => onSend(t.question, m) : undefined}
+              />
             ))}
             {!streaming && (
               <button type="button" className="ask-add" style={{ alignSelf: 'flex-start' }} onClick={reset}>
@@ -173,7 +181,9 @@ export function AskView() {
                   key={p}
                   type="button"
                   onClick={() => {
-                    setDraft(p);
+                    // Send right away (the suggestion is a full question); while busy, just fill the composer.
+                    if (!streaming) onSend(p, model);
+                    else setDraft(p);
                     field.current?.focus();
                   }}
                 >
@@ -187,13 +197,15 @@ export function AskView() {
       <div className="ask-composer">
         <div className="ask-chips" aria-label="Context">
           {chips.map((c) => (
-            <span key={c.uri} className="ask-chip" data-kind={c.kind} title={c.quote ? `${c.uri}\n“${c.quote.slice(0, 200)}”` : c.uri}>
-              {c.label}
-              {c.quote && <span className="rail-faint"> · selection</span>}
-              <button type="button" aria-label={`Remove ${c.label}`} onClick={() => removeChip(c.uri)}>
-                <IconX size={11} />
-              </button>
-            </span>
+            <Tooltip key={c.uri} label={c.quote ? `${c.uri}\n“${c.quote.slice(0, 200)}”` : c.uri} multiline maw={320} style={{ whiteSpace: 'pre-line', overflowWrap: 'anywhere' }} openDelay={300}>
+              <span className="ask-chip" data-kind={c.kind} data-uri={c.uri}>
+                {c.label}
+                {c.quote && <span className="rail-faint"> · selection</span>}
+                <button type="button" aria-label={`Remove ${c.label}`} onClick={() => removeChip(c.uri)}>
+                  <IconX size={11} />
+                </button>
+              </span>
+            </Tooltip>
           ))}
           <button type="button" className="ask-add" onClick={() => setPicking((p) => !p)} aria-label="Add context">
             <IconPlus size={12} /> Add
@@ -215,17 +227,18 @@ export function AskView() {
           right={
             <>
             {configured && status.data && status.data.models.length > 0 && <ModelPicker status={status.data} value={model} onPick={setModelChoice} />}
-            <button
-              type="button"
-              className="ask-send"
-              data-active={streaming || canSend || undefined}
-              disabled={!streaming && !canSend}
-              aria-label={streaming ? 'Stop' : 'Send'}
-              title={streaming ? 'Stop' : 'Send (Enter)'}
-              onClick={streaming ? onStop : send}
-            >
-              {streaming ? <IconPlayerStopFilled size={12} /> : <IconArrowUp size={13} stroke={2} />}
-            </button>
+            <Tooltip label={streaming ? 'Stop' : 'Send (Enter)'} openDelay={300}>
+              <button
+                type="button"
+                className="ask-send"
+                data-active={streaming || canSend || undefined}
+                disabled={!streaming && !canSend}
+                aria-label={streaming ? 'Stop' : 'Send'}
+                onClick={streaming ? onStop : send}
+              >
+                {streaming ? <IconPlayerStopFilled size={12} /> : <IconArrowUp size={13} stroke={2} />}
+              </button>
+            </Tooltip>
             </>
           }
         />

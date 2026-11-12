@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import type { FileVersion } from '@mandate/shared';
 import { useSearchParams } from 'react-router';
 import { api } from '../../../api';
+import { McpToolError } from '../../../mcp/client';
 import type { DiffableKind } from '../../../lib/docDiff';
 import type { TrackedData } from './compute';
 
@@ -17,6 +18,8 @@ export interface TrackedState {
   data?: TrackedData;
   loading: boolean;
   error?: Error;
+  /** The error is "this commit does not exist / did not touch the file" (vs. a version that cannot be read). */
+  notFound: boolean;
   select: (commit: string) => void;
   setCompare: (c: 'prev' | 'current') => void;
   exit: () => void;
@@ -79,6 +82,7 @@ export function useTrackedChanges(kind: DiffableKind, id: string): TrackedState 
     data: data.data,
     loading: !!commit && (version.isPending || data.isPending),
     error: (version.error ?? data.error ?? undefined) as Error | undefined,
+    notFound: version.error instanceof McpToolError && version.error.code === 'not_found',
     select: (c) => update({ version: c }),
     setCompare: (c) => update({ compare: c === 'current' ? 'current' : null }),
     exit,

@@ -1,14 +1,32 @@
 import { lazy, Suspense } from 'react';
 import { Skeleton, Typography } from '@mantine/core';
-import ReactMarkdown, { type Components } from 'react-markdown';
+import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { CodeBlock } from './CodeBlock';
 import { withBase } from '../project';
+import { MCP_SERVER_NAME, parseNodeUri } from '@mandate/shared/refs';
+import { RefChip } from './refs/RefChip';
+
+const SCHEME = `${MCP_SERVER_NAME}://`;
+const BARE = new RegExp(`(^|[\\s(,;])(${MCP_SERVER_NAME}:\\/\\/[A-Za-z0-9._~/@:-]*[A-Za-z0-9_/-])`, 'g');
+
+/** Mandate references survive react-markdown's URL sanitising (they render as reference chips). */
+const keepRefs = (url: string) => (url.startsWith(SCHEME) ? url : defaultUrlTransform(url));
+
+/** Bare references in prose (`… see mandate-URI f1`) become autolinks, rendered as reference chips; code is left alone. */
+export function linkBareRefs(md: string): string {
+  if (!md.includes(SCHEME)) return md;
+  return md
+    .split(/(^```[\s\S]*?^```)/m)
+    .map((part) => (part.startsWith('```') ? part : part.split(/(`[^`\n]*`)/).map((x) => (x.startsWith('`') ? x : x.replace(BARE, (_m, pre: string, uri: string) => `${pre}<${uri}>`))).join('')))
+    .join('');
+}
 
 const MermaidBlock = lazy(() => import('./doc/MermaidBlock').then((m) => ({ default: m.MermaidBlock })));
 
 export const markdownComponents: Components = {
   a: ({ href, children, node: _node, ...rest }) => {
+    if (href?.startsWith(SCHEME) && parseNodeUri(href)) return <RefChip to={href} />;
     const external = href ? /^https?:\/\//.test(href) : false;
     return (
       <a href={href && !external ? withBase(href) : href} {...rest} {...(external ? { target: '_blank', rel: 'noreferrer' } : {})}>
@@ -41,8 +59,8 @@ export const markdownComponents: Components = {
 export function Markdown({ children }: { children: string }) {
   return (
     <Typography className="markdown">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-        {children}
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents} urlTransform={keepRefs}>
+        {linkBareRefs(children)}
       </ReactMarkdown>
     </Typography>
   );

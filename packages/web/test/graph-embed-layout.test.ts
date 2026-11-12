@@ -23,10 +23,10 @@ function star(n: number): Graph {
     root: seed,
     nodes: [node(seed), ...Array.from({ length: n }, (_, i) => node(spec(`neighbour-with-a-rather-long-name-${i}`))), node(std('security-baseline'), 'standard'), node(std('api-style'), 'standard')],
     edges: [
-      ...Array.from({ length: n }, (_, i) => ({ from: spec(`neighbour-with-a-rather-long-name-${i}`), to: seed, kind: 'links_to' })),
+      ...Array.from({ length: n }, (_, i) => ({ from: spec(`neighbour-with-a-rather-long-name-${i}`), to: seed, kind: 'depends_on' })),
       { from: seed, to: std('security-baseline'), kind: 'uses_standard' },
       { from: seed, to: std('security-baseline'), kind: 'inherits_rule' },
-      { from: std('security-baseline'), to: seed, kind: 'applies_to' },
+      { from: std('security-baseline'), to: seed, kind: 'relates_to' },
       { from: seed, to: std('api-style'), kind: 'uses_standard' },
       { from: seed, to: `${seed}#intro`, kind: 'has_section' },
     ],
@@ -49,7 +49,7 @@ describe('graph embed model', () => {
     expect(toStd).toHaveLength(1);
     expect(toStd[0]!.count).toBe(3);
     expect(toStd[0]!.both).toBe(true);
-    expect(toStd[0]!.kinds.map((k) => k.kind)).toEqual(['uses_standard', 'inherits_rule', 'applies_to']);
+    expect(toStd[0]!.kinds.map((k) => k.kind)).toEqual(['uses_standard', 'inherits_rule', 'relates_to']);
     const api = g.edges.find((e) => e.to === std('api-style'))!;
     expect(api.count).toBe(1);
     expect(api.both).toBe(false);
@@ -121,5 +121,58 @@ describe('graph embed layout', () => {
     expect(overlaps(l)).toEqual([]);
     expect(Math.max(...l.nodes.map((n) => n.w))).toBeLessThanOrEqual(112 + 40);
     expect(l.width).toBeLessThan(560);
+  });
+});
+
+describe('graph embed summary of dense neighbourhoods', () => {
+  /** Two seeds, each with 6 direct neighbours that each have 3 neighbours of their own, plus cross links. */
+  function dense(): Graph {
+    const seeds = [spec('s1'), spec('s2')];
+    const nodes = seeds.map((s) => node(s));
+    const edges: { from: string; to: string; kind: string }[] = [{ from: seeds[0]!, to: seeds[1]!, kind: 'depends_on' }];
+    seeds.forEach((s, i) =>
+      Array.from({ length: 6 }, (_, j) => {
+        const d1 = `${s}/sections/n${j}`;
+        nodes.push(node(d1, 'section'));
+        edges.push({ from: s, to: d1, kind: 'depends_on' });
+        Array.from({ length: 3 }, (_, k) => {
+          const d2 = std(`r${i}-${j}-${k}`);
+          nodes.push(node(d2, 'standard'));
+          edges.push({ from: d1, to: d2, kind: 'inherits_rule' });
+          if (k === 0 && j > 0) edges.push({ from: d2, to: `${s}/sections/n${j - 1}`, kind: 'similar_to' });
+        });
+      }),
+    );
+    const m = mergeNeighbors(seeds, [{ nodes, edges }, undefined]);
+    return { nodes: m.nodes, edges: mergeEdges(m.edges) };
+  }
+
+  it('folds far nodes per anchor, keeps a tree around the seeds and counts hidden cross links', () => {
+    const g = dense();
+    expect(g.nodes).toHaveLength(2 + 12 + 36);
+    // At 30, folding the far nodes (per anchor) is enough; the seeds' direct neighbours stay.
+    const c = collapseLeaves(g, new Set(), 30);
+    expect(c.nodes.length).toBeLessThanOrEqual(30);
+    expect(c.nodes.filter((n) => n.kind === 'section' && !n.group)).toHaveLength(12);
+    expect(c.nodes.filter((n) => n.group).every((n) => n.short.startsWith('+'))).toBe(true);
+    expect(c.hiddenEdges).toBeGreaterThan(0);
+    // Every node is still connected to the seeds.
+    const seen = new Set(c.nodes.filter((n) => n.seed).map((n) => n.id));
+    for (let changed = true; changed; ) {
+      changed = false;
+      for (const e of c.edges) for (const [a, b] of [[e.from, e.to], [e.to, e.from]] as const) if (seen.has(a) && !seen.has(b)) { seen.add(b); changed = true; }
+    }
+    expect(seen.size).toBe(c.nodes.length);
+  });
+
+  it('folds direct neighbours too under the narrow threshold', () => {
+    const c = collapseLeaves(dense(), new Set(), 12);
+    expect(c.nodes.length).toBeLessThanOrEqual(12);
+    expect(c.nodes.filter((n) => n.seed)).toHaveLength(2);
+  });
+
+  it('lays the summary out without overlaps', async () => {
+    const l = await bestLayout(collapseLeaves(dense(), new Set(), 12), 340);
+    expect(overlaps(l)).toEqual([]);
   });
 });

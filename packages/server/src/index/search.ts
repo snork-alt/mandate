@@ -35,6 +35,7 @@ import { parseJson, type DB } from './db.js';
 import { fromBlob, vecId } from './embed/queue.js';
 import type { EmbeddingProvider } from './embed/types.js';
 import { ftsQuote, identifierParts, normalizeSymbol, trigrams, trigramSimilarity } from './identifiers.js';
+import { selfOrSections } from './resolve.js';
 
 /** What the search functions need from the index service. */
 export interface SearchContext {
@@ -45,10 +46,14 @@ export interface SearchContext {
   vecTable: string | null;
   /** Chunks still waiting for vectors. */
   pending(): number;
+  /** Set while semantic search is paused (model switch without a usable previous model): the reason. */
+  unavailable?(): string | null;
   /** Section ids of a spec changed since they were implemented (metadata_query `outdated`). */
   outdatedSections?(specId: string): Promise<string[]>;
   /** Cached query embeddings. */
   queryCache?: Map<string, Float32Array>;
+  /** Effective heartbeat of a work order's claim (runtime state; git only stores startedAt). */
+  claimHeartbeat?(workOrderId: string, claim: { agent: string; startedAt: string }): string;
 }
 
 /** Claims with no heartbeat for this long are stale (same rule as the web UI). */
@@ -202,6 +207,8 @@ export function knn(ctx: SearchContext, vector: Float32Array, k: number): { hash
 }
 
 function semanticStatus(ctx: SearchContext): { ok: boolean; reason?: string } {
+  const paused = ctx.unavailable?.();
+  if (paused) return { ok: false, reason: paused };
   if (!ctx.provider || !ctx.vecTable) return { ok: false, reason: 'semantic search is disabled (embedding.provider is "none")' };
   const n = (ctx.db.prepare(`SELECT COUNT(*) AS n FROM ${ctx.vecTable} WHERE model_id = ?`).get(ctx.provider.modelId) as { n: number }).n;
   if (!n) return { ok: false, reason: 'no vectors yet for the current model (embedding in progress)' };
@@ -547,11 +554,30 @@ export function codeSearch(ctx: SearchContext, input: CodeSearchInput): CodeSear
     doc_title: string;
     status: string | null;
   }[];
+  // Work orders that touched matching code (current `touches` edges of work orders and their sections).
+  const wantPath = inp.path?.replace(/^\.?\/+/, '').replace(/\/+$/, '');
+  const globRe = inp.glob ? new RegExp(`^${inp.glob.replace(/^\.?\/+/, '').replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*\*\/?/g, '\u0000').replace(/\*/g, '[^/]*').replace(/\?/g, '[^/]').replace(/\u0000/g, '.*')}$`) : null;
+  const doc = ctx.db.prepare('SELECT title, status FROM docs WHERE uri = ?');
+  const touches = (ctx.db.prepare("SELECT from_uri, to_uri, props FROM edges WHERE kind = 'touches' AND valid_to IS NULL").all() as { from_uri: string; to_uri: string; props: string | null }[])
+    .flatMap((e) => {
+      const n = parseNodeUri(e.to_uri);
+      if (!n || n.kind !== 'code') return [];
+      if (inp.repo && n.repo !== inp.repo) return [];
+      if (wantPath && n.path !== wantPath && !n.path.startsWith(`${wantPath}/`)) return [];
+      if (globRe && !globRe.test(n.path)) return [];
+      if (lines && n.lines && (n.lines.start > lines.end || n.lines.end < lines.start)) return [];
+      const woUri = e.from_uri.replace(/\/sections\/.*$/, '');
+      const d = doc.get(woUri) as { title: string; status: string | null } | undefined;
+      const p = parseJson<{ change?: string }>(e.props, {});
+      return [{ workOrder: woUri, ...(e.from_uri !== woUri ? { section: e.from_uri } : {}), title: d?.title ?? woUri, ...(d?.status ? { status: d.status } : {}), repo: n.repo, path: n.path, ...(n.lines ? { lines: n.lines } : {}), ...(p.change ? { change: p.change } : {}) }];
+    })
+    .slice(0, inp.limit);
   return {
     repo: inp.repo,
     path: inp.path,
     glob: inp.glob,
     lines,
+    ...(touches.length ? { workOrders: touches } : {}),
     refs: rows.map((r) => {
       const l = r.line_start ? { start: r.line_start, end: r.line_end ?? r.line_start } : undefined;
       return {
@@ -667,7 +693,7 @@ export async function metadataQuery(ctx: SearchContext, input: MetadataQueryInpu
     .prepare(
       `SELECT d.*, (SELECT COUNT(DISTINCT f.uri) FROM edges t JOIN docs f ON f.uri = t.from_uri
                      WHERE t.kind = 'targets' AND t.valid_to IS NULL AND f.status = 'open'
-                       AND (t.to_uri = d.uri OR t.to_uri LIKE d.uri || '/sections/%')) AS open_feedback
+                       AND (t.to_uri = d.uri OR substr(t.to_uri, 1, length(d.uri) + 10) = d.uri || '/sections/')) AS open_feedback
          FROM docs d WHERE ${c.join(' AND ') || '1'} ORDER BY d.updated_at DESC, d.uri`,
     )
     .all(...p) as {
@@ -688,13 +714,19 @@ export async function metadataQuery(ctx: SearchContext, input: MetadataQueryInpu
   const now = Date.now();
   // Claims live on work orders; a spec shows the claim of its open work order.
   const woClaim = ctx.db.prepare(
-    `SELECT json_extract(props, '$.claim') AS claim FROM docs WHERE kind = 'work_order' AND json_extract(props, '$.spec') = ?
+    `SELECT id, json_extract(props, '$.claim') AS claim FROM docs WHERE kind = 'work_order' AND json_extract(props, '$.spec') = ?
        AND json_extract(props, '$.claim') IS NOT NULL AND (status IS NULL OR status IN ('pending', 'in_progress')) ORDER BY id DESC LIMIT 1`,
   );
   let items: MetadataItem[] = rows.map((r) => {
-    const own = parseJson<{ claim?: { agent: string; heartbeatAt: string } }>(r.props, {});
-    const fromWo = r.kind === 'spec' ? (woClaim.get(r.id) as { claim: string | null } | undefined)?.claim : null;
-    const props = { claim: r.kind === 'work_order' ? own.claim : fromWo ? parseJson<{ agent: string; heartbeatAt: string }>(fromWo, undefined as never) : undefined };
+    type C = { agent: string; startedAt: string; heartbeatAt?: string };
+    const own = parseJson<{ claim?: C }>(r.props, {});
+    const wo = r.kind === 'spec' ? (woClaim.get(r.id) as { id: string; claim: string | null } | undefined) : undefined;
+    const fromWo = wo?.claim ?? null;
+    const raw = r.kind === 'work_order' ? own.claim : fromWo ? parseJson<C>(fromWo, undefined as never) : undefined;
+    const woId = r.kind === 'work_order' ? r.id : wo?.id;
+    // Heartbeats are runtime state (not in git): ask the server; legacy jsonl claims carried heartbeatAt.
+    const hb = raw ? (raw.heartbeatAt ?? (ctx.claimHeartbeat && woId ? ctx.claimHeartbeat(woId, raw) : raw.startedAt)) : undefined;
+    const props = { claim: raw ? { agent: raw.agent, heartbeatAt: hb! } : undefined };
     const claim = props.claim
       ? {
           agent: props.claim.agent,
@@ -752,8 +784,9 @@ export function historySearch(ctx: SearchContext, input: HistorySearchInput): Hi
   }
   if (inp.uri) {
     const base = inp.uri.replace(/[@#].*$/, '');
-    c.push("c.sha IN (SELECT sha FROM commit_uris WHERE uri = ? OR uri LIKE ? || '/sections/%')");
-    p.push(base, base);
+    const m = selfOrSections('uri', base);
+    c.push(`c.sha IN (SELECT sha FROM commit_uris WHERE ${m.sql})`);
+    p.push(...m.params);
   }
   if (inp.author) {
     c.push('(c.author LIKE ? OR c.email LIKE ?)');

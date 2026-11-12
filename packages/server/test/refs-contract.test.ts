@@ -74,7 +74,7 @@ describe('forward: every indexed node resolves from its ref', () => {
 
 describe('reverse: every UI reference form resolves', () => {
   const docs = () =>
-    rows<{ uri: string; kind: string }>("SELECT DISTINCT uri, kind FROM nodes WHERE kind IN ('spec', 'standard', 'component', 'section', 'work_order', 'feedback')");
+    rows<{ uri: string; kind: string }>("SELECT DISTINCT uri, kind FROM nodes WHERE kind IN ('spec', 'standard', 'component', 'section', 'work_order', 'feedback', 'audit')");
   const versionsOf = (live: string) =>
     rows<{ uri: string; sha: string; seq: number; action: string }>(
       `SELECT v.uri, v.sha, v.point AS seq, json_extract(n.props, '$.action') AS action
@@ -92,7 +92,7 @@ describe('reverse: every UI reference form resolves', () => {
       await expectNode(plain, d.kind);
       await expectNode(build('refMention', m), d.kind);
       await expectNode(build('buildRef', m), d.kind);
-      if (m.kind !== 'specs' && m.kind !== 'standards' && m.kind !== 'components') continue;
+      if (m.kind !== 'specs' && m.kind !== 'standards' && m.kind !== 'components' && m.kind !== 'audits' && m.kind !== 'work-orders') continue;
       for (const v of versionsOf(d.uri)) {
         for (const sha of [v.sha, v.sha.slice(0, 7)]) {
           const r = await expectNode(build(builder, { ...rest, commit: sha }), 'version');
@@ -140,6 +140,48 @@ describe('reverse: every UI reference form resolves', () => {
   it('verifications, symbols, code files and ranges, commits, agents, repos and branches', async () => {
     const byKind = (k: string) => rows<{ uri: string; props: string }>('SELECT DISTINCT uri, props FROM nodes WHERE kind = ?', k);
     for (const n of byKind('verification')) await expectNode(n.uri, 'verification');
+    // Audit findings: built, prefixed and canonical forms.
+    const findings = byKind('finding');
+    expect(findings.length).toBeGreaterThan(0);
+    for (const n of findings) {
+      const [, audit, id] = /^mandate:\/\/audits\/([^/]+)\/findings\/([^/]+)$/.exec(n.uri)!;
+      const r = await expectNode(build('refBuilders.findings', { audit, id }), 'finding');
+      expect(r.node.uri).toBe(n.uri);
+      await expectNode(`@mandate:${n.uri}`, 'finding');
+      await expectNode(build('buildNodeUri', { kind: 'findings', audit, id }), 'finding');
+    }
+    // Comments, pull requests and code commits (work-order delivery): built, prefixed and canonical forms.
+    const comments = byKind('comment');
+    expect(comments.length).toBeGreaterThan(0);
+    for (const n of comments) {
+      const id = n.uri.split('/').pop()!;
+      expect((await expectNode(build('refBuilders.comments', id), 'comment')).node.uri).toBe(n.uri);
+      await expectNode(`@mandate:${n.uri}`, 'comment');
+      await expectNode(build('buildNodeUri', { kind: 'comments', id }), 'comment');
+    }
+    // Questions (question_ask): built, prefixed and canonical forms.
+    const questions = byKind('question');
+    expect(questions.length).toBeGreaterThan(0);
+    for (const n of questions) {
+      const id = n.uri.split('/').pop()!;
+      expect((await expectNode(build('refBuilders.questions', id), 'question')).node.uri).toBe(n.uri);
+      await expectNode(`@mandate:${n.uri}`, 'question');
+      await expectNode(build('buildNodeUri', { kind: 'questions', id }), 'question');
+    }
+    const prs = byKind('pull_request');
+    expect(prs.length).toBeGreaterThan(0);
+    for (const n of prs) {
+      const p = JSON.parse(n.props) as { repo: string; number: number };
+      expect((await expectNode(build('refBuilders.prs', { repo: p.repo, number: p.number }), 'pull_request')).node.uri).toBe(n.uri);
+      await expectNode(build('buildNodeUri', { kind: 'prs', repo: p.repo, number: p.number }), 'pull_request');
+    }
+    const codeCommits = byKind('code_commit');
+    expect(codeCommits.length).toBeGreaterThan(0);
+    for (const n of codeCommits) {
+      const p = JSON.parse(n.props) as { repo: string; sha: string };
+      expect((await expectNode(build('refBuilders.code-commits', { repo: p.repo, sha: p.sha }), 'code_commit')).node.uri).toBe(n.uri);
+      await expectNode(build('buildNodeUri', { kind: 'code-commits', repo: p.repo, sha: p.sha }), 'code_commit');
+    }
     for (const n of byKind('symbol')) {
       const name = JSON.parse(n.props).normalized ? decodeURIComponent(n.uri.split('/symbols/')[1]!) : '';
       const r = await expectNode(build('refBuilders.symbols', name), 'symbol');
@@ -161,11 +203,24 @@ describe('reverse: every UI reference form resolves', () => {
       const short = await expectNode(build('refBuilders.commits', c.sha.slice(0, 7)), 'commit');
       expect(short.node.uri).toBe(full.node.uri);
     }
-    for (const k of ['agent', 'repo', 'branch'] as const) {
+    for (const k of ['agent', 'user', 'repo', 'branch'] as const) {
       for (const n of byKind(k)) {
         const r = await expectNode(n.uri, k);
         expect(build('canonicalRef', n.uri)).toBe(r.node.uri);
       }
+    }
+    // G-9 / P6: agent and user ids are case-folded; an old mixed-case reference resolves to the same node.
+    const users = byKind('user');
+    expect(users.length).toBeGreaterThan(0);
+    for (const n of users) {
+      const login = decodeURIComponent(n.uri.split('/users/')[1]!);
+      expect((await expectNode(build('refBuilders.users', login.toUpperCase()), 'user')).node.uri).toBe(n.uri);
+      await expectNode(build('buildNodeUri', { kind: 'users', login }), 'user');
+    }
+    for (const n of byKind('agent')) {
+      expect(n.uri).toBe(n.uri.toLowerCase());
+      const name = decodeURIComponent(n.uri.split('/agents/')[1]!);
+      expect((await expectNode(`mandate://agents/${encodeURIComponent(name.toUpperCase())}`, 'agent')).node.uri).toBe(n.uri);
     }
   }, 120_000);
 
@@ -185,6 +240,18 @@ describe('reverse: every UI reference form resolves', () => {
       expect(closed).toBe(0);
       expect(rows<{ n: number }>("SELECT COUNT(*) AS n FROM edges WHERE kind = 'changed' AND from_uri = (SELECT 'mandate://commits/' || sha FROM commits WHERE seq = ? AND mainline = 1)", rename.seq)[0]!.n).toBe(0);
     }
+  });
+
+  it('work orders became documents: the migration commit keeps every work order node continuous', async () => {
+    const mig = rows<{ seq: number }>("SELECT seq FROM commits WHERE subject LIKE 'work-orders: migrate%' AND mainline = 1")[0];
+    if (!mig) return;
+    const closed = rows<{ uri: string }>("SELECT uri FROM nodes WHERE kind = 'work_order' AND valid_to = ?", mig.seq).map((r) => r.uri);
+    const opened = new Set(rows<{ uri: string }>("SELECT uri FROM nodes WHERE kind = 'work_order' AND valid_from = ?", mig.seq).map((r) => r.uri));
+    expect(closed.filter((u) => !opened.has(u))).toEqual([]);
+    // Work-order sections are graph keys (and versioned after the migration).
+    const secs = rows<{ uri: string }>("SELECT uri FROM sections WHERE uri LIKE 'mandate://work-orders/%/sections/%'");
+    expect(secs.length).toBeGreaterThan(0);
+    await expectNode(secs[0]!.uri, 'section');
   });
 
   it('architecture: HEAD, pinned commit (full + short) and focus resolve to the virtual view node', async () => {

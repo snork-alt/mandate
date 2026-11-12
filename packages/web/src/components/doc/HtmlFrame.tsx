@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useComputedColorScheme } from '@mantine/core';
+import { stripWrappingFence } from '../../lib/fence';
 
 const FONT = "'Geist Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
 
@@ -36,7 +37,7 @@ ${fontFaceCss()}
 *,*::before,*::after{box-sizing:border-box}
 html,body{margin:0;background:transparent}
 body{padding:20px;font:14px/1.55 ${FONT};color:${scheme === 'dark' ? '#e2e4e9' : '#1f1f23'};overflow:hidden}
-</style></head><body>${html}</body></html>`,
+</style></head><body>${stripWrappingFence(html)}</body></html>`,
     [html, scheme],
   );
 

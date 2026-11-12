@@ -1,11 +1,12 @@
 /**
- * Rules in the graph: Rule nodes, governs / example_of / inherits_rule / superseded_by edges, lifecycle as temporal node
+ * Rules in the graph: Rule nodes, governs / example_of / inherits_rule / supersedes edges, lifecycle as temporal node
  * state, Cypher labels and types, and equivalence of the graph's "rules for this code range" with `rulesForCode`.
  */
 import { globMatch, NODE_LABELS, relTypeOf } from '@mandate/shared';
 import fc from 'fast-check';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { rulesForCode } from '../src/storage/index.js';
+import { knownFiles } from '../src/index/rules.js';
 import { createStorage, type Storage } from '../src/storage/index.js';
 import { cleanupTempDirs } from './helpers.js';
 import { graphFixture, type GraphFixture } from './graph-fixture.js';
@@ -55,8 +56,10 @@ describe('rule nodes and edges', () => {
       "SELECT DISTINCT uri, json_extract(props, '$.repo') AS repo, json_extract(props, '$.path') AS path FROM nodes WHERE kind = 'code_file' AND valid_to IS NULL",
     );
     expect(files.length).toBeGreaterThan(5);
+    // Known files are the ones specs, standards and components reference (audit findings pointing at other code add no governs edges).
+    const known = new Set(knownFiles(await storage.model()).map((k) => `${k.repo}\u0000${k.path}`));
     let governed = 0;
-    for (const f of files) {
+    for (const f of files.filter((x) => known.has(`${x.repo}\u0000${x.path}`))) {
       const scope = rulesForCode({ repo: f.repo, path: f.path }, await storage.model()).filter((h) => h.why.includes('scope')).map((h) => h.uri);
       const edges = (await cy('MATCH (r:Rule)-[:GOVERNS]->(f:CodeFile {ref: $f}) RETURN r.ref', { f: f.uri })).map((x) => x[0]);
       expect(new Set(edges), f.uri).toEqual(new Set(scope));
@@ -65,7 +68,7 @@ describe('rule nodes and edges', () => {
     expect(governed).toBeGreaterThan(0);
   });
 
-  it('lifecycle: status is temporal node state; a deprecated standard has superseded_by', async () => {
+  it('lifecycle: status is temporal node state; a deprecated standard is superseded_by its successor (supersedes)', async () => {
     const dep = rows<{ uri: string; props: string }>("SELECT uri, props FROM nodes WHERE kind = 'standard' AND valid_to IS NULL AND json_extract(props, '$.status') = 'deprecated'");
     expect(dep.length).toBeGreaterThan(0);
     for (const d of dep) {
@@ -83,14 +86,14 @@ describe('rule nodes and edges', () => {
       }
     }
     // Cypher sees the lifecycle too.
-    const c = await cy('MATCH (s:Standard)-[:SUPERSEDED_BY]->(t:Standard) RETURN s.ref, s.status, t.ref');
+    const c = await cy('MATCH (t:Standard)-[:SUPERSEDES]->(s:Standard) RETURN s.ref, s.status, t.ref');
     expect(c.every((r) => r[1] === 'deprecated')).toBe(true);
   });
 
-  it('labels and types are registered (Rule, GOVERNS, EXAMPLE_OF, INHERITS_RULE, SUPERSEDED_BY)', async () => {
+  it('labels and types are registered (Rule, GOVERNS, EXAMPLE_OF, INHERITS_RULE, SUPERSEDES)', async () => {
     const s = await fx.index.graphSchema();
     expect(s.labels.map((l) => l.label)).toEqual(expect.arrayContaining(['Rule', ...Object.values(NODE_LABELS)]));
-    expect(s.relationships.map((r) => r.type)).toEqual(expect.arrayContaining(['governs', 'example_of', 'inherits_rule', 'superseded_by'].map((k) => relTypeOf(k as never))));
+    expect(s.relationships.map((r) => r.type)).toEqual(expect.arrayContaining(['governs', 'example_of', 'inherits_rule', 'supersedes'].map((k) => relTypeOf(k as never))));
     expect(s.labels.find((l) => l.label === 'Rule')!.properties).toEqual(expect.arrayContaining(['level', 'rationale']));
   });
 });

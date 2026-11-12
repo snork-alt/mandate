@@ -21,16 +21,21 @@ export function CodeRefChip({ codeRef }: { codeRef: CodeRef }) {
   return (
     <ChipCopy target={target}>
       <RulesHover repo={repo} path={path} lines={lines}>
-        <button type="button" className="chip chip-code" onClick={() => void copyText(target.ref)} title={`${repo} · ${path}${lines ? `:${lines}` : ''}${commit ? ` @${commit}` : ''} · click copies ${target.ref}`}>
-          <IconCode size={12} />
-          <span className="chip-muted">{repo}</span>
-          <span className="chip-sep">·</span>
-          <span className="chip-path">
-            <span className="chip-muted">{dir}</span>
-            {file}
-            {lines && <span className="chip-muted">:{lines}</span>}
-          </span>
-          {commit && <span className="chip-commit">@{commit.slice(0, 7)}</span>}
+        <button
+          type="button"
+          className="chip chip-code"
+          aria-label={`${repo} · ${path}${lines ? `:${lines}` : ''}${commit ? ` @${commit.slice(0, 7)}` : ''}. Click to copy reference`}
+          onClick={() => void copyText(target.ref)}
+        >
+            <IconCode size={12} />
+            <span className="chip-muted">{repo}</span>
+            <span className="chip-sep">·</span>
+            <span className="chip-path">
+              <span className="chip-muted">{dir}</span>
+              {file}
+              {lines && <span className="chip-muted">:{lines}</span>}
+            </span>
+            {commit && <span className="chip-commit">@{commit.slice(0, 7)}</span>}
         </button>
       </RulesHover>
       <OwnedBy repo={repo} path={path} />
@@ -43,7 +48,7 @@ export function SymbolChip({ symbol }: { symbol: string }) {
   const target = symbolTarget(symbol);
   return (
     <ChipCopy target={target}>
-      <Tooltip label={`Copy reference ${target.ref}`}>
+      <Tooltip label="Copy reference">
         <button type="button" className="chip chip-symbol" onClick={() => void copyText(target.ref)}>
           <IconBraces size={12} />
           {symbol}
@@ -77,9 +82,11 @@ function OwnedBy({ repo, path }: { repo: string; path: string }) {
   const owner = ownerOf(repo, path, (comps.data ?? []) as unknown as StoredComponent[]);
   if (!owner) return null;
   return (
-    <Link to={`/components/${owner.component.id}`} className="chip chip-owner" title={`Owned by ${owner.component.title} (${owner.glob})`}>
-      <IconTopologyStar3 size={11} />
-      {owner.component.title}
-    </Link>
+    <Tooltip label={`Owned by ${owner.component.title} (${owner.glob})`} openDelay={300}>
+      <Link to={`/components/${owner.component.id}`} className="chip chip-owner">
+        <IconTopologyStar3 size={11} />
+        {owner.component.title}
+      </Link>
+    </Tooltip>
   );
 }

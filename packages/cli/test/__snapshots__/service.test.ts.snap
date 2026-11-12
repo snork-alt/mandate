@@ -1,0 +1,73 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`service definitions > launchd plist 1`] = `
+"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Managed by Mandate (mandate install / mandate uninstall). -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.mandate.server</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/node</string>
+    <string>/usr/local/lib/node_modules/getmandate/dist/server.js</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>/Users/ada</string>
+    <key>MANDATE_HOME</key>
+    <string>/Users/ada/.mandate</string>
+    <key>MANDATE_VERSION</key>
+    <string>0.1.0</string>
+    <key>NODE_ENV</key>
+    <string>production</string>
+    <key>PATH</key>
+    <string>/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>WorkingDirectory</key>
+  <string>/Users/ada/.mandate</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/ada/.mandate/logs/server.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/ada/.mandate/logs/server.log</string>
+</dict>
+</plist>
+"
+`;
+
+exports[`service definitions > systemd unit 1`] = `
+"# Managed by Mandate (mandate install / mandate uninstall).
+[Unit]
+Description=Mandate specification server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/node /usr/local/lib/node_modules/getmandate/dist/server.js
+WorkingDirectory=/home/ada/.mandate
+Environment=HOME=/home/ada
+Environment=MANDATE_HOME=/home/ada/.mandate
+Environment=MANDATE_VERSION=0.1.0
+Environment=NODE_ENV=production
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Restart=on-failure
+RestartSec=3
+StandardOutput=append:/home/ada/.mandate/logs/server.log
+StandardError=append:/home/ada/.mandate/logs/server.log
+
+[Install]
+WantedBy=default.target
+"
+`;

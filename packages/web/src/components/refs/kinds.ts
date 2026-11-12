@@ -1,6 +1,6 @@
-import { IconBraces, IconBox, IconClipboardList, IconCode, IconFileText, IconGitBranch, IconGitCommit, IconHash, IconHistory, IconMessageReport, IconQuote, IconRobot, IconRuler2, IconShieldCheck, IconSitemap } from '@tabler/icons-react';
+import { IconBrandGit, IconGitPullRequest, IconMessage, IconBraces, IconBug, IconListCheck, IconBox, IconClipboardList, IconCode, IconFileText, IconGitBranch, IconGitCommit, IconHash, IconHistory, IconMessageQuestion, IconMessageReport, IconQuote, IconRobot, IconRuler2, IconUser, IconShieldCheck, IconSitemap } from '@tabler/icons-react';
 import { nodeKindOf, parseNodeUri, refLabel, type NodeKind } from '@mandate/shared';
-import { sectionHref } from '../../lib/links';
+import { auditHref, sectionHref } from '../../lib/links';
 
 export const KIND_ICON: Record<NodeKind, typeof IconHash> = {
   spec: IconFileText,
@@ -16,10 +16,17 @@ export const KIND_ICON: Record<NodeKind, typeof IconHash> = {
   repo: IconBox,
   commit: IconGitCommit,
   agent: IconRobot,
+  user: IconUser,
   branch: IconGitBranch,
   verification: IconShieldCheck,
   component: IconBox,
   architecture: IconSitemap,
+  audit: IconListCheck,
+  finding: IconBug,
+  comment: IconMessage,
+  pull_request: IconGitPullRequest,
+  code_commit: IconBrandGit,
+  question: IconMessageQuestion,
 };
 
 /** Node kind of a reference, null when it is not a valid reference. */
@@ -36,6 +43,7 @@ export function fallbackLabel(uri: string): string {
     case 'specs':
     case 'standards':
     case 'components':
+    case 'audits':
       return r.sectionId ? `${r.id} › ${r.sectionId}${r.commit ? ` @${r.commit.slice(0, 7)}` : ''}` : `${r.id}${r.commit ? ` @${r.commit.slice(0, 7)}` : ''}`;
     case 'work-orders':
     case 'feedback':
@@ -45,6 +53,8 @@ export function fallbackLabel(uri: string): string {
     case 'agents':
     case 'branches':
       return r.name;
+    case 'users':
+      return r.login;
     case 'code':
       return `${r.path.split('/').pop()}${r.lines ? `:${r.lines.start}-${r.lines.end}` : ''}`;
     case 'commits':
@@ -53,6 +63,15 @@ export function fallbackLabel(uri: string): string {
       return r.id;
     case 'architecture':
       return r.focus ? `architecture › ${r.focus}` : 'architecture';
+    case 'findings':
+      return `${r.audit} › ${r.id}`;
+    case 'comments':
+    case 'questions':
+      return r.id;
+    case 'prs':
+      return `${r.repo}#${r.number}`;
+    case 'code-commits':
+      return `${r.repo}@${r.sha.slice(0, 7)}`;
   }
 }
 
@@ -60,6 +79,8 @@ export function fallbackLabel(uri: string): string {
 export function refHref(uri: string): string | null {
   const r = parseNodeUri(uri);
   if (!r) return null;
-  if (r.kind === 'specs' || r.kind === 'standards' || r.kind === 'components' || r.kind === 'work-orders' || r.kind === 'feedback') return sectionHref(uri);
+  if (r.kind === 'specs' || r.kind === 'standards' || r.kind === 'components' || r.kind === 'work-orders' || r.kind === 'feedback' || r.kind === 'audits') return sectionHref(uri);
+  if (r.kind === 'findings') return auditHref(uri);
+  if (r.kind === 'questions') return `/questions/${r.id}`;
   return null;
 }

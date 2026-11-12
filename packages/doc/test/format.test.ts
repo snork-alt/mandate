@@ -198,3 +198,23 @@ describe('validate', () => {
     expect(codes(doc(m, '\n<!-- @section a -->\n## A\n'))).toEqual([]);
   });
 });
+
+describe('inspect (lenient parse)', () => {
+  it('returns the document with its problems instead of throwing', () => {
+    const md = doc(
+      'title: Old\nsections:\n  - id: a\n    title: A\n    type: markdown\n    verifiedBy: [b, gone]\n  - id: b\n    title: B\n    type: markdown',
+      '\n<!-- @section a -->\n## A\n\nText.\n\n<!-- @section b -->\n## Renamed B\n',
+    );
+    expect(() => fmt.parse(md)).toThrow(DocError);
+    const r = fmt.inspect(md);
+    expect(r.doc?.sections.map((s) => s.id)).toEqual(['a', 'b']);
+    expect(r.doc?.sections[0]!.body).toBe('Text.');
+    expect(r.issues.map((i) => i.code)).toEqual(['heading-mismatch', 'sections-invalid', 'sections-invalid']);
+  });
+
+  it('keeps frontmatter that fails the schema and matches parse on valid files', () => {
+    expect(fmt.inspect(doc('title: 42')).doc?.frontmatter).toMatchObject({ title: 42 });
+    expect(fmt.inspect(CANONICAL)).toEqual({ doc: fmt.parse(CANONICAL), issues: [] });
+    expect(fmt.inspect('no frontmatter').doc).toBeUndefined();
+  });
+});

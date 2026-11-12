@@ -13,7 +13,10 @@ import { rm } from 'node:fs/promises';
 import path from 'node:path';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { projectConfigSchema, projectIdSchema, readRawConfig, writeConfigFile, type ProjectConfig, type RemoteConfig } from '../config.js';
+import { LEGACY_USER_TRAILER, USER_TRAILER } from '@mandate/shared';
+import { projectIdSchema, type ProjectConfig, type RemoteConfig } from '../config.js';
+import { idFromTitle, uniqueId } from '@mandate/shared';
+import type { ProjectsStore } from './store.js';
 import type { AuthStore } from '../auth/sessions.js';
 import { GithubClient, GithubError, type AuthConfigSource, type GithubRepo } from '../auth/github.js';
 import { originOk, type AuthOptions } from '../auth/http.js';
@@ -41,7 +44,6 @@ const folderSchema = z
 
 export const createProjectInputSchema = z
   .object({
-    id: projectIdSchema,
     name: z.string().trim().min(1).max(100),
     description: z.string().trim().max(500).optional(),
     repo: z.string().regex(/^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/, 'owner/name'),
@@ -61,6 +63,27 @@ const createRepoInputSchema = z
   })
   .strict();
 
+/**
+ * Project ids are assigned by Mandate: a slug of the name (max 40 chars), unique among registered projects and
+ * existing folders (`-2`, `-3`, ...). A request that sends an id gets a clear error.
+ */
+export async function assignProjectId(name: string, taken: (id: string) => boolean): Promise<string> {
+  let base = idFromTitle(name, 'project').slice(0, 36).replace(/-+$/, '');
+  if (!projectIdSchema.safeParse(base).success) base = 'project';
+  return uniqueId(base, taken);
+}
+
+/** Parse a create-project body; `id` is refused with the "ids are assigned by Mandate" hint. */
+export function parseProjectInput<S extends z.ZodType>(schema: S, raw: unknown): z.output<S> {
+  if (raw && typeof raw === 'object' && 'id' in raw) throw new AdminError(400, 'invalid_input', 'id: ids are assigned by Mandate; omit id', 'id', 'the project id is generated from the name and returned in the result');
+  const parsed = schema.safeParse(raw);
+  if (!parsed.success) {
+    const i = parsed.error.issues[0]!;
+    throw new AdminError(400, 'invalid_input', `${i.path.join('.') || 'body'}: ${i.message}`, String(i.path[0] ?? ''));
+  }
+  return parsed.data;
+}
+
 /** Mandate's repo layout: document folders plus the jsonl files. */
 export const LAYOUT_DIRS = ['specs', 'standards', 'components'];
 export const LAYOUT_FILES = ['work-orders.jsonl', 'feedback.jsonl', 'verifications.jsonl'];
@@ -78,7 +101,8 @@ export interface AdminDeps {
   github: GithubClient;
   /** `~/.mandate` (clones go to `<home>/projects/<id>/repo`). */
   home: string;
-  configPath: string;
+  /** projects.json (the server-owned registry). */
+  projects: ProjectsStore;
   /** Resolve a project as `loadConfig` would (index path etc.) after it was written to config.json. */
   resolveProject: (id: string) => ProjectConfig;
   log?: { info(m: string): void; warn(m: string): void };
@@ -90,7 +114,7 @@ export function githubRemote(store: AuthStore, cloneUrl: (repo: string) => strin
     if (!p.github) return undefined;
     const login = p.github.connectedBy;
     const auth = { type: 'https' as const, username: 'x-access-token', token: '' };
-    Object.defineProperty(auth, 'token', { enumerable: true, get: () => store.token(login)?.token ?? '' });
+    Object.defineProperty(auth, 'token', { enumerable: true, get: () => store.tokenCached(login)?.token ?? '' });
     return { url: cloneUrl(p.github.repo), branch: p.branch, auth };
   };
 }
@@ -101,12 +125,10 @@ export type CreateStep = 'clone' | 'init' | 'push' | 'key';
 export type ProgressFn = (step: CreateStep, status: 'start' | 'done') => void;
 
 export async function createProject(deps: AdminDeps, login: string, raw: unknown, progress: ProgressFn = () => undefined) {
-  const parsed = createProjectInputSchema.safeParse(raw);
-  if (!parsed.success) {
-    const i = parsed.error.issues[0]!;
-    throw new AdminError(400, 'invalid_input', `${i.path.join('.') || 'body'}: ${i.message}`, String(i.path[0] ?? ''));
-  }
-  const input = parsed.data;
+  const data = parseProjectInput(createProjectInputSchema, raw);
+  const known = new Set(deps.projects.read().projects.map((p) => p.id));
+  const id = await assignProjectId(data.name, (c) => known.has(c) || !!deps.registry.config(c) || existsSync(path.join(deps.home, 'projects', c)));
+  const input = { ...data, id };
   const folder = input.path ?? '';
   const { registry } = deps;
   if (registry.config(input.id)) throw new AdminError(409, 'project_exists', `a project '${input.id}' already exists`, 'id', 'pick another id');
@@ -117,13 +139,13 @@ export async function createProject(deps: AdminDeps, login: string, raw: unknown
       throw new AdminError(409, 'folder_overlap', `project '${p.id}' already uses ${p.github.repo}${p.github.path ? `/${p.github.path}` : ' (whole repo)'}`, 'path', 'use a separate folder that is not inside (or around) another project’s folder');
     }
   }
-  const tok = deps.store.token(login);
+  const tok = await deps.store.token(login);
   if (!tok) throw new AdminError(401, 'needs_scope', 'no usable GitHub token for your account', 'repo', 'sign in with GitHub again');
   let repo;
   try {
     repo = await deps.github.repo(tok.token, input.repo);
   } catch (e) {
-    if (e instanceof GithubError && e.status === 401) deps.store.markRevoked(login);
+    if (e instanceof GithubError && e.status === 401) void deps.store.markRevoked(login);
     throw new AdminError(e instanceof GithubError && e.status === 404 ? 404 : 502, 'github_error', (e as Error).message, 'repo');
   }
   if (!repo.canPush) throw new AdminError(403, 'github_error', `you cannot push to ${repo.fullName}`, 'repo', 'pick a repo you can write to');
@@ -133,25 +155,43 @@ export async function createProject(deps: AdminDeps, login: string, raw: unknown
     throw new AdminError(400, 'invalid_input', `only the default branch (${repo.defaultBranch}) is supported for an existing repo`, 'branch');
   }
 
-  const github = { repo: repo.fullName, ...(folder ? { path: folder } : {}), connectedBy: login };
-  // Resolve the runtime config (index path, git backend) as if registered, then open: the opener clones.
-  const fileEntry = projectConfigSchema.parse({ id: input.id, name: input.name, ...(input.description ? { description: input.description } : {}), dataDir, github, git: { branch } });
-  const cfgJson = readRawConfig(deps.configPath);
-  const projects = Array.isArray(cfgJson.projects) ? (cfgJson.projects as unknown[]) : [];
-  writeConfigFile(deps.configPath, { ...cfgJson, projects: [...projects, fileEntry] });
+  // Register in projects.json (serialized; id and folder overlap re-checked under the store's lock), then resolve
+  // the runtime config (index path, git backend) and open: the opener clones. config.json is never written.
+  const [owner, name] = repo.fullName.split('/') as [string, string];
+  try {
+    await deps.projects.mutate((reg) => {
+      if (reg.projects.some((p) => p.id === input.id)) throw new AdminError(409, 'project_exists', `a project '${input.id}' already exists`, 'id', 'pick another id');
+      for (const p of reg.projects) {
+        if (p.github && `${p.github.owner}/${p.github.repo}`.toLowerCase() === repo.fullName.toLowerCase() && foldersOverlap(folder, p.github.path ?? '')) {
+          throw new AdminError(409, 'folder_overlap', `project '${p.id}' already uses ${repo.fullName}${p.github.path ? `/${p.github.path}` : ' (whole repo)'}`, 'path', 'use a separate folder that is not inside (or around) another project’s folder');
+        }
+      }
+      reg.projects.push({
+        id: input.id,
+        name: input.name,
+        ...(input.description ? { description: input.description } : {}),
+        dataDir,
+        github: { owner, repo: name, branch, ...(folder ? { path: folder } : {}) },
+        connectedBy: login,
+        createdAt: new Date().toISOString(),
+      });
+    });
+  } catch (e) {
+    throw e instanceof AdminError ? e : new AdminError(500, 'invalid_input', (e as Error).message);
+  }
   let resolved: ProjectConfig;
   try {
     resolved = deps.resolveProject(input.id);
   } catch (e) {
-    writeConfigFile(deps.configPath, cfgJson);
+    await deps.projects.remove(input.id).catch(() => undefined);
     throw new AdminError(500, 'invalid_input', (e as Error).message);
   }
   const rollback = async () => {
     await registry.remove(input.id).catch(() => undefined);
-    writeConfigFile(deps.configPath, { ...readRawConfig(deps.configPath), projects: ((readRawConfig(deps.configPath).projects as { id: string }[]) ?? []).filter((p) => p.id !== input.id) });
+    await deps.projects.remove(input.id).catch(() => undefined);
     await rm(path.dirname(dataDir), { recursive: true, force: true }).catch(() => undefined);
   };
-  registry.add(resolved);
+  if (!registry.config(input.id)) registry.add(resolved);
   let rt;
   progress('clone', 'start');
   try {
@@ -181,7 +221,7 @@ export async function createProject(deps: AdminDeps, login: string, raw: unknown
       }
     }
     if (added.length) {
-      await rt.storage.lock.run(() => rt.git.commit(added, `mandate: initialize project ${input.id}\n\nAgent: github:${login}\n`));
+      await rt.storage.lock.run(() => rt.git.commit(added, `mandate: initialize project ${input.id}\n\nAgent: mandate-ui\n${USER_TRAILER}: ${login}\n${LEGACY_USER_TRAILER}: ${login}\n`));
     }
   } catch (e) {
     await rollback();
@@ -194,7 +234,7 @@ export async function createProject(deps: AdminDeps, login: string, raw: unknown
     progress('push', 'done');
   } catch (e) {
     const msg = (e as Error).message;
-    if (/401|403|auth/i.test(msg)) deps.store.markRevoked(login);
+    if (/401|403|auth/i.test(msg)) void deps.store.markRevoked(login);
     await rollback();
     throw new AdminError(502, 'push_failed', `pushing to ${repo.fullName} failed: ${msg.replace(/x-access-token:[^@\s]*@/g, '')}`, 'repo', 'check that you can push to the branch (protected branches reject direct pushes)');
   }
@@ -218,12 +258,12 @@ export class TokenChecker {
       [...new Set(logins)].map(async (login) => {
         if (Date.now() - (this.checked.get(login) ?? 0) < 300_000) return;
         this.checked.set(login, Date.now());
-        const t = this.store.token(login);
+        const t = await this.store.token(login);
         if (!t) return;
         try {
           await this.github.user(t.token);
         } catch (e) {
-          if (e instanceof GithubError && e.status === 401) this.store.markRevoked(login);
+          if (e instanceof GithubError && e.status === 401) void this.store.markRevoked(login);
         }
       }),
     );
@@ -240,9 +280,17 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps & { au
     deps.log?.warn(`admin: ${(e as Error).message}`);
     return reply.code(500).send({ error: { code: 'internal', message: (e as Error).message } });
   };
-  const post = (req: FastifyRequest, reply: FastifyReply) => {
-    const p = uiGate(req, reply, deps, deps.hostOk);
+  const notAdmin = (reply: FastifyReply, login: string) => {
+    if (deps.auth.isAdmin?.(login) === false) {
+      reply.code(403).send({ error: { code: 'forbidden', message: 'only Mandate admins (auth.github.allowedUsers) can create projects', hint: 'ask an admin to add your GitHub login to allowedUsers' } });
+      return true;
+    }
+    return false;
+  };
+  const post = async (req: FastifyRequest, reply: FastifyReply) => {
+    const p = await uiGate(req, reply, deps, deps.hostOk);
     if (!p || p.kind !== 'ui') return null;
+    if (notAdmin(reply, p.user.login)) return null;
     if (!originOk(req, deps.auth.uiOrigins)) {
       reply.code(403).send({ error: { code: 'forbidden', message: 'Origin must be same-origin' } });
       return null;
@@ -252,13 +300,14 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps & { au
   const upgrade = (scope: string) => `/auth/github/login?scope=${scope}&returnTo=${encodeURIComponent('/?new=1')}`;
 
   app.get('/ui/github/repos', async (req, reply) => {
-    const p = uiGate(req, reply, deps, deps.hostOk);
+    const p = await uiGate(req, reply, deps, deps.hostOk);
     if (!p || p.kind !== 'ui') return reply;
+    if (notAdmin(reply, p.user.login)) return reply;
     const login = p.user.login;
     const q = req.query as { q?: string; owner?: string };
     const needle = String(q.q ?? '').slice(0, 100);
     const owner = typeof q.owner === 'string' && /^[A-Za-z0-9-]{1,39}$/.test(q.owner) ? q.owner : 'all';
-    const tok = deps.store.token(login);
+    const tok = await deps.store.token(login);
     const scopes = tok?.scopes ?? [];
     const clientId = deps.source.current().github?.clientId;
     const base = {
@@ -296,17 +345,17 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps & { au
       items.sort((x, y) => (y.pushedAt ?? '').localeCompare(x.pushedAt ?? ''));
       return { ...base, owners, items };
     } catch (e) {
-      if (e instanceof GithubError && e.status === 401) deps.store.markRevoked(login);
+      if (e instanceof GithubError && e.status === 401) void deps.store.markRevoked(login);
       return send(reply, new AdminError(502, 'github_error', (e as Error).message));
     }
   });
 
   app.post('/ui/github/repos', async (req, reply) => {
-    const login = post(req, reply);
+    const login = await post(req, reply);
     if (!login) return reply;
     const r = createRepoInputSchema.safeParse(req.body);
     if (!r.success) return send(reply, new AdminError(400, 'invalid_input', r.error.issues[0]!.message, String(r.error.issues[0]!.path[0] ?? 'name')));
-    const tok = deps.store.token(login);
+    const tok = await deps.store.token(login);
     if (!tok || needScope(tok.scopes, r.data.private)) return send(reply, new AdminError(403, 'needs_scope', `creating a ${r.data.private ? 'private' : 'public'} repo needs the '${r.data.private ? 'repo' : 'public_repo'}' scope`, 'repo'));
     const owner = r.data.owner && r.data.owner.toLowerCase() !== login.toLowerCase() ? r.data.owner : undefined;
     try {
@@ -319,7 +368,7 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps & { au
   });
 
   app.post('/ui/projects', async (req, reply) => {
-    const login = post(req, reply);
+    const login = await post(req, reply);
     if (!login) return reply;
     // `Accept: application/x-ndjson`: stream progress lines `{ step, status }`, then `{ project }` or `{ error }`.
     if (String(req.headers.accept ?? '').includes('application/x-ndjson')) {

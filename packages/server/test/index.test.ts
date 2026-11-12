@@ -143,9 +143,10 @@ describe('index on seeded data', () => {
     const byDir = await index.codeSearch({ repo: 'app', path: 'src/auth' });
     expect(byDir.refs.map((r) => r.path)).toEqual(expect.arrayContaining(['src/auth/oidc.ts', 'src/auth/session.ts']));
     const overlap = await index.codeSearch({ path: 'src/auth/session.ts', lines: '30-35' });
-    expect(overlap.refs).toHaveLength(1);
-    expect(overlap.refs[0]).toMatchObject({ sectionUri: 'mandate://specs/login-sso/sections/callback', lines: { start: 22, end: 41 } });
-    expect((await index.codeSearch({ path: 'src/auth/session.ts', lines: '50-60' })).refs).toHaveLength(0);
+    // Live data (cloned): other sections may also cover the range (user-sessions/storage refs the whole file).
+    expect(overlap.refs.filter((r) => r.sectionUri.startsWith('mandate://specs/login-sso/'))).toHaveLength(1);
+    expect(overlap.refs.find((r) => r.sectionUri.startsWith('mandate://specs/login-sso/'))).toMatchObject({ sectionUri: 'mandate://specs/login-sso/sections/callback', lines: { start: 22, end: 41 } });
+    expect((await index.codeSearch({ path: 'src/auth/session.ts', lines: '50-60' })).refs.filter((r) => r.sectionUri.startsWith('mandate://specs/login-sso/'))).toHaveLength(0);
     const glob = await index.codeSearch({ glob: 'src/**/*.ts' });
     expect(glob.refs.length).toBeGreaterThanOrEqual(byDir.refs.length);
   });
@@ -400,7 +401,7 @@ describe('incremental and temporal indexing', () => {
 });
 
 describe('section links', () => {
-  it('indexes links_to with rel, derives doc-level uses_standard / depends_on, deviates_from separately', async () => {
+  it('indexes one edge kind per link rel, derives doc-level uses_standard / spec_depends_on', async () => {
     const dir = await tempDir();
     const git = await newStore(dir);
     const storage = createStorage(git);
@@ -420,19 +421,24 @@ describe('section links', () => {
     await index.start();
     const rules = await index.graphNode({ uri: 'mandate://standards/sec/sections/rules' });
     const group = (name: string) => rules.neighbors.find((g) => g.name === name)?.nodes.map((n) => n.uri) ?? [];
-    expect(group('linked_from')).toEqual(expect.arrayContaining(['mandate://specs/login/sections/logging', 'mandate://specs/login/sections/debug']));
+    expect(group('followed_by')).toEqual(['mandate://specs/login/sections/logging']);
     // Section-level standards are links; the doc-level use is derived (marked) from them.
     expect(group('used_by')).toEqual([]);
-    const login = await index.graphNeighbors({ uri: 'mandate://specs/login', direction: 'out', kinds: ['uses_standard', 'depends_on'] });
-    expect(login.edges.map((e) => [e.kind, e.to, e.props?.derived])).toEqual(
+    const login = await index.graphNeighbors({ uri: 'mandate://specs/login', direction: 'out', kinds: ['uses_standard', 'spec_depends_on', 'depends_on'] });
+    expect(login.edges.map((e) => [e.kind, e.to, e.props?.via])).toEqual(
       expect.arrayContaining([
-        ['uses_standard', 'mandate://standards/sec', true],
-        ['depends_on', 'mandate://specs/base', true],
+        ['uses_standard', 'mandate://standards/sec', ['links']],
+        ['spec_depends_on', 'mandate://specs/base', 'links'],
       ]),
     );
+    // P2: the derived document-level dependency never shares the authored section-link kind.
+    expect(login.edges.some((e) => e.kind === 'depends_on' && e.from === 'mandate://specs/login')).toBe(false);
     expect(group('deviated_from_by')).toEqual(['mandate://specs/login/sections/debug']);
-    const links = await index.graphNeighbors({ uri: 'mandate://specs/login/sections/debug', kinds: ['links_to'], direction: 'out' });
-    expect(links.edges[0]!.props).toEqual({ rel: 'deviates_from', note: 'local only' });
+    // `links_to` (deprecated input) expands to the per-rel kinds.
+    const links = await index.graphNeighbors({ uri: 'mandate://specs/login/sections/debug', kinds: ['links_to' as never], direction: 'out' });
+    expect(links.edges.map((e) => e.kind)).toEqual(['deviates_from']);
+    // G-2: the link's metadata (here the server-set author) stays on the edge; `rel` is kept for one release.
+    expect(links.edges[0]!.props).toEqual({ rel: 'deviates_from', note: 'local only', by: 'local' });
     const impact = await index.graphImpact({ uri: 'mandate://specs/base/sections/core' });
     expect(impact.groups.section?.map((n) => n.uri)).toContain('mandate://specs/login/sections/flow');
     const stdImpact = await index.graphImpact({ uri: 'mandate://standards/sec' });

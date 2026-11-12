@@ -14,6 +14,7 @@ import {
   type StoredStandard,
   type WaiverState,
   type WorkOrder,
+  foldIdentity,
 } from '@mandate/shared';
 import { criteriaHash } from './ids.js';
 
@@ -34,6 +35,8 @@ export interface Model {
   feedback?: StoredFeedback[];
   /** Author of each feedback item (createdBy, else from history). */
   feedbackAuthor?: (id: string) => string | null;
+  /** Who accepted a feedback item (principal of the accepting commit), null when unknown / not accepted. */
+  feedbackAcceptor?: (id: string) => string | null;
 }
 
 export const ACCEPTANCE = 'acceptance';
@@ -111,7 +114,8 @@ export function liveSuccessors(m: Pick<Model, 'specs' | 'standards' | 'component
   const out = new Map<string, string[]>();
   for (const [kind, docs] of [['specs', m.specs], ['standards', m.standards], ['components', m.components ?? []]] as const) {
     for (const d of docs) {
-      if (docArchived(d)) continue;
+      // MW-8: a deprecated standard's sections are no longer live successors (its own successor replaces it).
+      if (docArchived(d) || (kind === 'standards' && (d as StoredStandard).status === 'deprecated')) continue;
       for (const s of d.sections) {
         if (s.archived) continue;
         for (const l of s.links) if (l.rel === 'supersedes') out.set(l.to, [...(out.get(l.to) ?? []), sectionUri(kind, d.id, s.id)]);
@@ -191,6 +195,18 @@ export interface Approval {
   by?: string;
 }
 
+/**
+ * Approval policy (user decision): the feedback behind a waiver, exemption or criteria removal must be filed AND accepted
+ * by someone other than its writer (`waiver_self_approved`), unless the acceptance carries an approval override
+ * (feedback_accept override: true + overrideReason; only the sole active user, an admin, or local mode). The switch
+ * exists for tests only.
+ */
+export const waiverPolicy = { acceptorMustDiffer: true };
+
+/** Normalised identity (trimmed, case-folded): `Giulia` and ` giulia ` are one person; the id of the user / agent node. */
+export const principalKey = (who: string) => foldIdentity(who);
+export const samePrincipal = (a: string, b: string) => principalKey(a) === principalKey(b);
+
 /** Is a waiver / exemption approved: accepted (or applied) feedback by someone other than the author of the waiver. */
 export function approval(a: Approval, m: Model): WaiverState {
   if (!a.feedback) return { effective: false, reason: 'no_feedback' };
@@ -198,8 +214,14 @@ export function approval(a: Approval, m: Model): WaiverState {
   if (!fb) return { effective: false, reason: 'feedback_missing', feedback: a.feedback };
   const ok = fb.status === 'accepted' || (fb.status === 'closed' && fb.resolution === 'applied');
   if (!ok) return { effective: false, reason: 'not_accepted', feedback: a.feedback };
-  const author = m.feedbackAuthor?.(fb.id) ?? fb.createdBy ?? null;
-  if (!a.by || !author || author === a.by) return { effective: false, reason: 'same_author', feedback: a.feedback };
+  // An approval override (recorded, warned on by integrity) lets the accepter approve its own waiver.
+  if (fb.approvalOverride && a.by) return { effective: true, feedback: a.feedback };
+  // MW-2: principals, not client strings: the user (server mode) else the agent identity, trimmed and case-folded.
+  const author = m.feedbackAuthor?.(fb.id) ?? fb.createdByUser ?? fb.createdBy ?? null;
+  if (!a.by || !author || samePrincipal(author, a.by)) return { effective: false, reason: 'same_author', feedback: a.feedback };
+  // The acceptance must come from someone other than the writer of the waiver as well.
+  const acceptor = waiverPolicy.acceptorMustDiffer ? (m.feedbackAcceptor?.(fb.id) ?? null) : null;
+  if (acceptor && samePrincipal(acceptor, a.by)) return { effective: false, reason: 'self_approved', feedback: a.feedback };
   return { effective: true, feedback: a.feedback };
 }
 
@@ -236,8 +258,10 @@ export function specCriteria(spec: StoredSpec, m: Model): SpecCriteria {
     const paths = refPaths(section ? [section] : null);
     return !paths.length || paths.some((p) => inScope(sc, p));
   };
-  const add = (c: InheritedCriterion, section: string | null) => {
-    if (!inScopeOf(c, section)) return;
+  // G-8: an explicit `follows` brings all criteria of its target (a whole standard: all its rules); scope narrows
+  // only what appliesTo brings (and `rulesForCode`), so the rule set, the gate and the audit plan agree.
+  const add = (c: InheritedCriterion, section: string | null, explicit = false) => {
+    if (!explicit && !inScopeOf(c, section)) return;
     const cur = byUri.get(c.uri) ?? { ...c, sections: [], spec: false };
     if (section) {
       if (!cur.sections.includes(section)) cur.sections.push(section);
@@ -251,7 +275,7 @@ export function specCriteria(spec: StoredSpec, m: Model): SpecCriteria {
       const t = parseLinkTarget(l.to);
       if (t?.kind !== 'standards') continue;
       stdEntry(t.id).sections.push({ id: s.id, target: l.to });
-      for (const c of criteriaOf(l.to, f, [`${s.id} follows ${t.sectionId ? `${t.id}/${t.sectionId}` : t.id}`])) add(c, s.id);
+      for (const c of criteriaOf(l.to, f, [`${s.id} follows ${t.sectionId ? `${t.id}/${t.sectionId}` : t.id}`])) add(c, s.id, true);
     }
   }
   const exempt = new Set(effectiveExemptions(spec, m).map((e) => e.standard));
@@ -287,6 +311,18 @@ export function specCriteria(spec: StoredSpec, m: Model): SpecCriteria {
   return { inherited: [...byUri.values()], waivers, standards: [...standards.values()].filter((x) => x.sections.length || x.appliesBy.length || x.exempt) };
 }
 
+/**
+ * Live sections of a spec without any criterion: an acceptance section covers itself; another section is covered by a
+ * live acceptance section it lists in `verifiedBy`, or by inherited criteria attached to it (it follows a standard /
+ * rule). The ready gate requires none.
+ */
+export function sectionsWithoutCriteria(spec: StoredSpec, m: Model): string[] {
+  const live = spec.sections.filter((s) => !s.archived);
+  const criteria = new Set(live.filter((s) => s.type === ACCEPTANCE).map((s) => s.id));
+  const inherited = new Set(specCriteria(spec, m).inherited.flatMap((c) => c.sections));
+  return live.filter((s) => s.type !== ACCEPTANCE && !s.verifiedBy.some((v) => criteria.has(v)) && !inherited.has(s.id)).map((s) => s.id);
+}
+
 /** Pin of a waiver: hash of the criteria its target brings (stored on the link when approved). */
 export const waiverPin = (to: string, m: Pick<Model, 'specs' | 'standards'>) => criteriaHash(criteriaOf(to, finder(m)).map((c) => c.section));
 
@@ -296,6 +332,30 @@ export interface GraphProblem {
   rule: string;
   uri: string;
   message: string;
+  /** Every node involved (cycle members, the superseded target and its successors). */
+  nodes?: string[];
+}
+
+/** A cycle through one of the `focus` nodes (MW-3: an unrelated cycle elsewhere never hides it). */
+function cycleThrough(edges: Map<string, string[]>, focus: (uri: string) => boolean): string[] | null {
+  for (const start of edges.keys()) {
+    if (!focus(start)) continue;
+    // DFS from start's successors back to start (paths recorded as parents).
+    const parent = new Map<string, string>();
+    const stack = [...(edges.get(start) ?? [])].map((n) => [n, start] as const);
+    while (stack.length) {
+      const [n, from] = stack.pop()!;
+      if (parent.has(n)) continue;
+      parent.set(n, from);
+      if (n === start) {
+        const path: string[] = [];
+        for (let x = from; x !== start; x = parent.get(x)!) path.push(x);
+        return [start, ...path.reverse(), start];
+      }
+      for (const m of edges.get(n) ?? []) if (!parent.has(m)) stack.push([m, n]);
+    }
+  }
+  return null;
 }
 
 const short = (u: string) => u.replace('mandate://', '');
@@ -305,8 +365,10 @@ const short = (u: string) => u.replace('mandate://', '');
  * (a spec depends on a spec when one of its sections depends on one of the other's sections);
  * `extends` acyclic at document level among standards; `supersedes` acyclic with at most one live successor.
  */
-export function graphProblems(m: Pick<Model, 'specs' | 'standards' | 'components'>): GraphProblem[] {
+export function graphProblems(m: Pick<Model, 'specs' | 'standards' | 'components'>, focus?: (uri: string) => boolean): GraphProblem[] {
   const out: GraphProblem[] = [];
+  // With a focus (a write): every cycle through the focused nodes, each graph checked on its own (MW-3).
+  const cycle = (edges: Map<string, string[]>) => (focus ? cycleThrough(edges, focus) : findCycle(edges));
   const sec = new Map<string, string[]>();
   const docs = new Map<string, string[]>();
   for (const spec of m.specs) {
@@ -319,11 +381,11 @@ export function graphProblems(m: Pick<Model, 'specs' | 'standards' | 'components
     const d = derivedDependsOn(spec).map((id) => docUri('specs', id));
     if (d.length) docs.set(specKey, d);
   }
-  const c1 = findCycle(sec);
-  if (c1) out.push({ rule: 'depends_on_cycle', uri: c1[0]!, message: `depends_on cycle: ${c1.map(short).join(' -> ')}` });
-  else {
-    const c2 = findCycle(docs);
-    if (c2) out.push({ rule: 'depends_on_cycle', uri: c2[0]!, message: `spec dependency cycle (from section depends_on links): ${c2.map(short).join(' -> ')}` });
+  const c1 = cycle(sec);
+  if (c1) out.push({ rule: 'depends_on_cycle', uri: c1[0]!, message: `depends_on cycle: ${c1.map(short).join(' -> ')}`, nodes: c1 });
+  if (!c1 || focus) {
+    const c2 = cycle(docs);
+    if (c2) out.push({ rule: 'depends_on_cycle', uri: c2[0]!, message: `spec dependency cycle (from section depends_on links): ${c2.map(short).join(' -> ')}`, nodes: c2 });
   }
   // Component dependencies: acyclic at section and component level (checked separately from specs).
   const csec = new Map<string, string[]>();
@@ -341,13 +403,13 @@ export function graphProblems(m: Pick<Model, 'specs' | 'standards' | 'components
     }
     if (targets.size) cdoc.set(docUri('components', c.id), [...targets]);
   }
-  const c5 = findCycle(csec) ?? findCycle(cdoc);
-  if (c5) out.push({ rule: 'component_cycle', uri: c5[0]!, message: `component depends_on cycle: ${c5.map(short).join(' -> ')}` });
+  const c5 = cycle(csec) ?? cycle(cdoc);
+  if (c5) out.push({ rule: 'component_cycle', uri: c5[0]!, message: `component depends_on cycle: ${c5.map(short).join(' -> ')}`, nodes: c5 });
   // Containment (parent): a tree, so the parent chain never comes back to the component.
   const parents = new Map<string, string[]>();
   for (const c of m.components ?? []) if (c.parent) parents.set(docUri('components', c.id), [docUri('components', c.parent)]);
-  const c6 = findCycle(parents);
-  if (c6) out.push({ rule: 'contains_cycle', uri: c6[0]!, message: `component containment cycle (parent): ${c6.map(short).join(' -> ')}` });
+  const c6 = cycle(parents);
+  if (c6) out.push({ rule: 'contains_cycle', uri: c6[0]!, message: `component containment cycle (parent): ${c6.map(short).join(' -> ')}`, nodes: c6 });
   const ext = new Map<string, string[]>();
   for (const std of m.standards) {
     const targets = new Set<string>();
@@ -355,15 +417,15 @@ export function graphProblems(m: Pick<Model, 'specs' | 'standards' | 'components
     targets.delete(docUri('standards', std.id));
     if (targets.size) ext.set(docUri('standards', std.id), [...targets]);
   }
-  const c3 = findCycle(ext);
-  if (c3) out.push({ rule: 'extends_cycle', uri: c3[0]!, message: `extends cycle between standards: ${c3.map(short).join(' -> ')}` });
+  const c3 = cycle(ext);
+  if (c3) out.push({ rule: 'extends_cycle', uri: c3[0]!, message: `extends cycle between standards: ${c3.map(short).join(' -> ')}`, nodes: c3 });
   const sup = new Map<string, string[]>();
   for (const [kind, list] of [['specs', m.specs], ['standards', m.standards]] as const)
     for (const d of list) for (const s of d.sections) for (const l of s.links) if (l.rel === 'supersedes') sup.set(sectionUri(kind, d.id, s.id), [...(sup.get(sectionUri(kind, d.id, s.id)) ?? []), l.to]);
-  const c4 = findCycle(sup);
-  if (c4) out.push({ rule: 'supersedes_cycle', uri: c4[0]!, message: `supersedes cycle: ${c4.map(short).join(' -> ')}` });
+  const c4 = cycle(sup);
+  if (c4) out.push({ rule: 'supersedes_cycle', uri: c4[0]!, message: `supersedes cycle: ${c4.map(short).join(' -> ')}`, nodes: c4 });
   for (const [target, sources] of liveSuccessors(m)) {
-    if (sources.length > 1) out.push({ rule: 'supersedes_successors', uri: target, message: `${short(target)} has ${sources.length} live successors (${sources.map(short).join(', ')}); at most one is allowed` });
+    if (sources.length > 1) out.push({ rule: 'supersedes_successors', uri: target, message: `${short(target)} has ${sources.length} live successors (${sources.map(short).join(', ')}); at most one is allowed`, nodes: [target, ...sources] });
   }
   return out;
 }

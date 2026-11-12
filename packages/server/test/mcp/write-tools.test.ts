@@ -6,7 +6,7 @@
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { AUTHORING_GUIDANCE, SPEC_TRANSITIONS, STORED_SPEC_STATUSES } from '@mandate/shared';
+import { SPEC_TRANSITIONS, STORED_SPEC_STATUSES } from '@mandate/shared';
 import { connect, mcpFixture, type McpFixture } from './fixture.js';
 import { FileIdempotencyStore } from '../../src/mcp/idempotency.js';
 import { toWriteError } from '../../src/mcp/errors.js';
@@ -53,8 +53,9 @@ async function newSpec(opts: { criteria?: boolean; title?: string } = {}) {
     title: opts.title ?? `Spec ${id}`,
     summary: 'A test spec.',
     sections: [
-      { id: 'overview', title: 'Overview', summary: 'What it does.', body: 'The overview.' },
-      { id: 'design', title: 'Design', summary: 'How it works.', body: 'The design.' },
+      // Ready gate: every section has a criterion (verifiedBy the acceptance section).
+      { id: 'overview', title: 'Overview', summary: 'What it does.', body: 'The overview.', ...(opts.criteria === false ? {} : { verifiedBy: ['ac-works'] }) },
+      { id: 'design', title: 'Design', summary: 'How it works.', body: 'The design.', ...(opts.criteria === false ? {} : { verifiedBy: ['ac-works'] }) },
       ...(opts.criteria === false ? [] : [{ id: 'ac-works', title: 'It works', type: 'acceptance', method: 'test', summary: 'The feature works.', body: 'A test proves it works.' }]),
     ],
   });
@@ -73,10 +74,12 @@ describe('tools/list', () => {
       'feedback_create', 'feedback_update', 'feedback_accept', 'feedback_close', 'verification_record', 'spec_diff_since_implemented',
     ];
     expect(names).toEqual(expect.arrayContaining(expected));
+    // The section guide lives on spec_section_insert; the others point at it (prompts review 4.1).
+    expect(tools.find((x) => x.name === 'spec_section_insert')!.description).toContain('one concept each');
+    expect(tools.find((x) => x.name === 'spec_section_update')!.description).toContain('Section guide: spec_section_insert');
     for (const n of ['spec_section_insert', 'spec_section_update', 'standard_section_insert', 'spec_create']) {
       const t = tools.find((x) => x.name === n)!;
-      expect(t.description).toContain(AUTHORING_GUIDANCE.split('\n')[1]!.slice(0, 40));
-      expect(t.description).toMatch(/summary/);
+      if (n === 'spec_section_insert') expect(t.description).toMatch(/summary/);
       expect(t.annotations?.readOnlyHint).toBe(false);
       expect(Object.keys((t.inputSchema as { properties: object }).properties)).toEqual(expect.arrayContaining(['agent', 'branch', 'idempotencyKey']));
     }
@@ -163,7 +166,7 @@ describe('error codes', () => {
   it('transition_not_allowed (spec and work order)', async () => {
     const id = await newSpec({ criteria: false });
     expect((await fail('spec_status_set', { ref: id, status: 'done' })).code).toBe('transition_not_allowed');
-    const wo = await ok('work_order_create', { spec: id, sections: ['overview'], kind: 'review' });
+    const wo = await ok('work_order_create', { plan: 'The plan.', spec: id, sections: ['overview'], kind: 'review' });
     await ok('work_order_cancel', { ref: wo.ref, note: 'not needed' });
     expect((await fail('work_order_claim', { ref: wo.ref })).code).toBe('transition_not_allowed');
     expect((await fail('work_order_fail', { ref: wo.ref, note: 'x' })).code).toBe('transition_not_allowed');
@@ -171,19 +174,27 @@ describe('error codes', () => {
 
   it('claim_conflict and stale_claim', async () => {
     const id = await newSpec({ criteria: false });
-    const wo = await ok('work_order_create', { spec: id, sections: ['overview'], kind: 'implement' });
+    const wo = await ok('work_order_create', { plan: 'The plan.', spec: id, sections: ['overview'], kind: 'implement' });
     await ok('work_order_claim', { ref: wo.ref, agent: 'agent-a' });
     expect((await fail('work_order_claim', { ref: wo.ref, agent: 'agent-b' })).code).toBe('claim_conflict');
     expect((await fail('work_order_section_done', { ref: wo.ref, sections: ['overview'], agent: 'agent-b' })).code).toBe('claim_conflict');
     expect((await fail('work_order_heartbeat', { ref: wo.ref, agent: 'agent-b' })).code).toBe('claim_conflict');
     // Make agent-a's claim stale (as if it stopped heartbeating an hour ago).
     const woId = wo.ref.split('/').pop();
-    const cur = await fx.storage.workOrders.get(woId);
+    // Heartbeats are runtime state: an old claim, an old heartbeat and a server that started long ago.
     const old = new Date(Date.now() - 3600_000).toISOString();
-    await fx.storage.workOrders.update(woId, { claim: { ...cur.claim!, heartbeatAt: old } } as never, { agent: 'agent-a' });
-    expect((await fail('work_order_complete', { ref: wo.ref, agent: 'agent-b' })).code).toBe('stale_claim');
+    await fx.storage.workOrderDocs.modify(woId, (d) => ({ ...d, claim: { ...d.claim!, startedAt: old } }), { agent: 'agent-a' });
+    fx.storage.heartbeats.set(woId, 'agent-a', old);
+    const hb = fx.storage.heartbeats as { startedAt: number };
+    const started = hb.startedAt;
+    hb.startedAt = 0;
+    expect((await fail('work_order_complete', { ref: wo.ref, agent: 'agent-b', outcome: 'x' })).code).toBe('stale_claim');
+    hb.startedAt = started;
+    fx.storage.heartbeats.set(woId, 'agent-a', old);
+    hb.startedAt = 0;
     // Claiming takes the stale claim over.
     expect((await ok('work_order_claim', { ref: wo.ref, agent: 'agent-b' })).workOrder.item.claim.agent).toBe('agent-b');
+    hb.startedAt = started;
   });
 
   it('cycle and superseded_target', async () => {
@@ -209,14 +220,14 @@ describe('error codes', () => {
     expect((await fail('feedback_accept', { ref: fb.ref })).code).toBe('feedback_closed');
     expect((await fail('spec_section_update', { ref: `mandate://specs/${id}/sections/nope`, body: 'x' })).code).toBe('not_found');
     expect((await fail('work_order_claim', { ref: 'wo-doesnotexist' })).code).toBe('not_found');
-    expect((await fail('spec_section_insert', { doc: id, section: { id: 'overview', title: 'Again' } })).code).toBe('validation');
+    expect((await fail('spec_section_insert', { doc: id, section: { id: 'overview', title: 'Again' } })).code).toBe('id_reused'); // registry: id_reused (Fable drift fix)
     expect((await fail('feedback_close', { ref: (await ok('feedback_create', { targets: [`mandate://specs/${id}/sections/design`], kind: 'bug', body: 'b' })).ref, resolution: 'rejected' })).code).toBe('validation');
     const v = await fail('spec_section_move', { ref: `mandate://specs/${id}/sections/design`, after: 'overview', before: 'overview' });
     expect(v.code).toBe('validation');
     // append_only (no tool can update a result; the storage error maps to append_only).
     expect(toWriteError(new AppendOnlyError('append_only: verification records cannot be updated')).code).toBe('append_only');
     // A referenced section cannot vanish; archiving is the way.
-    const wo = await ok('work_order_create', { spec: id, sections: ['design'], kind: 'implement' });
+    const wo = await ok('work_order_create', { plan: 'The plan.', spec: id, sections: ['design'], kind: 'implement' });
     expect(wo.ref).toMatch(/^mandate:\/\/work-orders\//);
     const spec = await fx.storage.specs.get(id);
     await expect(fx.storage.specs.update(id, { sections: spec.sections.filter((s) => s.id !== 'design') } as never, { agent: AGENT })).rejects.toMatchObject({ code: 'section_referenced' });
@@ -241,12 +252,14 @@ describe('error codes', () => {
 
 describe('transition tables', () => {
   it('spec: every allowed transition succeeds, every other one is transition_not_allowed', async () => {
-    // A spec with no criteria passes the done gate (with a warning).
+    // Every section has a criterion (ready gate); the criterion is verified before done (done gate).
     let checked = 0;
+    const pass = (id: string) => ok('verification_record', { criterion: `mandate://specs/${id}/sections/ac-works`, code: { repo: 'app', commit: 'abc1234' }, result: 'pass', method: 'test' });
     for (const from of STORED_SPEC_STATUSES) {
       for (const to of STORED_SPEC_STATUSES) {
         if (from === to) continue;
-        const id = await newSpec({ criteria: false });
+        const id = await newSpec();
+        await pass(id);
         const path: Record<string, string[]> = { draft: [], ready: ['ready'], done: ['ready', 'done'], archived: ['archived'] };
         for (const s of path[from]!) await ok('spec_status_set', { ref: id, status: s });
         const r = await fx.call('spec_status_set', { agent: AGENT, ref: id, status: to });
@@ -260,7 +273,7 @@ describe('transition tables', () => {
 
   it('work orders and feedback through their tools', async () => {
     const id = await newSpec({ criteria: false });
-    const wo = await ok('work_order_create', { spec: id, sections: ['overview', 'design'], kind: 'review', priority: 'p1' });
+    const wo = await ok('work_order_create', { plan: 'The plan.', spec: id, sections: ['overview', 'design'], kind: 'review', priority: 'p1' });
     expect(wo.workOrder.item.status).toBe('pending');
     expect((await ok('work_order_claim', { ref: wo.ref })).workOrder.item.status).toBe('in_progress');
     expect((await ok('work_order_heartbeat', { ref: wo.ref })).workOrder.item.claim.agent).toBe(AGENT);
@@ -268,13 +281,16 @@ describe('transition tables', () => {
     expect((await ok('work_order_fail', { ref: wo.ref, note: 'flaky env' })).workOrder.item.status).toBe('failed');
     expect((await ok('work_order_claim', { ref: wo.ref })).workOrder.item.status).toBe('in_progress');
     expect((await ok('work_order_section_done', { ref: wo.ref, sections: ['overview'] })).workOrder.item.sections[0].status).toBe('done');
-    const done = await ok('work_order_complete', { ref: wo.ref });
+    const done = await ok('work_order_complete', { ref: wo.ref, outcome: 'Delivered.' });
     expect(done.workOrder.item.status).toBe('done');
     expect(done.workOrder.item.claim).toBeUndefined();
     expect((await fail('work_order_cancel', { ref: wo.ref })).code).toBe('transition_not_allowed');
     const fb = await ok('feedback_create', { targets: [`mandate://specs/${id}/sections/overview`], kind: 'improvement', body: 'Better.' });
     expect((await ok('feedback_accept', { ref: fb.ref })).feedback.status).toBe('accepted');
     expect((await ok('feedback_update', { ref: fb.ref, body: 'Much better.' })).feedback.body).toBe('Much better.');
+    // DF-12: applied needs a linked change (here: the edit that addresses it).
+    expect((await fail('feedback_close', { ref: fb.ref, resolution: 'applied' })).code).toBe('applied_without_changes');
+    await ok('spec_section_update', { ref: `mandate://specs/${id}/sections/overview`, body: 'Better overview.', addresses: [fb.ref] });
     expect((await ok('feedback_close', { ref: fb.ref, resolution: 'applied' })).feedback).toMatchObject({ status: 'closed', resolution: 'applied' });
   });
 });
@@ -305,7 +321,7 @@ describe('done gate', () => {
 describe('claims and work_order_next', () => {
   it('two clients race for the only eligible work order: exactly one wins', async () => {
     const id = await newSpec({ criteria: false });
-    await ok('work_order_create', { spec: id, sections: ['overview'], kind: 'implement', priority: 'p0' });
+    await ok('work_order_create', { plan: 'The plan.', spec: id, sections: ['overview'], kind: 'implement', priority: 'p0' });
     const c2 = await connect(fx.url, 'racer-2');
     const call = async (client: typeof fx.client, agent: string) =>
       (await client.callTool({ name: 'work_order_next', arguments: { agent, spec: id } })).structuredContent as Record<string, any>;
@@ -321,8 +337,8 @@ describe('claims and work_order_next', () => {
     const up = await newSpec({ criteria: false });
     const id = await newSpec({ criteria: false });
     await ok('spec_section_link_add', { ref: `mandate://specs/${id}/sections/design`, to: `mandate://specs/${up}/sections/design`, rel: 'depends_on' });
-    const blocked = await ok('work_order_create', { spec: id, sections: ['design'], kind: 'implement', priority: 'p0' });
-    const low = await ok('work_order_create', { spec: id, sections: ['overview'], kind: 'implement', priority: 'p3' });
+    const blocked = await ok('work_order_create', { plan: 'The plan.', spec: id, sections: ['design'], kind: 'implement', priority: 'p0' });
+    const low = await ok('work_order_create', { plan: 'The plan.', spec: id, sections: ['overview'], kind: 'implement', priority: 'p3' });
     const r = await ok('work_order_next', { spec: id, agent: 'picker' });
     expect(r.ref).toBe(low.ref);
     expect(r.skipped).toEqual(expect.arrayContaining([expect.objectContaining({ id: blocked.ref.split('/').pop(), reason: expect.stringMatching(/blocked/) })]));
@@ -362,9 +378,9 @@ describe('read-your-write', () => {
     expect(JSON.stringify(res.contents)).toContain(marker);
     const hits = await read('text_search', { q: marker });
     expect(hits.matches[0].uri).toMatch(new RegExp(`^mandate://specs/${id}/sections/design#L`));
-    const n = await read('graph_neighbors', { uri: `mandate://specs/${id}/sections/design`, direction: 'out', kinds: ['links_to'] });
+    const n = await read('graph_neighbors', { uri: `mandate://specs/${id}/sections/design`, direction: 'out', kinds: ['depends_on'] });
     expect(n.nodes.map((x: { uri: string }) => x.uri)).toContain(`mandate://specs/${other}/sections/design`);
-    const deps = await read('graph_neighbors', { uri: `mandate://specs/${id}`, direction: 'out', kinds: ['depends_on'] });
+    const deps = await read('graph_neighbors', { uri: `mandate://specs/${id}`, direction: 'out', kinds: ['spec_depends_on'] });
     expect(deps.nodes.map((x: { uri: string }) => x.uri)).toContain(`mandate://specs/${other}`);
   });
 });
@@ -372,7 +388,7 @@ describe('read-your-write', () => {
 describe('full agent workflow', () => {
   it('next -> claim -> read -> edit -> verify -> section_done -> complete, with feedback filed and closed', async () => {
     const id = await newSpec();
-    const wo = await ok('work_order_create', { spec: id, sections: ['design', 'ac-works'], kind: 'implement', priority: 'p0', note: 'build it' });
+    const wo = await ok('work_order_create', { plan: 'The plan.', spec: id, sections: ['design', 'ac-works'], kind: 'implement', priority: 'p0', note: 'build it' });
     const agent = 'workflow-agent@ci';
     const next = await ok('work_order_next', { agent, spec: id, branch: 'feat/flow' });
     expect(next.ref).toBe(wo.ref);
@@ -394,7 +410,7 @@ describe('full agent workflow', () => {
     const sd = await ok('work_order_section_done', { agent, ref: wo.ref, sections: ['design'] });
     expect(sd.commits.length).toBe(2); // spec (implementedCommit) + work order
     expect(git('log', '-2', '--format=%B')).toMatch(/Work-Order:/);
-    const complete = await ok('work_order_complete', { agent, ref: wo.ref });
+    const complete = await ok('work_order_complete', { agent, ref: wo.ref, outcome: 'Delivered.' });
     expect(complete.workOrder.item.status).toBe('done');
     await ok('feedback_close', { agent: 'owner', ref: fb.ref, resolution: 'applied' });
     const closed = await read('feedback_get', { ref: fb.ref });

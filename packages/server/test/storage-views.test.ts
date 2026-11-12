@@ -90,6 +90,8 @@ describe('documents', () => {
       expect.objectContaining({ id: 'html', fence: 'html' }),
       expect.objectContaining({ id: 'acceptance' }),
       expect.objectContaining({ id: 'rule', label: 'Rule' }),
+      expect.objectContaining({ id: 'audit-item', label: 'Audit item' }),
+      expect.objectContaining({ id: 'wo-section', label: 'Work-order section' }),
     ]);
   });
 
@@ -105,7 +107,7 @@ describe('documents', () => {
   it('work orders default to pending; standards usage; git status and pull', async () => {
     await spec({ id: 'qs', title: 'QS', sections: [{ id: 'a', title: 'A', body: 'x' }] });
     const wo = await s.workOrderService.create(createWorkOrderSchema.parse({ spec: 'qs', kind: 'implement', sections: [{ id: 'a' }] }) as never);
-    expect(wo.id).toMatch(/^wo-/);
+    expect(wo.id).toMatch(/^q-\d{4}$/);
     expect(wo).toMatchObject({ status: 'pending' });
     expect(() => updateWorkOrderSchema.parse({ status: 'nope' })).toThrow();
     expect(() => createWorkOrderSchema.parse({ spec: 'qs', kind: 'review', sections: [] })).toThrow();
@@ -145,10 +147,11 @@ describe('feedback', () => {
   it('validates targets and resolutions', async () => {
     await spec(doc('fs'));
     const f1 = await fb({ targets: ['mandate://specs/fs/sections/a#L12'], kind: 'ambiguity', body: 'How often?', quote: 'x' });
-    expect(f1.id).toMatch(/^fb-[0-9a-z]{26}$/);
+    expect(f1.id).toMatch(/^fb-\d{4}$/);
     expect(f1).toMatchObject({ status: 'open', changes: [], warnings: [], createdBy: 'local' });
     expect(f1).not.toHaveProperty('source');
-    for (const bad of [[], ['mandate://specs/nope'], ['mandate://specs/fs/sections/zz'], ['https://x']]) {
+    // An intake bug may start without targets (C1); bad targets are still rejected.
+    for (const bad of [['mandate://specs/nope'], ['mandate://specs/fs/sections/zz'], ['https://x']]) {
       await expect(fb({ targets: bad, kind: 'bug', body: 'b' }), JSON.stringify(bad)).rejects.toThrow();
     }
     const close = (patch: object) => updFb(f1.id, { status: 'closed', ...patch });
@@ -231,6 +234,10 @@ describe('feedback', () => {
     await expect(fb({ targets: ['mandate://specs/w'], kind: 'bug', body: 'whole doc' })).rejects.toThrow();
     await fb({ id: 'fb-0001', targets: ['mandate://specs/w/sections/a'], kind: 'bug', body: 'b1' });
     await fb({ id: 'fb-0002', targets: ['mandate://specs/w/sections/a'], kind: 'bug', body: 'b2' });
+    // DF-12: applied needs a linked change; an explicit commit link (relatedTo) is one, but no Feedback-trailer commit
+    // changed a document, so the warning stays.
+    await expect(updFb('fb-0001', { status: 'closed', resolution: 'applied' })).rejects.toThrow(/applied_without_changes/);
+    await updFb('fb-0001', { relatedTo: [`mandate://commits/${(await s.git.head())!}`] });
     expect((await updFb('fb-0001', { status: 'closed', resolution: 'applied' })).warnings[0]).toMatch(/no commit/);
     expect(await updFb('fb-0002', { status: 'closed', resolution: 'duplicate', duplicateOf: 'fb-0001' })).toMatchObject({ resolution: 'duplicate', duplicateOf: 'fb-0001' });
     expect((await fb({ targets: ['mandate://specs/w/sections/b'], kind: 'question', body: 'follow-up', relatedTo: ['fb-0001'] })).relatedTo).toEqual(['fb-0001']);

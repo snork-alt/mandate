@@ -1,4 +1,5 @@
 import {
+  HoverCard,
   ActionIcon,
   Badge,
   Button,
@@ -87,5 +88,7 @@ export const theme = createTheme({
     Modal: Modal.extend({ defaultProps: { radius: 'lg', centered: true, overlayProps: { blur: 2, backgroundOpacity: 0.4 } } }),
     Paper: Paper.extend({ defaultProps: { radius: 'md' } }),
     Kbd: Kbd.extend({ defaultProps: { size: 'xs' } }),
+    // X5: hover cards also open on keyboard focus and on tap (touch devices have no hover).
+    HoverCard: HoverCard.extend({ defaultProps: { events: { hover: true, focus: true, touch: true } } }),
   },
 });

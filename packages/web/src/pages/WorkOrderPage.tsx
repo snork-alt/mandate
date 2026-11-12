@@ -1,98 +1,77 @@
-import { useMemo, useState } from 'react';
-import { Alert, Button, Skeleton, Text } from '@mantine/core';
-import { IconAlertTriangle, IconCircleCheckFilled, IconCircleDashed, IconCircleOff, IconFileText, IconGitCommit } from '@tabler/icons-react';
+import { Markdown } from '../components/Markdown';
+import { QuestionsPanel } from '../components/questions/QuestionsPanel';
+import { useEffect, useMemo } from 'react';
+import { Alert, Skeleton, Tooltip } from '@mantine/core';
+import { IconAlertTriangle, IconArrowRight, IconBolt, IconCircleCheckFilled, IconCircleDashed, IconCircleOff, IconFileText } from '@tabler/icons-react';
 import { useQuery } from '@tanstack/react-query';
-import type { ResolvedWorkOrderSection, Section, Spec } from '@mandate/shared';
-import { Link, useParams, useSearchParams } from 'react-router';
-import { api } from '../api';
+import { Link, useLocation, useParams } from 'react-router';
 import { buildRef } from '@mandate/shared/refs';
-import { ClaimCard, CriterionStateIcon, DocPage, Pill, PriorityIcon, SectionBlock } from '../components/doc';
-import { TrackedSection } from '../components/doc/tracked';
+import { api } from '../api';
+import { ClaimAvatar, ClaimCard, CriterionStateIcon, DocPage, Pill, PriorityIcon } from '../components/doc';
+import { DecisionDialogs, ItemMenu } from '../components/decisions/DecisionActions';
+import { itemPrompt } from '../lib/prompts';
+import { compactTime } from '../lib/time';
+import { emptyScaffolding, splitTitle } from '../lib/workOrderLayout';
+import '../components/work-orders/wo-page.css';
+import { useTrackedChanges } from '../components/doc/tracked';
 import { EmptyView, ErrorState } from '../components/ListStates';
 import { Prop, PropGroup } from '../components/PropertyList';
 import { WORK_ORDER_STATUS_META, WorkOrderStatusIcon } from '../components/WorkOrderStatusIcon';
 import { TimeAgo } from '../components/TimeAgo';
 import { TopBar } from '../components/TopBar';
 import { DependencyGraph } from '../components/DependencyGraph';
-import { useFeedback, useStandards } from '../lib/queries';
 import { FeedbackList } from '../components/FeedbackParts';
-import { sectionTarget } from '../lib/refs';
-import { categoryLabel, PRIORITY_META, useNow } from '../lib/specs';
-import { KIND_LABEL } from '../lib/specs';
+import { useFeedback, useHistory, useSpec, useStandards } from '../lib/queries';
+import { categoryLabel, isStale, KIND_LABEL, PRIORITY_META, useNow, withFrontmatter } from '../lib/specs';
+import { CodeTouched, CommentCount, CommentList, GitPanel, SectionProgress, WorkOrderGitSummary, WorkOrderViewContext } from '../components/work-orders/parts';
+import { WoSectionBadge } from '../components/work-orders/WoSection';
+import { plural } from '../lib/audits';
+import { SpecMaturityDot } from '../components/maturity/SpecMaturity';
 
-function SectionStatus({ status }: { status: 'pending' | 'done' | 'obsolete' }) {
-  if (status === 'obsolete')
-    return (
-      <span className="q-section-status" data-status="obsolete">
-        <IconCircleOff size={13} /> Obsolete
-      </span>
-    );
-  return status === 'done' ? (
-    <span className="q-section-status" data-status="done">
-      <IconCircleCheckFilled size={13} /> Done
-    </span>
-  ) : (
-    <span className="q-section-status">
-      <IconCircleDashed size={13} /> Pending
-    </span>
-  );
-}
+const STATUS_ICON = {
+  done: <IconCircleCheckFilled size={13} color="var(--mantine-color-teal-6)" />,
+  obsolete: <IconCircleOff size={13} color="var(--app-text-faint)" />,
+  pending: <IconCircleDashed size={13} />,
+};
 
-/** For `update` items: Word-style changes of a section from its implementedCommit to the item's specCommit. */
-function UpdateDiff({ spec, specCommit, section, badge, standardTitles }: { spec: string; specCommit: string; section: Section; badge: React.ReactNode; standardTitles: Map<string, string> }) {
-  const base = section.implementedCommit;
-  const types = useQuery({ queryKey: ['section-types'], queryFn: api.sectionTypes, staleTime: Infinity });
-  const tracked = useQuery({
-    queryKey: ['specs', spec, 'tracked-base', specCommit, base],
-    enabled: !!base && !!types.data,
-    staleTime: Infinity,
-    queryFn: async () => {
-      const version = await api.version('specs', spec, specCommit, 'parent', base);
-      return (await import('../components/doc/tracked/compute')).computeTracked('specs', version, types.data!);
-    },
-  });
-  const plain = <SectionBlock section={section} standardTitles={standardTitles} badge={badge} target={sectionTarget('specs', spec, section, specCommit)} />;
-  if (!base) return plain;
-  if (tracked.isPending) return <Skeleton height={160} radius="md" my="md" />;
-  const diff = tracked.data?.diff.sections.find((s) => s.id === section.id);
-  // Only text changes matter for an update (implementedCommit metadata always differs).
-  if (!diff || diff.status === 'unchanged' || (!diff.body && !diff.title && diff.status === 'modified')) return plain;
-  return (
-    <div>
-      <div className="q-update-note">
-        <IconGitCommit size={13} /> Changes since implemented at <span className="mono">{base}</span> {badge}
-      </div>
-      <TrackedSection diff={diff} tree={tracked.data?.trees.get(section.id)} standardTitles={standardTitles} target={sectionTarget('specs', spec, section, specCommit)} />
-    </div>
-  );
-}
-
+/**
+ * A work order as a document (plan, one section per targeted spec section, reconciliation, outcome, history) with
+ * the dependency graph on top, claim + progress, comment threads, code touched and git context in the rail.
+ */
 export function WorkOrderPage() {
   const { id = '' } = useParams<{ id: string }>();
   const now = useNow();
-  const [latest, setLatest] = useState(false);
-  const [params, setParams] = useSearchParams();
-  // `?version=<commit>`: the dependency graph as it was at that commit.
-  const at = params.get('version') ?? undefined;
-  const resolved = useQuery({ queryKey: ['work-orders', id, at ?? 'head'], queryFn: () => api.workOrder(id, at), placeholderData: (prev) => prev });
-  const history = useQuery({ queryKey: ['work-orders', id, 'history'], queryFn: () => api.workOrderHistory(id) });
+  const uri = buildRef({ kind: 'work-orders', id });
+  const query = useQuery({ queryKey: ['work-orders', id, 'doc'], queryFn: () => api.workOrderDoc(id) });
+  const comments = useQuery({ queryKey: ['work-orders', id, 'comments'], queryFn: () => api.comments(uri, true) });
+  const history = useHistory('work-orders', id);
+  const tracked = useTrackedChanges('work-orders', id);
+  // Viewing a version: the dependency graph as of that commit.
+  const depsAt = useQuery({ queryKey: ['work-orders', id, 'deps', tracked.commit], queryFn: () => api.workOrder(id, tracked.commit!), enabled: !!tracked.commit });
   const standards = useStandards();
   const feedback = useFeedback();
-  const specFull = useQuery({ queryKey: ['specs', resolved.data?.item.spec ?? ''], queryFn: () => api.get('specs', resolved.data!.item.spec) as Promise<Spec>, enabled: !!resolved.data });
+  const r = query.data?.workOrder;
+  const specFull = useSpec(r?.item.spec ?? '');
   const standardTitles = useMemo(() => new Map((standards.data ?? []).map((s) => [s.id, s.title])), [standards.data]);
   const crumbs = [{ label: 'Work orders', to: '/work-orders' }, { label: <span className="mono">{id}</span> }];
+  const threads = comments.data?.threads ?? r?.comments?.threads ?? [];
+  const view = useMemo(() => (r ? { id, resolved: r, threads } : null), [id, r, threads]);
+  const { hash } = useLocation();
+  // `#comment-<id>`: scroll to the comment once the (lazy) section bodies rendered.
+  useEffect(() => {
+    if (!hash.startsWith('#comment-') || !r) return;
+    let tries = 0;
+    const t = setInterval(() => {
+      const el = document.getElementById(hash.slice(1));
+      if (el || ++tries > 30) {
+        clearInterval(t);
+        el?.scrollIntoView({ block: 'center' });
+      }
+    }, 100);
+    return () => clearInterval(t);
+  }, [hash, r]);
 
-  const r = resolved.data;
-  const bySection = useMemo(() => new Map<string, ResolvedWorkOrderSection>((r?.sections ?? []).map((s) => [s.id, s])), [r]);
-  const sections = useMemo(
-    () =>
-      (r?.sections ?? [])
-        .map((s) => (latest && s.headChanged ? s.latest : s.section))
-        .filter((s): s is Section => !!s),
-    [r, latest],
-  );
-
-  if (resolved.isPending) {
+  if (query.isPending) {
     return (
       <>
         <TopBar crumbs={crumbs} />
@@ -103,24 +82,33 @@ export function WorkOrderPage() {
       </>
     );
   }
-  if (resolved.isError || !r) {
-    const notFound = /not found/i.test(resolved.error?.message ?? '');
+  if (query.isError || !query.data || !r) {
+    const notFound = /not found/i.test(query.error?.message ?? '');
     return (
       <>
         <TopBar crumbs={crumbs} />
         {notFound ? (
           <EmptyView icon={<IconFileText size={22} stroke={1.5} />} title="Work order not found" description={`There is no work order "${id}".`} />
         ) : (
-          <ErrorState error={resolved.error ?? new Error('Unknown error')} onRetry={() => void resolved.refetch()} />
+          <ErrorState error={query.error ?? new Error('Unknown error')} onRetry={() => void query.refetch()} />
         )}
       </>
     );
   }
 
+  const after = tracked.commit ? tracked.data?.diff.after : undefined;
+  const doc = after ? withFrontmatter(query.data, 'work-orders', after.frontmatter as Record<string, unknown>) : query.data;
   const { item, spec } = r;
-  const done = item.sections.filter((s) => s.status === 'done').length;
-  const title = `${KIND_LABEL[item.kind]} · ${spec?.title ?? item.spec}`;
+  const done = item.sections.filter((s) => s.status !== 'pending').length;
+  const title = doc.title || item.title || `${KIND_LABEL[item.kind]} · ${spec?.title ?? item.spec}`;
+  const counts = comments.data?.counts ?? r.comments?.counts;
+  const docSections = r.doc?.sections ?? [];
+  const sectionThreads = (sid: string) => threads.filter((t) => t.target === buildRef({ kind: 'work-orders', id, sectionId: sid }));
 
+  const { main: mainTitle, origin } = splitTitle(title);
+  const { hidden: hiddenSections, missing } = emptyScaffolding(doc.sections);
+  const stale = !!item.claim && isStale(item.claim, now);
+  const deps0 = tracked.commit ? depsAt.data?.dependencies : r.dependencies;
   const header = (
     <>
       <div className="doc-kicker">
@@ -128,176 +116,221 @@ export function WorkOrderPage() {
           {spec?.category ? `${categoryLabel(spec.category)} / ` : ''}
           {spec?.title ?? item.spec}
         </Link>
-        <span className="mono faint"> @{item.specCommit}</span>
+        <SpecMaturityDot id={item.spec} details />
       </div>
-      <h1 className="doc-title">{title}</h1>
+      <h1 className="doc-title wo-title" title={title}>
+        {mainTitle}
+      </h1>
       <div className="doc-pills">
         <Pill icon={<WorkOrderStatusIcon status={item.status} />}>{WORK_ORDER_STATUS_META[item.status].label}</Pill>
         <span className="kind-badge" data-kind={item.kind}>
           {KIND_LABEL[item.kind]}
         </span>
-        <Pill icon={<PriorityIcon priority={item.priority} />}>{item.priority ? PRIORITY_META[item.priority].label : 'No priority'}</Pill>
-        <span className="doc-updated">
-          {done}/{item.sections.length} sections done · updated <TimeAgo iso={item.updatedAt} />
-        </span>
+        {item.priority && <Pill icon={<PriorityIcon priority={item.priority} />}>{PRIORITY_META[item.priority].label}</Pill>}
+        {item.fastPath && (
+          <Tooltip label="Fast path: a one-section fix that can be claimed without a plan">
+            <span>
+              <Pill tone="accent" icon={<IconBolt size={13} />}>
+                Fast path
+              </Pill>
+            </span>
+          </Tooltip>
+        )}
+        {counts && counts.openBlocking > 0 && (
+          <Pill tone="danger" icon={<IconAlertTriangle size={13} />}>
+            {plural(counts.openBlocking, 'blocking comment')}
+          </Pill>
+        )}
+        {origin && (
+          <span className="wo-origin" data-testid="wo-origin">
+            From {origin}
+          </span>
+        )}
       </div>
-      {item.note && <blockquote className="q-note">{item.note}</blockquote>}
+      <div className="wo-status-strip" data-testid="wo-status-strip">
+        <div className="wo-strip-progress">
+          <SectionProgress done={done} total={item.sections.length} />
+        </div>
+        <div className="wo-strip-claim">
+          {item.claim ? (
+            <>
+              <ClaimAvatar claim={item.claim} now={now} size={18} workOrder={item.id} />
+              <span className="wo-strip-agent">{item.claim.agent}</span>
+              <span className="live" data-stale={stale || undefined}>
+                <span className="live-dot" />
+                {stale ? 'Stale' : 'Live'} · heartbeat {compactTime(item.claim.heartbeatAt, now)}
+              </span>
+              {stale && (
+                <ItemMenu
+                  label={item.id}
+                  prompt={itemPrompt('continue_work', uri)}
+                  actions={[{ id: 'release', label: 'Release claim', primary: true, dialog: { type: 'release', ref: uri, title: item.id, agent: item.claim.agent, heartbeat: compactTime(item.claim.heartbeatAt, now) } }]}
+                />
+              )}
+            </>
+          ) : (
+            <span className="faint small">{item.completedAt ? <>Completed <TimeAgo iso={item.completedAt} /></> : item.status === 'pending' ? 'Waiting for an agent to claim it' : 'Not claimed'}</span>
+          )}
+        </div>
+        <div className="wo-strip-git">
+          <WorkOrderGitSummary item={item} />
+          {!item.git?.length && item.claim?.branch && <span className="mono small faint">{item.claim.branch}</span>}
+          <span className="doc-updated">
+            updated <TimeAgo iso={item.updatedAt} />
+          </span>
+        </div>
+      </div>
+      {item.note && (
+        <blockquote className="q-note">
+          <Markdown>{item.note}</Markdown>
+        </blockquote>
+      )}
+      {missing.includes('Plan') && !tracked.commit && (
+        <div className="wo-plan-missing" data-testid="wo-plan-missing">
+          <strong>Plan</strong>
+          <span>
+            {item.fastPath
+              ? 'Fast path: no plan needed; the agent fixes the one section directly.'
+              : item.status === 'pending'
+                ? 'Not written yet. The agent writes the plan (work_order_plan_set) before it can claim this work order.'
+                : 'No plan was recorded for this work order.'}
+          </span>
+        </div>
+      )}
+      {missing.filter((m) => m !== 'Plan').length > 0 && !tracked.commit && (
+        <p className="faint small wo-not-written" data-testid="wo-not-written">
+          Not yet written: {missing.filter((m) => m !== 'Plan').join(', ')} (the agent fills {missing.filter((m) => m !== 'Plan').length === 1 ? 'it' : 'them'} in when the work is done).
+        </p>
+      )}
+      {deps0 && (
+        <div className="wo-deps">
+          <DependencyGraph tree={deps0} />
+        </div>
+      )}
     </>
   );
 
-  const versionBanner = at && (
-    <Alert color="gray" variant="light" radius="md" mb="md" icon={<IconGitCommit size={16} />} className="q-banner">
-      <span>
-        Dependencies as of <span className="mono">{at.slice(0, 7)}</span>.
-      </span>
-      <Button size="xs" variant="subtle" onClick={() => setParams({}, { replace: true })}>
-        Back to latest
-      </Button>
-    </Alert>
-  );
-  const banner = (versionBanner || r.specMovedTo) && (
-    <>
-    {versionBanner}
-    {r.specMovedTo && (
-    <Alert color="yellow" variant="light" radius="md" mb="md" icon={<IconAlertTriangle size={16} />} className="q-banner">
-      <span>
-        {latest ? 'Showing the latest spec content.' : 'Spec changed since this work item was created.'}
-      </span>
-      <Button size="xs" variant="subtle" onClick={() => setLatest((l) => !l)}>
-        {latest ? `Show @${item.specCommit}` : 'Show latest'}
-      </Button>
-    </Alert>
-    )}
-    </>
-  );
+  const banner = r.specMovedTo ? (
+    <div className="spec-moved" role="status">
+      <IconAlertTriangle size={16} className="spec-moved-icon" />
+      <div className="spec-moved-text">
+        <div className="spec-moved-title">The spec changed after this work order was planned</div>
+        <div className="spec-moved-sub">
+          <span className="spec-moved-commit mono">{item.specCommit.slice(0, 7)}</span>
+          <IconArrowRight size={12} />
+          <span className="spec-moved-commit mono" data-now>
+            {r.specMovedTo.slice(0, 7)}
+          </span>
+          <span className="faint">Review the changes before implementing; re-pin the work order if they matter.</span>
+        </div>
+      </div>
+      <Link to={`/specs/${item.spec}?version=${item.specCommit}&compare=current`} className="spec-moved-action">
+        Review changes
+        <IconArrowRight size={13} />
+      </Link>
+    </div>
+  ) : undefined;
 
-  // Open / accepted feedback on the sections this item works on.
+  // Open / accepted feedback on the targeted sections; criteria verifying them.
   const filed = (feedback.data ?? []).filter(
     (x) => x.status !== 'closed' && x.targets.some((t) => item.sections.some((s) => t.startsWith(buildRef({ kind: 'specs', id: item.spec, sectionId: s.id })))),
   );
-  // Criteria verifying the targeted sections (verifiedBy) plus targeted criteria themselves.
   const ownStates = specFull.data?.verification && 'own' in specFull.data.verification ? specFull.data.verification.own : [];
-  const criterionIds = new Set(
-    r.sections.flatMap((x) => (x.section?.type === 'acceptance' ? [x.id] : (x.section?.verifiedBy ?? []))),
-  );
+  const criterionIds = new Set(r.sections.flatMap((x) => (x.section?.type === 'acceptance' ? [x.id] : (x.section?.verifiedBy ?? []))));
   const criteria = ownStates.filter((c) => criterionIds.has(c.sectionId));
+
+  const topPanels = (
+    <>
+      <PropGroup title="Progress">
+        <SectionProgress done={done} total={item.sections.length} />
+        {item.claim ? <ClaimCard claim={item.claim} now={now} workOrder={item.id} /> : <span className="faint small">Not claimed{item.completedAt ? <> · completed <TimeAgo iso={item.completedAt} /></> : ''}</span>}
+      </PropGroup>
+      <PropGroup title={`Comments${counts ? ` · ${counts.open} open${counts.resolved ? `, ${counts.resolved} resolved` : ''}` : ''}`}>
+        <CommentList threads={threads} workOrderId={id} showTarget anchor={(t) => !t.target.includes('/sections/')} empty={<span className="faint small">No comments. Agents and reviewers comment with comment_add.</span>} />
+      </PropGroup>
+    </>
+  );
+
   const panels = (
     <>
-    {(item.kind === 'verify' || criteria.length > 0) && (
-      <PropGroup title={`Criteria · ${criteria.filter((c) => c.state === 'verified').length}/${criteria.length} verified`}>
-        {criteria.length ? (
-          criteria.map((c) => (
-            <Link key={c.uri} to={`/specs/${item.spec}#section-${c.sectionId}`} className="linked-item">
-              <CriterionStateIcon state={c.state} />
-              <span className="linked-title">{c.title}</span>
-              {c.method && <span className="linked-meta">{c.method}</span>}
-            </Link>
-          ))
-        ) : (
-          <span className="faint small">The targeted sections declare no criteria (verifiedBy).</span>
-        )}
+      <PropGroup title={`Code touched${item.touched?.length ? ` · ${item.touched.length}` : ''}`}>
+        <CodeTouched touched={r.touched ?? item.touched ?? []} sections={docSections} />
       </PropGroup>
-    )}
-    <PropGroup title={`Feedback · ${filed.length}`}>
-      <FeedbackList items={filed} />
-    </PropGroup>
-    <PropGroup title="Properties">
-      <Prop label="Spec" to={`/specs/${item.spec}`}>
-        <span className="inline-icon">
-          <IconFileText size={14} className="prop-icon" />
-          {spec?.title ?? item.spec}
-        </span>
-      </Prop>
-      <Prop label="Version">
-        <span className="mono">{item.specCommit}</span>
-      </Prop>
-      <Prop label="Status" to={`/work-orders`}>
-        <span className="inline-icon">
-          <WorkOrderStatusIcon status={item.status} />
-          {WORK_ORDER_STATUS_META[item.status].label}
-        </span>
-      </Prop>
-      <Prop label="Created by">{item.createdBy ?? <span className="faint">Unknown</span>}</Prop>
-      <Prop label="Created">
-        <TimeAgo iso={item.createdAt} />
-      </Prop>
-    </PropGroup>
+      <PropGroup title="Git">
+        <GitPanel git={r.git ?? item.git ?? []} claims={r.claims ?? item.claims ?? []} />
+      </PropGroup>
+      {(item.kind === 'verify' || criteria.length > 0) && (
+        <PropGroup title={`Criteria · ${criteria.filter((c) => c.state === 'verified').length}/${criteria.length} verified`}>
+          {criteria.length ? (
+            criteria.map((c) => (
+              <Link key={c.uri} to={`/specs/${item.spec}#section-${c.sectionId}`} className="linked-item">
+                <CriterionStateIcon state={c.state} />
+                <span className="linked-title">{c.title}</span>
+                {c.method && <span className="linked-meta">{c.method}</span>}
+              </Link>
+            ))
+          ) : (
+            <span className="faint small">The targeted sections declare no criteria (verifiedBy).</span>
+          )}
+        </PropGroup>
+      )}
+      <PropGroup title={`Feedback · ${filed.length}`}>
+        <FeedbackList items={filed} />
+      </PropGroup>
+      <QuestionsPanel refUri={uri} />
+      <PropGroup title="Properties">
+        <Prop label="Spec" to={`/specs/${item.spec}`}>
+          <span className="inline-icon">
+            <IconFileText size={14} className="prop-icon" />
+            {spec?.title ?? item.spec}
+          </span>
+        </Prop>
+        <Prop label="Version">
+          <span className="mono">{item.specCommit.slice(0, 7)}</span>
+        </Prop>
+        {(item.dependencies?.length ?? 0) > 0 && (
+          <Prop label="After">
+            <span className="wrap-row">
+              {item.dependencies!.map((d) => (
+                <Link key={d} to={`/work-orders/${d}`} className="mono small">
+                  {d}
+                </Link>
+              ))}
+            </span>
+          </Prop>
+        )}
+        <Prop label="Created by">{item.createdBy ?? <span className="faint">Unknown</span>}</Prop>
+        <Prop label="Created">
+          <TimeAgo iso={item.createdAt} />
+        </Prop>
+      </PropGroup>
     </>
   );
 
   return (
-    <>
+    <DecisionDialogs>
+    <WorkOrderViewContext.Provider value={view}>
       <TopBar crumbs={crumbs} />
-      {r.dependencies && (
-        <div className="dep-strip-wrap">
-          <DependencyGraph tree={r.dependencies} />
-        </div>
-      )}
       <DocPage
-        doc={{ kind: 'work-orders', id: item.spec, title }}
+        doc={{ kind: 'work-orders', id, title }}
         header={header}
         banner={banner}
-        versionHref={(c) => `?version=${c}`}
-        activeCommit={at}
-        sections={sections}
+        sections={tracked.commit ? doc.sections : doc.sections.filter((x) => !hiddenSections.has(x.id))}
         standardTitles={standardTitles}
         history={{ entries: history.data, loading: history.isPending, now }}
-        topPanels={
-          item.claim ? (
-            <PropGroup title="Claim">
-              <ClaimCard claim={item.claim} now={now} />
-            </PropGroup>
-          ) : undefined
-        }
+        tracked={tracked}
+        topPanels={topPanels}
         panels={panels}
-        outlineStatus={
-          new Map(
-            item.sections.map((s) => [
-              s.id,
-              s.status === 'done' ? (
-                <IconCircleCheckFilled size={13} color="var(--mantine-color-teal-6)" />
-              ) : s.status === 'obsolete' ? (
-                <IconCircleOff size={13} color="var(--app-text-faint)" />
-              ) : (
-                <IconCircleDashed size={13} />
-              ),
-            ]),
-          )
-        }
-        renderSection={(section) => {
-          const status = bySection.get(section.id)?.status ?? 'pending';
-          const badge = (
-            <>
-              <SectionStatus status={status} />
-              {bySection.get(section.id)?.broken && (
-                <span className="link-badge" data-tone="danger" title="A depends_on target is archived or missing">
-                  Broken dependency
-                </span>
-              )}
-              {bySection.get(section.id)?.archived && (
-                <span className="link-badge" data-tone="muted">
-                  Archived
-                </span>
-              )}
-              {bySection.get(section.id)?.blocked && (
-                <span className="link-badge" data-tone="danger">
-                  Blocked
-                </span>
-              )}
-            </>
-          );
-          return item.kind === 'update' && !latest ? (
-            <UpdateDiff spec={item.spec} specCommit={item.specCommit} section={section} badge={badge} standardTitles={standardTitles} />
-          ) : (
-            <SectionBlock section={section} standardTitles={standardTitles} badge={badge} target={sectionTarget('specs', item.spec, section, latest ? undefined : item.specCommit)} />
-          );
-        }}
+        headCommit={query.data.lastCommit ?? null}
+        outlineStatus={new Map(docSections.map((s) => [s.id, STATUS_ICON[s.status]]))}
+        sectionBadge={(section) => (
+          <>
+            <WoSectionBadge section={section} />
+            <CommentCount threads={sectionThreads(section.id)} />
+          </>
+        )}
       />
-      {sections.length === 0 && (
-        <Text c="var(--app-text-muted)" ta="center">
-          The targeted sections no longer exist in this spec version.
-        </Text>
-      )}
-    </>
+    </WorkOrderViewContext.Provider>
+    </DecisionDialogs>
   );
 }

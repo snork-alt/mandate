@@ -66,6 +66,9 @@ export function rulesForCode(input: RulesForCodeInput, m: Model): RuleHit[] {
     if (!referencing.length) continue;
     for (const c of specCriteria(spec, m).inherited) {
       if (c.upcoming || c.section.type !== 'rule') continue;
+      // G-8: a followed rule is inherited whatever its scope; for a given file its own scope still narrows it.
+      const sc = c.section.scope;
+      if (sc && (sc.paths?.length || sc.languages?.length) && !inScope(sc, path.replace(/^\/+/, ''))) continue;
       const via = c.spec ? referencing : c.sections.filter((x) => referencing.includes(x));
       for (const sid of via) add(c.standard, c.section.id, 'section', buildRef({ kind: 'specs', id: spec.id, sectionId: sid }));
     }

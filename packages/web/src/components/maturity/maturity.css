@@ -1,0 +1,102 @@
+/* Maturity badge: tones through Mantine colours (light + dark). */
+.maturity-badge,
+.maturity-dot,
+.maturity-meter {
+  --mt: var(--app-text-muted);
+  --mt-fg: var(--app-text-muted);
+}
+:is(.maturity-badge, .maturity-dot, .maturity-meter)[data-tone='lilac'] { --mt: var(--mantine-color-lilac-6, var(--mantine-primary-color-filled)); --mt-fg: var(--mantine-color-lilac-7, var(--mantine-primary-color-filled)); }
+:is(.maturity-badge, .maturity-dot, .maturity-meter)[data-tone='blue'] { --mt: var(--mantine-color-blue-6); --mt-fg: var(--mantine-color-blue-7); }
+:is(.maturity-badge, .maturity-dot, .maturity-meter)[data-tone='green'] { --mt: var(--mantine-color-teal-6); --mt-fg: var(--mantine-color-teal-8); }
+:is(.maturity-badge, .maturity-dot, .maturity-meter)[data-tone='red'] { --mt: var(--mantine-color-red-6); --mt-fg: var(--mantine-color-red-7); }
+:is(.maturity-badge, .maturity-dot, .maturity-meter)[data-tone='orange'] { --mt: var(--mantine-color-orange-6); --mt-fg: var(--mantine-color-orange-8); }
+:is(.maturity-badge, .maturity-dot, .maturity-meter)[data-tone='grey'] { --mt: var(--app-text-faint); --mt-fg: var(--app-text-faint); }
+[data-mantine-color-scheme='dark'] :is(.maturity-badge, .maturity-dot, .maturity-meter)[data-tone='lilac'] { --mt: var(--mantine-color-lilac-5, var(--mantine-primary-color-filled)); --mt-fg: var(--mantine-color-lilac-3, var(--mantine-primary-color-filled)); }
+[data-mantine-color-scheme='dark'] :is(.maturity-badge, .maturity-dot, .maturity-meter)[data-tone='blue'] { --mt: var(--mantine-color-blue-5); --mt-fg: var(--mantine-color-blue-3); }
+[data-mantine-color-scheme='dark'] :is(.maturity-badge, .maturity-dot, .maturity-meter)[data-tone='green'] { --mt: var(--mantine-color-teal-5); --mt-fg: var(--mantine-color-teal-3); }
+[data-mantine-color-scheme='dark'] :is(.maturity-badge, .maturity-dot, .maturity-meter)[data-tone='red'] { --mt: var(--mantine-color-red-5); --mt-fg: var(--mantine-color-red-4); }
+[data-mantine-color-scheme='dark'] :is(.maturity-badge, .maturity-dot, .maturity-meter)[data-tone='orange'] { --mt: var(--mantine-color-orange-5); --mt-fg: var(--mantine-color-orange-4); }
+
+.maturity-meter {
+  display: inline-flex;
+  align-items: center;
+  gap: 1.5px;
+  flex-shrink: 0;
+}
+.maturity-seg {
+  width: 3px;
+  height: 9px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--mt) 22%, transparent);
+}
+.maturity-seg[data-on] { background: var(--mt); }
+.maturity-meter[data-tone='neutral'] .maturity-seg[data-on] { background: var(--app-text-muted); }
+.maturity-meter[data-tone='neutral'] .maturity-seg { background: color-mix(in srgb, var(--app-text-muted) 22%, transparent); }
+.maturity-check { color: var(--mt); margin-left: 1px; }
+
+.maturity-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid color-mix(in srgb, var(--mt) 35%, var(--app-border));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--mt) 7%, transparent);
+  color: var(--mt-fg);
+  font-size: 12.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: default;
+}
+.maturity-badge[data-tone='neutral'] { border-color: var(--app-border-strong); background: transparent; color: var(--app-text-muted); }
+.maturity-badge[data-size='sm'] { height: 20px; padding: 0 7px; gap: 5px; font-size: 12px; }
+.maturity-label { overflow: hidden; text-overflow: ellipsis; }
+.maturity-marker {
+  margin-left: 1px;
+  padding-left: 6px;
+  border-left: 1px solid color-mix(in srgb, var(--mt) 40%, transparent);
+  font-weight: 600;
+}
+.maturity-dot { display: inline-flex; align-items: center; padding: 2px 3px; border-radius: 4px; flex-shrink: 0; }
+.maturity-dot:hover { background: var(--app-hover); }
+
+.maturity-details { font-size: 13px; }
+.maturity-details-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.maturity-details-head .faint { margin-left: auto; font-size: 11.5px; }
+.maturity-facts { display: grid; grid-template-columns: 70px 1fr; gap: 3px 10px; margin: 0; }
+.maturity-facts dt { color: var(--app-text-muted); }
+.maturity-facts dd { margin: 0; }
+.maturity-overlays { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--app-border); }
+.maturity-overlay-kind { font-weight: 600; }
+.maturity-overlay[data-kind='failing'] .maturity-overlay-kind,
+.maturity-overlay[data-kind='drifted'] .maturity-overlay-kind { color: var(--mantine-color-red-6); }
+.maturity-overlay[data-kind='blocked'] .maturity-overlay-kind,
+.maturity-overlay[data-kind='stale'] .maturity-overlay-kind { color: var(--mantine-color-orange-6); }
+.maturity-refs { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 3px; }
+.maturity-ref { font-size: 12px; color: var(--mantine-primary-color-filled); text-decoration: none; }
+.maturity-ref:hover { text-decoration: underline; }
+.maturity-stored { margin-top: 10px; font-size: 12px; }
+
+/* spec rows: fixed column so titles and badges align; narrow rows keep only the meter */
+.row-slot-maturity { flex: none; justify-content: flex-start !important; }
+@container (max-width: 640px) {
+  .row-slot-maturity .maturity-label { display: none; }
+}
+
+/* Focusable trigger of the breakdown card (hover, Enter / Space, click / tap). */
+.maturity-trigger {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+  border-radius: 12px;
+  cursor: pointer;
+}
+.maturity-trigger:focus-visible {
+  outline: 2px solid var(--mantine-primary-color-filled);
+  outline-offset: 1px;
+}
+.maturity-trigger > .maturity-badge,
+.maturity-trigger > .maturity-dot {
+  cursor: pointer;
+}

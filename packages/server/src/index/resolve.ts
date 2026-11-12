@@ -29,7 +29,7 @@ import type { SearchContext } from './search.js';
 
 export interface GraphContext extends SearchContext {
   git?: GitStore;
-  formats?: { specs: DocFormat<unknown, unknown>; standards: DocFormat<unknown, unknown>; components: DocFormat<unknown, unknown> };
+  formats?: { specs: DocFormat<unknown, unknown>; standards: DocFormat<unknown, unknown>; components: DocFormat<unknown, unknown>; audits: DocFormat<unknown, unknown>; 'work-orders': DocFormat<unknown, unknown> };
   /** Virtual nodes (excerpts) resolved recently, with their outgoing edges. */
   virtual?: Map<string, { node: GraphNode; edges: EdgeRow[] }>;
 }
@@ -66,12 +66,36 @@ export function headPoint(db: DB): Point | null {
   return (db.prepare('SELECT seq, sha, date FROM commits WHERE mainline = 1 ORDER BY seq DESC LIMIT 1').get() as Point | undefined) ?? null;
 }
 
+/** Smallest string greater than every string that starts with `prefix` (code-point order = SQLite BINARY order for UTF-8). */
+function prefixUpperBound(prefix: string): string {
+  const cps = [...prefix];
+  const last = cps.pop()!.codePointAt(0)!;
+  return cps.join('') + String.fromCodePoint(last + 1);
+}
+
+/**
+ * Exact, case-sensitive prefix match as an index-friendly range (`col >= p AND col < next(p)`).
+ * Unlike `LIKE ? || '%'` it treats `_`/`%` literally and does not fold case.
+ */
+export function prefixMatch(col: string, prefix: string): { sql: string; params: string[] } {
+  if (!prefix) return { sql: '1', params: [] };
+  return { sql: `(${col} >= ? AND ${col} < ?)`, params: [prefix, prefixUpperBound(prefix)] };
+}
+
+/** `col = uri OR col` is one of `uri`'s sections (exact, see `prefixMatch`). */
+export function selfOrSections(col: string, uri: string): { sql: string; params: string[] } {
+  const m = prefixMatch(col, `${uri}/sections/`);
+  return { sql: `(${col} = ? OR ${m.sql})`, params: [uri, ...m.params] };
+}
+
 /** Any commit (side-branch commits too) by full or short sha. */
 export function commitBySha(db: DB, sha: string): Point {
-  const rows = db.prepare("SELECT seq, sha, date FROM commits WHERE sha LIKE ? || '%' LIMIT 2").all(sha) as Point[];
+  // Shas are lowercase hex: fold the input instead of the column, and match the prefix exactly (no LIKE wildcards).
+  const shaPrefix = prefixMatch('sha', sha.toLowerCase());
+  const rows = db.prepare(`SELECT seq, sha, date FROM commits WHERE ${shaPrefix.sql} LIMIT 2`).all(...shaPrefix.params) as Point[];
   if (rows.length > 1) throw new GraphError(`commit '${sha}' is ambiguous`, 400, 'ambiguous_commit', 'use more characters of the sha');
   if (!rows[0]) {
-    const lost = db.prepare("SELECT sha, lost_at, rewrite_new_head FROM lost_commits WHERE sha LIKE ? || '%' LIMIT 1").get(sha) as
+    const lost = db.prepare(`SELECT sha, lost_at, rewrite_new_head FROM lost_commits WHERE ${shaPrefix.sql} LIMIT 1`).get(...shaPrefix.params) as
       | { sha: string; lost_at: string; rewrite_new_head: string | null }
       | undefined;
     if (lost) {
@@ -161,7 +185,8 @@ export function expandCode(db: DB, uri: string): string[] {
   const ref = parseNodeUri(uri);
   if (!ref || ref.kind !== 'code') return [uri];
   const file = buildNodeUri({ kind: 'code', repo: ref.repo, path: ref.path });
-  const ranges = db.prepare("SELECT DISTINCT uri, props FROM nodes WHERE kind = 'code_range' AND uri LIKE ? || '#%'").all(file) as { uri: string; props: string }[];
+  const inFile = prefixMatch('uri', `${file}#`);
+  const ranges = db.prepare(`SELECT DISTINCT uri, props FROM nodes WHERE kind = 'code_range' AND ${inFile.sql}`).all(...inFile.params) as { uri: string; props: string }[];
   if (!ref.lines) return [uri, ...ranges.map((r) => r.uri).filter((u) => u !== uri)];
   const { start, end } = ref.lines;
   const overlapping = ranges.filter((r) => {
@@ -266,7 +291,7 @@ export interface Resolved {
   live: string[];
 }
 
-const isDocRef = (r: { kind: string }): r is MandateRef => r.kind === 'specs' || r.kind === 'standards' || r.kind === 'components' || r.kind === 'work-orders' || r.kind === 'feedback';
+const isDocRef = (r: { kind: string }): r is MandateRef => r.kind === 'specs' || r.kind === 'standards' || r.kind === 'components' || r.kind === 'work-orders' || r.kind === 'feedback' || r.kind === 'audits';
 
 /** Error for a doc / section missing at `seq`, with the nearest version where it exists as a hint. */
 function notPresent(db: DB, live: string, seq: number | null): GraphError {
@@ -293,7 +318,7 @@ const MAX_VIRTUAL = 1000;
 /** Build (and remember) the excerpt node for `ref#Lx-Ly`. */
 async function excerptNode(ctx: GraphContext, ref: MandateRef & { lines: { start: number; end: number } }, point: Point | null, seq: number | null): Promise<{ node: GraphNode; live: string[] }> {
   const { db } = ctx;
-  const dir = ref.kind as 'specs' | 'standards' | 'components';
+  const dir = ref.kind as 'specs' | 'standards' | 'components' | 'audits' | 'work-orders';
   const path = `${dir}/${ref.id}.md`;
   const text = point
     ? await ctx.git?.readFileAt(point.sha, path)
@@ -382,7 +407,7 @@ export async function resolveRef(ctx: GraphContext, input: string, at?: At): Pro
       point = c;
     }
     const seq = point?.seq ?? null;
-    const versioned = ref.kind === 'specs' || ref.kind === 'standards' || ref.kind === 'components';
+    const versioned = ref.kind === 'specs' || ref.kind === 'standards' || ref.kind === 'components' || ref.kind === 'audits' || ref.kind === 'work-orders';
     if (ref.lines && versioned) {
       // Validate the doc / section exists at that point (excerpt resolution reads the file itself).
       if (!point && !nodeRow(db, live, null)) throw notPresent(db, live, null);
@@ -471,7 +496,7 @@ export function architectureEdges(ctx: GraphContext, seq: number | null): { from
   const v = valid('e', seq);
   const rows = ctx.db
     .prepare(
-      `SELECT e.from_uri, e.to_uri FROM edges e WHERE e.kind = 'links_to' AND json_extract(e.props, '$.rel') = 'depends_on' AND ${v.sql}
+      `SELECT e.from_uri, e.to_uri FROM edges e WHERE e.kind = 'depends_on' AND ${v.sql}
          AND e.from_uri LIKE 'mandate://components/%/sections/%' AND e.to_uri LIKE 'mandate://components/%'`,
     )
     .all(...v.params) as { from_uri: string; to_uri: string }[];

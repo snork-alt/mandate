@@ -6,7 +6,7 @@ import type { EmbeddingProvider } from './types.js';
 
 export { EmbeddingError, type EmbeddingProvider } from './types.js';
 export { FakeProvider } from './fake.js';
-export { OpenAICompatibleProvider } from './openai.js';
+export { OpenAICompatibleProvider, embeddingRequestBody } from './openai.js';
 export { LocalProvider } from './local.js';
 
 /** Model id: provider, model, dimensions and a hash of the document prefix (all change the vectors). */
@@ -24,6 +24,6 @@ export function createProvider(cfg: EmbeddingConfig & { apiKey?: string }): Embe
     case 'local':
       return new LocalProvider(cfg.model, cfg.dimensions, modelId);
     case 'openai-compatible':
-      return new OpenAICompatibleProvider({ baseUrl: cfg.baseUrl, model: cfg.model, dimensions: cfg.dimensions, apiKey: cfg.apiKey, modelId });
+      return new OpenAICompatibleProvider({ baseUrl: cfg.baseUrl, model: cfg.model, dimensions: cfg.dimensions, apiKey: cfg.apiKey, requestDimensions: cfg.requestDimensions ?? null, modelId });
   }
 }

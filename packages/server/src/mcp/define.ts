@@ -19,13 +19,29 @@ import type { ActivityBus, ActivityFilter } from '../events/bus.js';
 import type { AutoPusher } from '../git/autopush.js';
 import type { ConversationStore } from '../ask/agent.js';
 import type { Principal } from '../auth/http.js';
-import { ToolError, toToolError, toWriteError, type ToolErrorBody } from './errors.js';
+import type { ProjectSettings } from '../projects/settings.js';
+import { ToolError, toToolError, toWriteError, withHint, type ToolErrorBody } from './errors.js';
+import { gateSummary, parseRef, CAUSE_TRAILER, LEGACY_USER_TRAILER, SERVICE_USER_PREFIX, USER_TRAILER, causeInputSchema } from '@mandate/shared';
+import { CauseError, resolveCauses } from '../storage/causes.js';
+import { collectIntegrity } from '../storage/integrity.js';
+import { takePresetIds, withPresetIds } from '../storage/preset-ids.js';
+import { userDirectory } from '../auth/users.js';
+
+/** Agent name of decisions recorded from the web UI. */
+export const UI_AGENT = 'mandate-ui';
 
 export interface ToolContext {
   /** The project this context serves (every tool, resource and ref is relative to it). */
   project?: { id: string; name: string };
   /** Who is calling (agent key or the read-only web UI session); unset in-process (tests, the Ask agent's own calls). */
   principal?: Principal;
+  /** Access of the caller on this project ('read': write tools refused; server mode: from GitHub repo permissions). */
+  access?: 'read' | 'write';
+  /**
+   * Web UI sessions: the signed-in user's own access to the repository (server mode: GitHub push permission; local
+   * mode: write). The session itself stays read-only except for the `uiAllowed` human-decision tools, which need 'write'.
+   */
+  uiAccess?: 'read' | 'write';
   /** Durable idempotency store of this project (falls back to the process-wide one). */
   idempotency?: IdempotencyStore;
   /** Ask conversations of this project. */
@@ -52,17 +68,38 @@ export interface ToolContext {
   ask?: ResolvedAskConfig;
   /** MCP clientInfo name of the caller (agent identity fallback for write tools). */
   clientName?: string;
+  /** MCP clientInfo version of the caller. */
+  clientVersion?: string;
+  /** Per-project agent settings (flow on/off, approval) and the server mode; unset in tests without a registry. */
+  settings?: ProjectSettings;
+  /** Local checkouts of code repos the server may read (work_order_touch_from_commits); unset = none (server mode). */
+  codeRepos?: (repo: string) => string | null;
+  /**
+   * IN-PROCESS ONLY (test fixtures, seeds): create tools accept explicit ids (storage/preset-ids.ts). Never set by the
+   * project opener, so no MCP / HTTP client can choose an id.
+   */
+  presetIds?: boolean;
   /** Write tools only: commit metadata for the storage layer (`Agent:` / `Branch:` and tool-specific trailers). */
   commit?: WriteMeta;
+  /** One-time section upload URLs (`upload_url_create`); unset in-process. */
+  uploads?: import('./uploads.js').UploadService;
+  /** Public base URL of this server as the caller reaches it (upload URLs, UI links); unset in-process. */
+  baseUrl?: string;
 }
 
 export interface SessionState {
   /** null = every event (default). */
   subscription: (ActivityFilter & { enabled: boolean }) | null;
+  /** Questions this session asked (`question_ask`): it is notified when one is answered. */
+  asked?: Set<string>;
 }
 
 export interface WriteMeta {
   agent: string;
+  /** Server mode: the user who triggered the write (from the authenticated principal, never from client input). */
+  user?: string;
+  /** Canonical cause references of the write (`cause` input; `Caused-By:` trailer). */
+  causes?: string[];
   branch?: string;
   trailers: Record<string, string>;
   idempotencyKey?: string;
@@ -76,7 +113,63 @@ export const WRITE_FIELDS = {
   branch: z.string().trim().min(1).max(200).regex(/^[^\s]+$/, 'no whitespace').optional(),
   /** Retry key: the same key with the same arguments replays the first result instead of writing twice. */
   idempotencyKey: z.string().regex(/^[A-Za-z0-9_.:-]{8,128}$/, '8-128 chars of A-Z a-z 0-9 _ . : -').optional(),
+  /**
+   * Why this write happens: one or more references (feedback item, audit finding, work order, spec / standard section,
+   * ...). Recorded as a `Caused-By:` trailer and `caused_by` lineage edges; always pass it in the Mandate flow.
+   */
+  cause: causeInputSchema.optional(),
 };
+
+/** Trailers only the server sets (a tool's `trailers()` can never produce them). */
+const RESERVED_TRAILERS = new Set([USER_TRAILER, LEGACY_USER_TRAILER, 'Agent-Key', CAUSE_TRAILER, 'Agent', 'Branch', 'Co-authored-by'].map((k) => k.toLowerCase()));
+
+/** `Co-authored-by:` trailers for the causes' contributors: server mode, on unless MANDATE_CO_AUTHORS=0. */
+export function coAuthorsEnabled(ctx: Pick<ToolContext, 'settings'>): boolean {
+  return ctx.settings?.mode === 'server' && process.env.MANDATE_CO_AUTHORS !== '0';
+}
+
+/** `login <noreply>` of the direct contributors of the causes (never the acting user; never private emails). */
+async function coAuthorLines(ctx: ToolContext, causes: string[], actingUser: string): Promise<string[]> {
+  const dir = userDirectory();
+  if (!dir) return [];
+  const users = new Set<string>();
+  // From git history (no index needed, never stale): users of the commits on each cause document / section.
+  for (const cause of causes) {
+    if (!parseRef(cause)) continue;
+    try {
+      const h = (await ctx.reads.historyGet({ ref: cause, limit: 200 })) as { entries: { user?: string }[] };
+      for (const e of h.entries) if (e.user) users.add(e.user);
+    } catch {
+      /* not a document with history (e.g. a finding): no co-authors from it */
+    }
+  }
+  users.delete(actingUser);
+  return [...users]
+    .map((u) => ({ u, mail: dir.noreply(u) }))
+    .filter((x): x is { u: string; mail: string } => !!x.mail)
+    .slice(0, 10)
+    .map((x) => `${x.u} <${x.mail}>`);
+}
+
+/**
+ * The user who triggered a write: server mode only, from the authenticated principal (GitHub login, or
+ * `service:<name>` for a service-account key). Local mode and shared keys: none (agent-only attribution).
+ */
+export function principalUser(ctx: Pick<ToolContext, 'principal' | 'settings'>): string | undefined {
+  if (ctx.settings?.mode === 'local') return undefined;
+  const p = ctx.principal;
+  if (p?.kind === 'user') return p.login;
+  // A human decision recorded from the web UI (uiAllowed tools): the signed-in user.
+  if (p?.kind === 'ui' && p.user.kind !== 'local') return p.user.login;
+  if (p?.kind === 'key' && p.service) return `${SERVICE_USER_PREFIX}${p.keyName}`;
+  return undefined;
+}
+
+/**
+ * Write tools that are steps of the Mandate flow: without a `cause` they succeed with a warning (the agent should pass
+ * the feedback item / finding / work order it acts on). Origins (feedback_create, audits, claims, heartbeats) are not.
+ */
+export const FLOW_CAUSE_TOOLS = /^(spec|standard|component)_(create|update_meta|status_set|archive|section_(insert|update|move|archive|link_add|link_remove))$|^(work_order_create|work_order_section_done|work_order_complete|verification_record)$/;
 
 export interface ToolDef<S extends z.ZodType = z.ZodType> {
   name: string;
@@ -91,16 +184,30 @@ export interface ToolDef<S extends z.ZodType = z.ZodType> {
   kind: 'read' | 'write' | 'ops';
   /** Ops tools only: refuse the web UI's read-only session (agent keys only). git_pull stays callable from the UI. */
   agentOnly?: boolean;
+  /** The inverse: only the signed-in web UI (an admin action such as flow_policy_set); agents are refused. */
+  uiOnly?: boolean;
+  /**
+   * Write tools a web UI session may call: pure HUMAN decisions (accept / reject feedback, approve a waiver, release a
+   * stale claim, snooze an integrity warning), never document content. Same validation, gates, commits and activity
+   * as for agents; the commit is attributed to the signed-in user (server mode) via the `mandate-ui` agent. Needs the
+   * user's own write access (`uiAccess`). Every other write tool stays refused for the UI session.
+   */
+  uiAllowed?: boolean;
   /** Extra MCP annotations (readOnlyHint etc. are derived from `kind`). */
   annotations?: Partial<ToolAnnotations>;
   /** Write tools: extra commit trailers derived from the arguments (e.g. `{ Feedback: args.feedback }`). */
   trailers?: (args: z.output<S>) => Record<string, string | undefined>;
+  /** Write tools: causes implied by the arguments (e.g. a work order's `reason`), recorded with `cause` (L-2). */
+  causes?: (args: z.output<S>) => string[] | undefined;
   run(args: z.output<S>, ctx: ToolContext): Promise<unknown>;
 }
 
 export type AnyToolDef = ToolDef<z.ZodType>;
 
-export function defineTool<S extends z.ZodType>(def: ToolDef<S>): AnyToolDef {
+export function defineTool<S extends z.ZodType>(input: ToolDef<S>): AnyToolDef {
+  // Status-changing tools carry their one-line gate summary from the lifecycle registry.
+  const gate = input.uiOnly ? '' : gateSummary(input.name);
+  const def: ToolDef<S> = gate && typeof input.description === 'string' ? { ...input, description: `${input.description}\n${gate}` } : input;
   if (def.kind !== 'write') return def as unknown as AnyToolDef;
   const shape = (def.input as unknown as { shape?: z.ZodRawShape }).shape;
   if (!shape) throw new Error(`write tool ${def.name}: input must be a z.object (refine inside the service instead)`);
@@ -115,9 +222,9 @@ const IDEMPOTENCY_MAX = 1000;
 
 /** Where completed idempotent results are kept (24 h). In memory by default; `setIdempotencyStore` makes them durable. */
 export interface IdempotencyStore {
-  get(key: string): { args: string; at: number; result: CallToolResult } | undefined;
-  set(key: string, entry: { args: string; at: number; result: CallToolResult }): void;
-  delete(key: string): void;
+  get(key: string): { args: string; at: number; result: CallToolResult } | undefined | Promise<{ args: string; at: number; result: CallToolResult } | undefined>;
+  set(key: string, entry: { args: string; at: number; result: CallToolResult }): void | Promise<void>;
+  delete(key: string): void | Promise<void>;
 }
 
 class MemoryIdempotencyStore implements IdempotencyStore {
@@ -143,17 +250,19 @@ export function setIdempotencyStore(store: IdempotencyStore): void {
 /** Calls in flight per key (a concurrent retry waits for the first call instead of writing twice). */
 const inFlight = new Map<string, { args: string; result: Promise<CallToolResult> }>();
 
-function remember(key: string, args: string, run: () => Promise<CallToolResult>, store: IdempotencyStore = idempotencyStore): Promise<CallToolResult> | CallToolResult {
+async function remember(key: string, args: string, run: () => Promise<CallToolResult>, store: IdempotencyStore = idempotencyStore): Promise<CallToolResult> {
   const conflict = () =>
     errorResult({ code: 'idempotency_conflict', message: 'this idempotencyKey was used with different arguments', path: 'idempotencyKey', hint: 'use a new key for a different write' });
-  const done = store.get(key);
+  // A store failure (database down) only loses the replay, never the write.
+  const done = await Promise.resolve(store.get(key)).catch(() => undefined);
+  // No await between the in-flight check and its registration: concurrent retries see each other.
   if (done && Date.now() - done.at <= IDEMPOTENCY_TTL_MS) return done.args === args ? done.result : conflict();
   const pending = inFlight.get(key);
   if (pending) return pending.args === args ? pending.result : conflict();
   const result = run()
-    .then((r) => {
+    .then(async (r) => {
       // Failed writes can be retried with the same key; successful ones replay for 24 h.
-      if (!r.isError) store.set(key, { args, at: Date.now(), result: r });
+      if (!r.isError) await Promise.resolve(store.set(key, { args, at: Date.now(), result: r })).catch(() => undefined);
       return r;
     })
     .finally(() => inFlight.delete(key));
@@ -194,12 +303,50 @@ export function okResult(value: unknown): CallToolResult {
   return { content: [{ type: 'text', text }], structuredContent: structured };
 }
 
-export function errorResult(error: ToolErrorBody): CallToolResult {
+export function errorResult(body: ToolErrorBody): CallToolResult {
+  const error = withHint(body);
   return { isError: true, content: [{ type: 'text', text: JSON.stringify({ error }) }], structuredContent: { error } as unknown as Record<string, unknown> };
+}
+
+/** Get tools whose results carry `contributors` (derived; the doc kind for bare ids, null = the ref is a full reference). */
+const CONTRIBUTOR_TOOLS: Record<string, string | null> = {
+  spec_get: 'specs',
+  standard_get: 'standards',
+  component_get: 'components',
+  work_order_get: 'work-orders',
+  feedback_get: 'feedback',
+  audit_get: 'audits',
+  doc_get: null,
+  spec_section_get: 'specs',
+  standard_section_get: 'standards',
+  component_section_get: 'components',
+  audit_section_get: 'audits',
+  work_order_section_get: 'work-orders',
+};
+
+/** Add `contributors` (direct + via causes; server mode users, else agents) to a successful get result. */
+async function withContributors(name: string, args: Record<string, unknown>, res: CallToolResult, ctx: ToolContext): Promise<CallToolResult> {
+  const body = res.structuredContent as Record<string, unknown> | undefined;
+  if (res.isError || !ctx.index || !body || 'contributors' in body) return res;
+  const raw = typeof args.ref === 'string' ? args.ref : typeof args.uri === 'string' ? args.uri : typeof args.kind === 'string' && typeof args.id === 'string' ? `mandate://${args.kind}/${args.id}` : null;
+  if (!raw) return res;
+  const kind = CONTRIBUTOR_TOOLS[name];
+  const ref = /mandate:\/\//.test(raw) ? raw : kind ? `mandate://${kind}/${raw}` : raw;
+  try {
+    const c = await ctx.index.contributors({ refs: [ref], depth: 2 }, { agentsOnly: ctx.settings?.mode === 'local' });
+    const list = Object.values(c.contributors)[0] ?? [];
+    return okResult({ ...body, contributors: list });
+  } catch {
+    return res; // a ref the index does not know yet (just written): the result stays as it is
+  }
 }
 
 /** Validate and run one tool call. Never throws. */
 export async function callTool(def: AnyToolDef, rawArgs: unknown, ctx: ToolContext): Promise<CallToolResult> {
+  if (ctx.presetIds && def.kind === 'write') {
+    const { args, presets } = takePresetIds(def.name, rawArgs);
+    if (presets) return withPresetIds(presets, () => callTool(def, args, { ...ctx, presetIds: false }));
+  }
   const keys = keysOf(def.input);
   let args: unknown;
   try {
@@ -207,34 +354,104 @@ export async function callTool(def: AnyToolDef, rawArgs: unknown, ctx: ToolConte
   } catch (e) {
     return errorResult(toToolError(e, keys));
   }
+  if (def.uiOnly) {
+    if (ctx.principal?.kind !== 'ui') return errorResult({ code: 'forbidden', message: `${def.name} is an admin action of the web UI; agents cannot call it`, path: 'name', hint: 'ask the user to change it in Settings → Agent flow' });
+    if (!(ctx.settings?.isAdmin(ctx.principal.user.login) ?? false)) return errorResult({ code: 'forbidden', message: 'only Mandate admins can change the project policy', path: 'name', hint: 'ask an admin (auth.github.allowedUsers)' });
+    return runTool(def, args, ctx, keys);
+  }
   if (def.agentOnly && ctx.principal?.kind === 'ui') {
     return errorResult({ code: 'forbidden', message: 'the web UI session is read-only', path: 'name', hint: `${def.name} needs an agent key: Authorization: Bearer <key> on this project's endpoint` });
   }
-  if (def.kind !== 'write') return runTool(def, args, ctx, keys);
-  if (ctx.principal?.kind === 'ui') {
+  if (def.kind !== 'write') {
+    const res = await runTool(def, args, ctx, keys);
+    return CONTRIBUTOR_TOOLS[def.name] !== undefined ? withContributors(def.name, args as Record<string, unknown>, res, ctx) : res;
+  }
+  const ui = ctx.principal?.kind === 'ui';
+  if (ui && !def.uiAllowed) {
     return errorResult({ code: 'forbidden', message: 'the web UI session is read-only', path: 'name', hint: 'write tools need an agent key: Authorization: Bearer <key> on this project\'s endpoint' });
   }
-  const { agent, branch, idempotencyKey, ...rest } = args as Record<string, unknown> & { agent?: string; branch?: string; idempotencyKey?: string };
-  const who = agent ?? ctx.clientName;
+  if (ui && (ctx.uiAccess ?? 'read') !== 'write') {
+    return errorResult({ code: 'forbidden', message: 'recording a decision needs write (push) permission on this project\'s repository; you have read access', path: 'name', hint: 'ask a repository admin for write access (push), then retry' });
+  }
+  if (!ui && ctx.access === 'read') {
+    return errorResult({ code: 'forbidden', message: 'write tools need GitHub push (write) permission on this project\'s repository; you have read access', path: 'name', hint: 'ask a repository admin for write access (push), then retry' });
+  }
+  const { agent, branch, idempotencyKey, cause, ...rest } = args as Record<string, unknown> & { agent?: string; branch?: string; idempotencyKey?: string; cause?: string | string[] };
+  // UI decisions are always recorded as the web UI (never an agent name the browser picked).
+  const who = ui ? UI_AGENT : (agent ?? ctx.clientName);
   if (!who) return errorResult({ code: 'agent_required', message: 'no agent identity', path: 'agent', hint: 'pass agent (the agent name, e.g. "my-agent@host") or set clientInfo.name' });
   let trailers: Record<string, string> = {};
   try {
-    trailers = Object.fromEntries(Object.entries(def.trailers?.(rest) ?? {}).filter((e): e is [string, string] => typeof e[1] === 'string' && e[1].length > 0));
+    trailers = Object.fromEntries(
+      Object.entries(def.trailers?.(rest) ?? {}).filter((e): e is [string, string] => typeof e[1] === 'string' && e[1].length > 0 && !RESERVED_TRAILERS.has(e[0].toLowerCase())),
+    );
   } catch (e) {
     return errorResult(toToolError(e, keys));
   }
+  let causes: string[] = [];
+  try {
+    const implied = def.causes?.(rest as never) ?? [];
+    const given = cause === undefined ? [] : Array.isArray(cause) ? cause : [cause];
+    causes = [...new Set(await resolveCauses(ctx.storage, implied.length ? [...given, ...implied] : cause))];
+  } catch (e) {
+    if (e instanceof CauseError) return errorResult({ code: 'invalid_cause', message: e.message, path: e.path, hint: 'pass existing references: a feedback item, audit finding, work order, spec / standard section, ...' });
+    return errorResult(toToolError(e, keys));
+  }
+  if (causes.length) trailers = { ...trailers, [CAUSE_TRAILER]: causes.join(', ') };
   // The key's name records which agent credential made the write (activity `source`); never the key itself.
   if (ctx.principal?.kind === 'key') trailers = { ...trailers, 'Agent-Key': ctx.principal.keyName };
-  const wctx: ToolContext = { ...ctx, commit: { agent: who, ...(branch ? { branch } : {}), trailers, ...(idempotencyKey ? { idempotencyKey } : {}) } };
-  const run = () => runTool(def, rest, wctx, keys, true);
-  return idempotencyKey ? remember(`${ctx.project ? `${ctx.project.id}:` : ''}${def.name}:${who}:${idempotencyKey}`, JSON.stringify(rest), run, ctx.idempotency) : run();
+  // Server mode: the acting GitHub user (and which credential) is recorded on every write.
+  if (ctx.principal?.kind === 'user') trailers = { ...trailers, 'Agent-Key': `${ctx.principal.via === 'oauth' ? 'oauth' : 'token'}:${ctx.principal.tokenName}` };
+  // Attribution (server mode): the triggering user, from the principal only (`Agent-User` kept for compatibility).
+  const user = principalUser(ctx);
+  if (user) trailers = { ...trailers, [USER_TRAILER]: user, [LEGACY_USER_TRAILER]: user };
+  // Server mode: the users who contributed to the causes are co-authors (GitHub shows them when the repo is pushed).
+  if (user && causes.length && coAuthorsEnabled(ctx)) {
+    const lines = await coAuthorLines(ctx, causes, user);
+    if (lines.length) trailers = { ...trailers, 'Co-authored-by': lines.join('\nCo-authored-by: ') };
+  }
+  const wctx: ToolContext = { ...ctx, commit: { agent: who, ...(user ? { user } : {}), ...(causes.length ? { causes } : {}), ...(branch ? { branch } : {}), trailers, ...(idempotencyKey ? { idempotencyKey } : {}) } };
+  const flowWarning =
+    !causes.length && FLOW_CAUSE_TOOLS.test(def.name) && !!ctx.settings && ctx.settings.policy().flowPolicy !== 'off'
+      ? `missing_cause: ${def.name} is a step of the Mandate flow; pass cause (the feedback item, audit finding, work order or section this write acts on, e.g. "cause": "mandate://feedback/<id>") so lineage records why`
+      : null;
+  // L-5: a `Feedback:` trailer (addresses) is recorded as the change's cause; warn when the item targets nothing in
+  // the changed document (a wrong cause cannot be removed from history later).
+  const addrWarning = await addressesWarning(ctx, rest).catch(() => null);
+  const warns = [flowWarning, addrWarning].filter((w): w is string => !!w);
+  const run = () => runTool(def, rest, wctx, keys, true, warns.length > 1 ? warns : (warns[0] ?? null));
+  // MW-24: the branch is part of the replayed arguments (the same key on another branch is a conflict, not a replay).
+  return idempotencyKey ? remember(`${ctx.project ? `${ctx.project.id}:` : ''}${def.name}:${who}:${idempotencyKey}`, JSON.stringify({ ...rest, ...(cause === undefined ? {} : { cause }), ...(branch === undefined ? {} : { branch }) }), run, ctx.idempotency) : run();
 }
 
-async function runTool(def: AnyToolDef, args: unknown, ctx: ToolContext, keys: string[], write = false): Promise<CallToolResult> {
+/** `feedback_target_mismatch` when a doc edit `addresses` feedback that targets nothing in the edited document (L-5). */
+async function addressesWarning(ctx: ToolContext, args: Record<string, unknown>): Promise<string | null> {
+  const list = Array.isArray(args.addresses) ? (args.addresses as unknown[]).filter((x): x is string => typeof x === 'string') : [];
+  const doc = typeof args.ref === 'string' ? parseRef(args.ref) : null;
+  if (!list.length || !doc || !['specs', 'standards', 'components'].includes(doc.kind)) return null;
+  const docUri = `mandate://${doc.kind}/${doc.id}`;
+  const off: string[] = [];
+  for (const a of list) {
+    const id = parseRef(a)?.id ?? a;
+    const fb = await ctx.storage.feedback.get(id).catch(() => null);
+    // An intake request filed without targets is linked by the changes that address it (no mismatch).
+    if (fb && ((fb.targets ?? []) as string[]).length && !((fb.targets ?? []) as string[]).some((t) => t === docUri || t.startsWith(`${docUri}/`))) off.push(id);
+  }
+  return off.length ? `feedback_target_mismatch: ${off.join(', ')} target${off.length === 1 ? 's' : ''} nothing in ${docUri.replace('mandate://', '')}; addresses records it as the cause of this change (lineage), so pass only the feedback this edit applies` : null;
+}
+
+async function runTool(def: AnyToolDef, args: unknown, ctx: ToolContext, keys: string[], write = false, extraWarning: unknown = null): Promise<CallToolResult> {
   try {
-    const value = await def.run(args, ctx);
-    // Writes always report non-blocking warnings (passthrough from the service; [] when none).
-    if (write && value && typeof value === 'object' && !Array.isArray(value) && !('warnings' in value)) return okResult({ ...value, warnings: [] });
+    if (!write) return okResult(await def.run(args, ctx));
+    // Writes collect the integrity delta of every commit they make (checked inside the write lock, after the gate).
+    const { value, integrity } = await collectIntegrity(() => def.run(args, ctx));
+    // Writes always report non-blocking warnings (passthrough from the service; [] when none) and `integrity`.
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      const v = value as Record<string, unknown>;
+      const warnings = Array.isArray(v.warnings) ? v.warnings : [];
+      const more = integrity.introduced.map((i) => `integrity: ${i.rule} at ${i.uri}: ${i.message}${i.hint ? ` (fix: ${i.hint})` : ''}`);
+      return okResult({ ...v, warnings: [...warnings, ...(Array.isArray(extraWarning) ? extraWarning : extraWarning ? [extraWarning] : []), ...more], integrity });
+    }
     return okResult(value);
   } catch (e) {
     return errorResult(write ? toWriteError(e, keys) : toToolError(e, keys));

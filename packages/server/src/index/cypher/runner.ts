@@ -5,6 +5,7 @@
 import { createRequire } from 'node:module';
 import { Worker } from 'node:worker_threads';
 import { DERIVED_LABELS, NODE_LABELS } from '@mandate/shared';
+import { VAR_LENGTH_ROW_BUDGET } from './compile.js';
 import { CypherError } from './parser.js';
 
 const require = createRequire(import.meta.url);
@@ -17,6 +18,10 @@ function registerCypherFunctions(db, labels, derived) {
   db.function('cy_guard', { deterministic: false, varargs: true }, () => {
     if (Date.now() > deadline) throw new Error('CYPHER_TIMEOUT');
     return 1;
+  });
+  // Raises a marker error the runner maps to a Cypher error (e.g. CYPHER_BUDGET: a variable-length expansion too large).
+  db.function('cy_fail', { deterministic: false, varargs: true }, (marker) => {
+    throw new Error(String(marker));
   });
   const parse = (v) => { if (typeof v !== 'string') return v; try { return JSON.parse(v); } catch { return v; } };
   const cache = new Map();
@@ -95,15 +100,28 @@ parentPort.on('message', ({ id, sql, binds, explain, timeoutMs }) => {
 const timeoutError = (ms: number) =>
   new CypherError(`query timed out after ${ms} ms`, null, 'add labels, a $ref anchor or a smaller hop range', 'cypher_timeout');
 
-interface Pending {
+export const budgetError = (n: number) =>
+  new CypherError(`a variable-length relationship expanded to more than ${n} paths`, null, 'add labels, a $ref anchor or a smaller hop range', 'cypher_budget');
+
+interface Job {
+  id: number;
+  msg: { id: number; sql: string; binds: Record<string, unknown>; explain: boolean; timeoutMs: number };
   resolve: (rows: unknown[]) => void;
   reject: (e: Error) => void;
 }
 
+/**
+ * One query in flight per worker; the others wait in a queue. The backstop timer is armed when a query is handed to
+ * the (idle) worker, so time spent queued never counts, and a backstop kill fails only the query that ran: the queue
+ * goes on on a fresh worker.
+ */
 export class CypherRunner {
   private worker?: Worker;
   private seq = 0;
-  private readonly pending = new Map<number, Pending>();
+  private readonly queue: Job[] = [];
+  private current?: { job: Job; worker: Worker; timer: NodeJS.Timeout };
+  /** Variable-length expansion budget the compiler uses with this runner. */
+  varLengthBudget = VAR_LENGTH_ROW_BUDGET;
 
   constructor(
     private readonly dbPath: string,
@@ -124,54 +142,68 @@ export class CypherRunner {
     });
     w.unref();
     w.on('message', (m: { id: number; rows?: unknown[]; error?: string }) => {
-      const p = this.pending.get(m.id);
-      if (!p) return;
-      this.pending.delete(m.id);
-      if (m.error?.includes('CYPHER_TIMEOUT')) p.reject(timeoutError(this.timeoutMs));
-      else if (m.error) p.reject(new CypherError(`query failed: ${m.error}`, null, undefined, 'cypher_runtime'));
-      else p.resolve(m.rows ?? []);
+      this.finish(w, m.id, (job) => {
+        if (m.error?.includes('CYPHER_TIMEOUT')) job.reject(timeoutError(job.msg.timeoutMs));
+        else if (m.error?.includes('CYPHER_BUDGET')) job.reject(budgetError(this.varLengthBudget));
+        else if (m.error) job.reject(new CypherError(`query failed: ${m.error}`, null, undefined, 'cypher_runtime'));
+        else job.resolve(m.rows ?? []);
+      });
     });
-    w.on('error', (e) => this.failAll(e));
-    w.on('exit', () => {
+    const lost = (e: Error) => {
       if (this.worker === w) this.worker = undefined;
-      this.failAll(new Error('query worker exited'));
-    });
+      if (this.current?.worker === w) this.finish(w, this.current.job.id, (job) => job.reject(e));
+    };
+    w.on('error', (e) => lost(e));
+    w.on('exit', () => lost(new Error('query worker exited')));
     this.worker = w;
     return w;
   }
 
-  private failAll(e: Error) {
-    for (const p of this.pending.values()) p.reject(e);
-    this.pending.clear();
+  /** Settles the in-flight query (if it is still `id` on worker `w`) and starts the next one. */
+  private finish(w: Worker, id: number, settle: (job: Job) => void) {
+    const c = this.current;
+    if (!c || c.worker !== w || c.job.id !== id) return;
+    clearTimeout(c.timer);
+    this.current = undefined;
+    settle(c.job);
+    this.pump();
+  }
+
+  private pump(): void {
+    if (this.current) return;
+    const job = this.queue.shift();
+    if (!job) return;
+    let w: Worker;
+    try {
+      w = this.start();
+    } catch (e) {
+      job.reject(e as Error);
+      return this.pump();
+    }
+    // Backstop: the in-query guard normally fires first; if not, drop the worker (only this query fails).
+    const timer = setTimeout(() => {
+      if (this.worker === w) this.worker = undefined;
+      void w.terminate();
+      this.finish(w, job.id, (j) => j.reject(timeoutError(j.msg.timeoutMs)));
+    }, job.msg.timeoutMs + 3000);
+    this.current = { job, worker: w, timer };
+    w.postMessage(job.msg);
   }
 
   /** Run a read query; rejects with code `cypher_timeout` after the timeout (the worker is restarted). */
   run(sql: string, binds: Record<string, unknown>, explain = false, timeoutMs = this.timeoutMs): Promise<unknown[]> {
-    const w = this.start();
     const id = this.seq++;
     return new Promise((resolve, reject) => {
-      // Backstop: the in-query guard normally fires first; if not, drop the worker.
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        reject(timeoutError(timeoutMs));
-        this.worker = undefined;
-        void w.terminate();
-      }, timeoutMs + 3000);
-      this.pending.set(id, {
-        resolve: (r) => {
-          clearTimeout(timer);
-          resolve(r);
-        },
-        reject: (e) => {
-          clearTimeout(timer);
-          reject(e);
-        },
-      });
-      w.postMessage({ id, sql, binds, explain, timeoutMs });
+      this.queue.push({ id, msg: { id, sql, binds, explain, timeoutMs }, resolve, reject });
+      this.pump();
     });
   }
 
   async close(): Promise<void> {
+    const closed = new Error('query runner closed');
+    for (const j of this.queue.splice(0)) j.reject(closed);
+    const c = this.current;
+    if (c) this.finish(c.worker, c.job.id, (j) => j.reject(closed));
     const w = this.worker;
     this.worker = undefined;
     if (w) await w.terminate();

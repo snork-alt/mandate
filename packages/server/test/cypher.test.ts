@@ -3,6 +3,7 @@ import fc from 'fast-check';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ZodError } from 'zod';
 import { CypherRunner, explainQuery } from '../src/index/cypher/index.js';
+import { positional } from '../src/index/cypher/pg/runner.js';
 import { CypherError, parseCypher } from '../src/index/cypher/parser.js';
 import { cleanupTempDirs } from './helpers.js';
 import { graphFixture, type GraphFixture } from './graph-fixture.js';
@@ -114,7 +115,7 @@ describe('compiler and runtime: every supported construct', () => {
     const und = await col("MATCH (s {ref: 'mandate://specs/login-sso/sections/callback'})-[:HAS_SECTION]-(d) RETURN d.ref");
     expect(und).toEqual(['mandate://specs/login-sso']);
     const follows = await run("MATCH (s)-[l:FOLLOWS]->(t) RETURN l.rel, type(l) LIMIT 1");
-    if (follows.rows.length) expect(follows.rows[0]).toEqual(['follows', 'LINKS_TO']);
+    if (follows.rows.length) expect(follows.rows[0]).toEqual(['follows', 'FOLLOWS']);
     const rel = await run("MATCH (d {ref: 'mandate://specs/login-sso'})-[r:HAS_SECTION]->() RETURN r LIMIT 1");
     expect(rel.rows[0]![0]).toMatchObject({ type: 'HAS_SECTION', from: 'mandate://specs/login-sso', to: expect.stringContaining('/sections/') });
   });
@@ -159,7 +160,7 @@ describe('compiler and runtime: every supported construct', () => {
   });
 
   it('variable-length relationships and named paths', async () => {
-    const p = await run("MATCH p = (y:Symbol {ref: 'mandate://symbols/SessionStore.create'})-[:MENTIONS_SYMBOL|HAS_SECTION|LINKS_TO|APPLIES_TO|USES_STANDARD*1..4]-(s:Standard {ref: 'mandate://standards/security-baseline'}) RETURN p, length(p) AS n, nodes(p) AS ns, relationships(p) AS rs ORDER BY n LIMIT 1");
+    const p = await run("MATCH p = (y:Symbol {ref: 'mandate://symbols/SessionStore.create'})-[:MENTIONS_SYMBOL|HAS_SECTION|FOLLOWS|DEVIATES_FROM|USES_STANDARD*1..4]-(s:Standard {ref: 'mandate://standards/security-baseline'}) RETURN p, length(p) AS n, nodes(p) AS ns, relationships(p) AS rs ORDER BY n LIMIT 1");
     expect(p.rows).toHaveLength(1);
     const [path, n, ns, rs] = p.rows[0]! as [unknown[], number, { ref: string }[], { type: string }[]];
     expect(path.length).toBe(2 * n + 1);
@@ -266,9 +267,12 @@ describe('equivalence with the navigation API', () => {
 
 describe('safety', () => {
   it('times out pathological queries, caps rows and depth, rejects writes', async () => {
-    const t = Date.now();
-    await expect(run('MATCH (a), (b), (c) RETURN count(*)')).rejects.toMatchObject({ code: 'cypher_timeout' });
-    expect(Date.now() - t).toBeLessThan(6000);
+    // PGlite (embedded, single-threaded WASM) cannot interrupt a running statement: timeouts are checked on SQLite and real Postgres.
+    if (process.env.MANDATE_INDEX_BACKEND !== 'pglite') {
+      const t = Date.now();
+      await expect(run('MATCH (a), (b), (c) RETURN count(*)')).rejects.toMatchObject({ code: 'cypher_timeout' });
+      expect(Date.now() - t).toBeLessThan(6000);
+    }
     // The engine recovers after a timeout.
     expect(await col('MATCH (s:Spec) RETURN count(s)')).toHaveLength(1);
     const capped = await run('MATCH (n) RETURN n.ref', {}, { limit: 5 });
@@ -311,7 +315,7 @@ describe('practical agent questions', () => {
     const qs: { q: string; params?: Record<string, unknown>; check: (rows: unknown[][]) => void }[] = [
       {
         // 1. Sections referencing src/auth/session.ts lines 30-40, and the standards they follow.
-        q: "MATCH (s:Section)-[:REFERENCES_CODE]->(c:CodeRange) WHERE c.path = 'src/auth/session.ts' AND c.lineStart <= 40 AND c.lineEnd >= 30 MATCH (d)-[:HAS_SECTION]->(s) OPTIONAL MATCH (s)-[:USES_STANDARD]->(st) OPTIONAL MATCH (d)-[:USES_STANDARD]->(ds:Standard) RETURN s.ref, collect(DISTINCT st.ref) AS follows, collect(DISTINCT ds.ref) AS docStandards",
+        q: "MATCH (s:Section)-[:REFERENCES_CODE]->(c:CodeRange) WHERE c.path = 'src/auth/session.ts' AND c.lineStart <= 40 AND c.lineEnd >= 30 MATCH (d)-[:HAS_SECTION]->(s) OPTIONAL MATCH (s)-[:FOLLOWS]->(st) OPTIONAL MATCH (d)-[:USES_STANDARD]->(ds:Standard) RETURN s.ref, collect(DISTINCT st.ref) AS follows, collect(DISTINCT ds.ref) AS docStandards",
         check: (r) => {
           expect(r.map((x) => x[0])).toContain('mandate://specs/login-sso/sections/callback');
           const row = r.find((x) => x[0] === 'mandate://specs/login-sso/sections/callback')!;
@@ -354,12 +358,12 @@ describe('practical agent questions', () => {
       },
       {
         // 7. Specs depending (transitively) on user-sessions.
-        q: "MATCH (x:Spec)-[:DEPENDS_ON*1..3]->(s:Spec {ref: 'mandate://specs/user-sessions'}) RETURN DISTINCT x.ref ORDER BY x.ref",
+        q: "MATCH (x:Spec)-[:SPEC_DEPENDS_ON*1..3]->(s:Spec {ref: 'mandate://specs/user-sessions'}) RETURN DISTINCT x.ref ORDER BY x.ref",
         check: (r) => expect(r.map((x) => x[0])).toEqual(expect.arrayContaining(['mandate://specs/login-sso', 'mandate://specs/mfa-totp'])),
       },
       {
         // 8. Open work orders and the sections they cover.
-        q: "MATCH (w:WorkOrder)-[:COVERS]->(s:Section) WHERE w.status IN ['pending', 'in_progress'] RETURN w.ref, w.status, collect(s.ref) AS sections",
+        q: "MATCH (w:WorkOrder)-[:HAS_SECTION]->(:Section)-[:COVERS]->(s:Section) WHERE w.status IN ['pending', 'in_progress'] RETURN w.ref, w.status, collect(s.ref) AS sections",
         check: (r) => {
           expect(r.length).toBeGreaterThan(0);
           r.forEach((x) => expect((x[2] as string[]).length).toBeGreaterThan(0));
@@ -371,8 +375,8 @@ describe('practical agent questions', () => {
         check: (r) => r.forEach((x) => expect(Number(x[1])).toBeGreaterThan(0)),
       },
       {
-        // 10. Standards that apply to specs of repo `app` through appliesTo rules.
-        q: "MATCH (st:Standard)-[:APPLIES_TO]->(d:Spec) WHERE d.repo = 'app' RETURN st.ref, collect(d.ref) AS specs",
+        // 10. Standards that specs of repo `app` use (section links or appliesTo rules: u.via).
+        q: "MATCH (d:Spec)-[u:USES_STANDARD]->(st:Standard) WHERE d.repo = 'app' RETURN st.ref, collect(d.ref) AS specs",
         check: (r) => expect(r.map((x) => x[0])).toContain('mandate://standards/security-baseline'),
       },
       {
@@ -415,6 +419,37 @@ describe('practical agent questions', () => {
   }, 60_000);
 });
 
+/* ------------------------------------------------------------------ graph schema v2 (P1-P6) */
+
+describe('graph schema v2: per-rel link types, LINKS_TO alias, derived and removed kinds', () => {
+  it('section links are typed per rel; the deprecated LINKS_TO alias is their union and l.rel still reads', async () => {
+    expect(await run('MATCH (s:Section)-[:DEPENDS_ON]->(b:Section) RETURN s.ref, b.ref').then((r) => r.rows)).toContainEqual(['mandate://specs/mfa-totp/sections/login-flow', 'mandate://specs/login-sso/sections/callback']);
+    const alias = await run('MATCH (s:Section)-[l:LINKS_TO]->(t) RETURN l.rel, type(l), count(*) ORDER BY l.rel');
+    expect(alias.rows.length).toBeGreaterThan(1);
+    for (const [rel, type] of alias.rows) expect(type).toBe(String(rel).toUpperCase());
+    const perRel = rows<{ k: string; n: number }>("SELECT kind AS k, COUNT(*) AS n FROM edges WHERE valid_to IS NULL AND kind IN ('depends_on', 'follows', 'deviates_from', 'extends', 'supersedes', 'conflicts_with', 'relates_to', 'affects', 'verified_by') AND from_uri LIKE '%/sections/%' AND json_extract(props, '$.rel') IS NOT NULL GROUP BY kind ORDER BY kind");
+    expect(alias.rows.map((r) => [r[0], r[2]])).toEqual(perRel.map((r) => [r.k, r.n]));
+    expect(rows("SELECT 1 FROM edges WHERE kind IN ('links_to', 'applies_to', 'superseded_by')")).toHaveLength(0);
+    await expect(run('MATCH (a)-[:APPLIES_TO]->(b) RETURN a')).rejects.toThrow(/unknown relationship type 'APPLIES_TO'/);
+    const schema = await fx.index.graphSchema();
+    expect(schema.relationships.find((r) => r.type === 'LINKS_TO')).toMatchObject({ deprecated: true, description: expect.stringMatching(/DEPRECATED.*DEPENDS_ON\|FOLLOWS/) });
+  });
+
+  it('derived document-level dependencies have their own kind; uses_standard is one edge with via; covers starts at work-order sections', async () => {
+    expect(await col("MATCH (a:Spec)-[:DEPENDS_ON]->(b:Spec) RETURN a.ref")).toEqual([]);
+    expect(await col("MATCH (a:Spec {ref: 'mandate://specs/mfa-totp'})-[d:SPEC_DEPENDS_ON]->(b:Spec) RETURN b.ref")).toContain('mandate://specs/login-sso');
+    const pairs = rows<{ n: number }>("SELECT COUNT(*) AS n FROM edges WHERE kind = 'uses_standard' AND valid_to IS NULL GROUP BY from_uri, to_uri HAVING n > 1");
+    expect(pairs).toHaveLength(0);
+    const via = await run('MATCH (d)-[u:USES_STANDARD]->(s:Standard) RETURN u.via LIMIT 50');
+    expect(via.rows.length).toBeGreaterThan(0);
+    for (const [v] of via.rows) expect((v as string[]).every((x) => x === 'links' || x === 'appliesTo')).toBe(true);
+    expect(await col('MATCH (w:WorkOrder)-[:COVERS]->(s:Spec) RETURN w.ref')).toEqual([]);
+    const viaSections = await col('MATCH (w:WorkOrder)-[:HAS_SECTION]->(ws:Section)-[:COVERS]->(s:Section) RETURN DISTINCT w.ref');
+    const legacy = await col('MATCH (w:WorkOrder)-[:COVERS]->(s:Section) RETURN DISTINCT w.ref');
+    expect(viaSections.length + legacy.length).toBeGreaterThan(0);
+  });
+});
+
 /* ------------------------------------------------------------------ schema and batch */
 
 describe('graph_schema and graph_batch', () => {
@@ -424,7 +459,7 @@ describe('graph_schema and graph_batch', () => {
     expect(s.relationships.map((r) => r.type)).toEqual(expect.arrayContaining(EDGE_KINDS.map(relTypeOf)));
     for (const r of s.relationships) expect(r.reverse).toBeTruthy();
     expect(s.labels.find((l) => l.label === 'Spec')!.properties).toEqual(expect.arrayContaining(['ref', 'status', 'repo']));
-    expect(s.examples).toHaveLength(11);
+    expect(s.examples).toHaveLength(14);
     for (const ex of s.examples) {
       await run(ex.query, { ref: 'mandate://specs/user-sessions', symbol: 'mandate://symbols/SessionStore.create' });
     }
@@ -449,4 +484,120 @@ describe('graph_schema and graph_batch', () => {
   });
 
   it('prints the report', () => console.info(`cypher equivalence: ${report.join(', ')}`));
+});
+
+/* ------------------------------------------------------------------ review regressions (GQ-*) */
+
+describe('review regressions', () => {
+  const pgBackend = () => (fx.index as unknown as { mirror: { db: { pool: { query: (s: string, v?: unknown[]) => Promise<unknown> }; dialect: { table: (n: string) => string } } } | null }).mirror;
+  const runnerOf = () => (fx.index as unknown as { runner: { varLengthBudget: number } }).runner;
+  const errOf = async (p: Promise<unknown>) => p.then(() => null, (e: unknown) => e as { code?: string; message: string });
+
+  it('GQ-1: N has one row per uri even with duplicate valid node rows', async () => {
+    const [uri, before] = (await run('MATCH (a)-[r]->(b:Spec) RETURN b.ref AS b, count(*) AS n ORDER BY n DESC, b LIMIT 1')).rows[0] as [string, number];
+    expect(before).toBeGreaterThan(1);
+    const q = 'MATCH (a)-[r]->(b:Spec {ref: $u}) RETURN count(*), count(DISTINCT r)';
+    // A second valid row for the same uri (what the indexer did for agent / branch nodes).
+    const mirror = pgBackend();
+    const RID = 987654321;
+    if (mirror) {
+      const t = mirror.db.dialect.table('nodes');
+      await mirror.db.pool.query(`INSERT INTO ${t} (rid, uri, kind, label, props, source, valid_from, valid_to) SELECT ${RID}, uri, kind, label, props, source, -1, NULL FROM ${t} WHERE uri = $1 AND valid_to IS NULL LIMIT 1`, [uri]);
+    } else {
+      fx.index.db.prepare('INSERT INTO nodes (uri, kind, label, props, source, valid_from, valid_to) SELECT uri, kind, label, props, source, -1, NULL FROM nodes WHERE uri = ? AND valid_to IS NULL LIMIT 1').run(uri);
+    }
+    try {
+      expect((await run('MATCH (b) WHERE b.ref = $u RETURN count(*)', { u: uri })).rows).toEqual([[1]]);
+      expect((await run(q, { u: uri })).rows).toEqual([[before, before]]);
+      expect((await run('MATCH (a)-[*1]->(b {ref: $u}) RETURN count(*)', { u: uri })).rows).toEqual([[before]]);
+    } finally {
+      if (mirror) await mirror.db.pool.query(`DELETE FROM ${mirror.db.dialect.table('nodes')} WHERE rid = ${RID}`);
+      else fx.index.db.prepare('DELETE FROM nodes WHERE uri = ? AND valid_from = -1').run(uri);
+    }
+  });
+
+  it('GQ-5: reaching the var-length row budget fails with cypher_budget', async () => {
+    const [v] = (await run('MATCH (a:Spec)-->(b) RETURN a.ref AS a, count(*) AS n ORDER BY n DESC, a LIMIT 1')).rows[0] as [string];
+    const q = 'MATCH (a:Spec {ref: $v})-[*1..2]->(b) RETURN count(*)';
+    const full = (await run(q, { v })).rows[0]![0] as number;
+    expect(full).toBeGreaterThan(20);
+    const r = runnerOf();
+    const saved = r.varLengthBudget;
+    r.varLengthBudget = 20;
+    try {
+      expect(await errOf(run(q, { v }))).toMatchObject({ code: 'cypher_budget' });
+    } finally {
+      r.varLengthBudget = saved;
+    }
+    expect((await run(q, { v })).rows).toEqual([[full]]);
+  });
+
+  it('GQ-10: binds inside quoted identifiers and strings are left alone', async () => {
+    const p = positional(`SELECT @b0 AS "x@b1", '@b2' || @b1, "a""@b3"`, { b0: 'zero', b1: 'one', b2: 'two', b3: 'three' });
+    expect(p.text).toBe(`SELECT $1 AS "x@b1", '@b2' || $2, "a""@b3"`);
+    expect(p.values).toEqual(['zero', 'one']);
+    const r = await run('MATCH (s:Spec) RETURN s.ref AS `x@b999`, s.ref AS `@b0` ORDER BY s.ref LIMIT 1');
+    expect(r.columns).toEqual(['x@b999', '@b0']);
+    expect(r.rows[0]![0]).toMatch(/^mandate:\/\/specs\//);
+  });
+
+  it('GQ-11: booleans, conditions, cross-type comparisons and SKIP / LIMIT agree on both targets', async () => {
+    expect((await run('RETURN toString(true), toString(1 = 1), toString(false), toString(1 = 2)')).rows).toEqual([['true', 'true', 'false', 'false']]);
+    // A string property is not a condition (NULL: no rows); static non-booleans are rejected.
+    expect((await run('MATCH (s:Spec) WHERE s.title RETURN count(*)')).rows).toEqual([[0]]);
+    expect((await run('MATCH (s:Spec) WHERE NOT s.title RETURN count(*)')).rows).toEqual([[0]]);
+    for (const bad of ['MATCH (s:Spec) WHERE 1 RETURN s', "MATCH (s:Spec) WHERE s AND s.ref = 'x' RETURN s", 'MATCH (s:Spec) WHERE NOT s.ref RETURN s']) {
+      expect(await errOf(run(bad))).toMatchObject({ code: 'cypher_type' });
+    }
+    // Ordering across types is null on both targets.
+    expect((await run("MATCH (s:Spec) WHERE 'a' > 1 RETURN count(*)")).rows).toEqual([[0]]);
+    expect((await run("MATCH (s:Spec) WHERE 1 < 'a' OR s.title > 3 RETURN count(*)")).rows).toEqual([[0]]);
+    expect((await run("RETURN 'b' > 'a', 2 > 1.5, 1 > 'a'")).rows).toEqual([[true, true, null]]);
+    // Negative / non-integer SKIP and LIMIT are rejected (literals and parameters).
+    for (const [q, p] of [['MATCH (s:Spec) RETURN s SKIP $n', { n: -1 }], ['MATCH (s:Spec) RETURN s LIMIT -1', {}], ['MATCH (s:Spec) RETURN s LIMIT $n', { n: 1.5 }]] as [string, Record<string, unknown>][]) {
+      expect(await errOf(run(q, p))).toMatchObject({ code: 'cypher_type' });
+    }
+    expect((await run('MATCH (s:Spec) RETURN s.ref SKIP $n LIMIT $m', { n: 1, m: 2 })).rows).toHaveLength(2);
+  });
+
+  it('GQ-12: *2 back to start uses relationship uniqueness', async () => {
+    // A spec with two CAUSED_BY relationships to the same cause (one per recording commit): a -> x <- a is a trail.
+    const par = (await run('MATCH (a:Spec)-[r1:CAUSED_BY]->(b)<-[r2:CAUSED_BY]-(a) RETURN a.ref ORDER BY a.ref LIMIT 1')).rows;
+    expect(par).toHaveLength(1);
+    const v = par[0]![0];
+    const one = async (q: string) => (await run(q, { v })).rows[0]![0];
+    const fixed = await one('MATCH (a:Spec {ref: $v})-[r1:CAUSED_BY]-(b)-[r2:CAUSED_BY]-(c:Spec) WHERE c = a RETURN count(*)');
+    expect(fixed).toBeGreaterThan(0);
+    expect(await one('MATCH (a:Spec {ref: $v})-[:CAUSED_BY*2]-(c:Spec) WHERE c = a RETURN count(*)')).toBe(fixed);
+    // Var-length relationships are distinct from fixed ones and from each other in the same MATCH.
+    expect(await one('MATCH (a:Spec {ref: $v})-[r1:CAUSED_BY]-(b)-[:CAUSED_BY*1]-(c:Spec) WHERE c = a RETURN count(*)')).toBe(fixed);
+    expect(await one('MATCH (a:Spec {ref: $v})-[:CAUSED_BY*1]-(b)-[:CAUSED_BY*1]-(c:Spec) WHERE c = a RETURN count(*)')).toBe(fixed);
+    // In general a *2 expansion counts what two fixed hops with distinct relationships count (nodes may repeat).
+    const all = await one('MATCH (a:Spec {ref: $v})-[r1]->(b)-[r2]->(c) RETURN count(*)');
+    expect(await one('MATCH (a:Spec {ref: $v})-[*2]->(c) RETURN count(*)')).toBe(all);
+  });
+
+  it('GQ-13: the backstop timer starts when the worker takes the query; queued queries do not time out', async () => {
+    if (process.env.MANDATE_INDEX_BACKEND || process.env.MANDATE_FIXTURE_KIND === 'merged') return; // the runner is backend-independent
+    const runner = new CypherRunner((fx.index as unknown as { opts: { index: { path: string } } }).opts.index.path, 100);
+    try {
+      // No cy_guard in this SQL: only the backstop (timeout + 3 s) can stop it.
+      const sql = 'WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < @n) SELECT count(*) FROM c';
+      let n = 200_000;
+      let t = Date.now();
+      await runner.run(sql, { n });
+      let d = Math.max(1, Date.now() - t);
+      n = Math.round((n * 400) / d); // ~400 ms per query
+      t = Date.now();
+      await runner.run(sql, { n });
+      d = Math.max(50, Date.now() - t);
+      const k = Math.min(40, Math.ceil(4500 / d) + 1); // queued together they take longer than the backstop
+      t = Date.now();
+      const res = await Promise.allSettled(Array.from({ length: k }, () => runner.run(sql, { n })));
+      expect(Date.now() - t).toBeGreaterThan(3100);
+      expect(res.filter((r) => r.status === 'rejected')).toEqual([]);
+    } finally {
+      await runner.close();
+    }
+  }, 60_000);
 });

@@ -176,6 +176,13 @@ export interface DocFormat<F, FIn = F> {
   serialize(doc: { frontmatter: FIn | F; sections: SectionInput[] }): string;
   /** Check a markdown source without throwing. */
   validate(md: string): ValidationResult;
+  /**
+   * Lenient parse for display (e.g. old versions written under an earlier schema): returns the
+   * document whenever its structure is readable, with every problem as `issues` instead of throwing.
+   * Frontmatter that fails the schema is kept as-is; sections with an unknown type or a bad fence
+   * are dropped. `doc` is absent only when the file has no readable frontmatter.
+   */
+  inspect(md: string): { doc?: Doc<F>; issues: DocIssue[] };
   /** Section types this format accepts. */
   readonly registry: SectionTypeRegistry;
 }
@@ -197,7 +204,7 @@ export function createDocFormat<S extends z.ZodType<Record<string, unknown>, Rec
   type F = z.output<S>;
   const registry = options.registry ?? createDefaultRegistry();
   const typeList = () => registry.list().map((t) => t.id).join(', ');
-  function analyze(md: string): { issues: DocIssue[]; doc?: Doc<F> } {
+  function analyze(md: string): { issues: DocIssue[]; doc?: Doc<F>; partial?: Doc<F> } {
     const { issues, data, blocks } = scan(md);
     if (!data) return { issues };
 
@@ -335,21 +342,35 @@ export function createDocFormat<S extends z.ZodType<Record<string, unknown>, Rec
       }
     }
 
-    if (issues.length || !fm.success) return { issues };
-    return { issues, doc: { frontmatter: fm.data as F, sections } };
+    const partial = { frontmatter: (fm.success ? fm.data : rest) as F, sections: sections.filter((x, i) => sections.findIndex((y) => y.id === x.id) === i) };
+    if (issues.length || !fm.success) return { issues, partial };
+    return { issues, doc: { frontmatter: fm.data as F, sections }, partial };
   }
 
   function render(frontmatter: F, sections: Section[]): string {
     const data: Record<string, unknown> = { ...frontmatter };
     delete data[RESERVED_KEY];
     if (sections.length) {
-      data[RESERVED_KEY] = sections.map(({ id, title, type, summary, archived, refs, symbols, links, verifiedBy, method, threshold, level, rationale, scope, check, examples, implementedCommit }) => ({
+      data[RESERVED_KEY] = sections.map(({ id, title, type, summary, archived, provenance, confidence, refs, symbols, links, verifiedBy, method, threshold, level, rationale, scope, check, examples, implementedCommit, ref, kind, result, hash, findings, itemRechecks, target, status, verifications, codeRefs, deviations }) => ({
         id,
         title,
         type,
         summary,
         archived,
+        provenance,
+        confidence,
+        ref,
+        kind,
         level,
+        result,
+        hash,
+        findings,
+        itemRechecks,
+        target,
+        status,
+        verifications,
+        codeRefs,
+        deviations,
         rationale,
         scope,
         check,
@@ -383,6 +404,10 @@ export function createDocFormat<S extends z.ZodType<Record<string, unknown>, Rec
     validate(md) {
       const { issues, doc } = analyze(md);
       return { ok: issues.length === 0, issues, warnings: doc ? sectionSummaryWarnings(doc.sections, md) : [] };
+    },
+    inspect(md) {
+      const { issues, partial } = analyze(md);
+      return partial ? { doc: partial, issues } : { issues };
     },
     parse(md) {
       const { issues, doc } = analyze(md);

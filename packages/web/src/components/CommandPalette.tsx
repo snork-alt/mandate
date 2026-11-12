@@ -10,17 +10,25 @@ import {
   IconHash,
   IconMessageReport,
   IconMoon,
+  IconPlugConnected,
   IconRuler2,
+  IconSettings,
+  IconGitMerge,
 } from '@tabler/icons-react';
 import { useLocation, useNavigate } from 'react-router';
 import { mentionOf, parseNodeUri, parseRef, refMention, type SearchKind } from '@mandate/shared';
 import { SearchField } from './SearchField';
 import { StatusGlyph } from './refs/StatusGlyph';
-import { sectionHref } from '../lib/links';
+import { auditHref, sectionHref } from '../lib/links';
+import { SpecMaturityDot } from './maturity/SpecMaturity';
 import { copyText } from '../lib/copy';
+import { goTo } from '../project';
+import { openConnectAgent } from '../connect/ConnectAgentModal';
 import { SECTIONS } from '../sections';
 import { parsePaletteQuery } from '../mcp/queryParser';
 import { McpToolError } from '../mcp/client';
+import { useContributors } from '../lib/people';
+import { LastEditor } from './people/People';
 import { useMcpCodeSearch, useMcpIdLookup, useMcpNode, useMcpSearch, useMcpSymbolSearch, useMcpTextSearch, useMcpTool } from '../mcp/queries';
 import { LevelBadge } from './rules/RuleParts';
 import { useEntityList } from '../lib/queries';
@@ -40,7 +48,7 @@ let openPalette: (query?: string) => void = () => undefined;
 export const openCommandPalette = (query?: string) => openPalette(query);
 
 const DOC_ICON: Record<string, typeof IconFileText> = { spec: IconFileText, standard: IconRuler2, work_order: IconClipboardList, feedback: IconMessageReport, section: IconHash };
-const KIND_LABEL: Record<SearchKind, string> = { spec: 'Spec', standard: 'Standard', section: 'Section', work_order: 'Work order', feedback: 'Feedback', component: 'Component' };
+const KIND_LABEL: Record<SearchKind, string> = { spec: 'Spec', standard: 'Standard', section: 'Section', work_order: 'Work order', feedback: 'Feedback', component: 'Component', audit: 'Audit' };
 const KIND_ORDER: SearchKind[] = ['spec', 'standard', 'section', 'work_order', 'feedback'];
 const MATCH_LABEL = { text: 'text', semantic: 'meaning', symbol: 'symbol' } as const;
 
@@ -114,6 +122,28 @@ export function CommandPalette() {
         ),
         select: go(`/${kind}`),
       }));
+      // Beyond the sections: lineage, settings and the connect dialog (P1).
+      const extra: { id: string; label: string; icon: typeof IconFileText; select: () => void }[] = [
+        { id: 'go-lineage', label: 'Go to Lineage', icon: IconGitMerge, select: go('/lineage') },
+        { id: 'go-settings', label: 'Settings', icon: IconSettings, select: () => (close(), goTo('/settings')) },
+        { id: 'connect-agent', label: 'Connect agent', icon: IconPlugConnected, select: () => (close(), openConnectAgent()) },
+      ];
+      for (const x of extra) {
+        if (lc && !x.label.toLowerCase().includes(lc)) continue;
+        const Icon = x.icon;
+        r.push({
+          id: x.id,
+          type: 'item',
+          flat: true,
+          node: (
+            <>
+              <Icon size={16} stroke={1.6} />
+              <span className="cmdk-row-main">{x.label}</span>
+            </>
+          ),
+          select: x.select,
+        });
+      }
       return r.length ? [{ id: 'nav-label', type: 'label', node: 'Navigate' }, ...r] : r;
     };
     const docHeader = (id: string, docKind: string, title: string, st?: string, extra?: ReactNode): Row => {
@@ -125,8 +155,10 @@ export function CommandPalette() {
           <>
             <Icon size={15} stroke={1.6} />
             <span>{title}</span>
-            <StatusIcon status={st} />
+            {/* Specs show maturity only (X1); other documents their own status. */}
+            {docKind === 'spec' ? parseRef(id)?.kind === 'specs' && <SpecMaturityDot id={parseRef(id)!.id} /> : <StatusIcon status={st} />}
             {extra}
+            <LastEditor refUri={id} />
           </>
         ),
       };
@@ -336,7 +368,7 @@ export function CommandPalette() {
                       {r.repo}:{r.path}
                       {lineLabel(r.lines) && ` ${lineLabel(r.lines)}`}
                     </span>
-                    <StatusIcon status={r.status} />
+                    {parseRef(r.docUri)?.kind === 'specs' ? <SpecMaturityDot id={parseRef(r.docUri)!.id} /> : <StatusIcon status={r.status} />}
                   </div>
                   <div className="cmdk-snippet">
                     {r.docTitle} › {r.sectionTitle}
@@ -351,7 +383,7 @@ export function CommandPalette() {
       case 'ref': {
         const n = node.data?.node;
         if (n) {
-          const ref = parseRef(n.ref);
+          const ref = parseRef(n.ref) ?? auditHref(n.ref);
           out.push({
             id: `ref-${n.ref}`,
             type: 'item',
@@ -433,7 +465,7 @@ export function CommandPalette() {
       else {
         // A pasted reference opens right away, even before the debounced lookup finished.
         const t = parsePaletteQuery(raw);
-        if (t.type === 'ref' && parseRef(t.uri)) go(sectionHref(t.uri))();
+        if (t.type === 'ref' && (parseRef(t.uri) || auditHref(t.uri))) go(sectionHref(t.uri))();
       }
     } else if (!inInput && e.key.toLowerCase() === 'c' && !e.metaKey && !e.ctrlKey && !e.altKey) {
       if (copyActive()) e.preventDefault();
@@ -447,7 +479,8 @@ export function CommandPalette() {
   const error = current?.error as McpToolError | null | undefined;
   const canFilter = parsed.type === 'search' || parsed.type === 'phrase';
   const facets = search.data?.facets;
-  const statusOptions = Array.from(new Set([...status, ...Object.keys(facets?.status ?? {})]));
+  // Stored-status chips only for non-spec kinds (specs are filtered by maturity, X1).
+  const statusOptions = kinds.length > 0 && !kinds.includes('spec') ? Array.from(new Set([...status, ...Object.keys(facets?.status ?? {})])) : status;
   const toggle = <T,>(arr: T[], v: T) => (arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v]);
   const hasResults = items.length > 0;
   const total = parsed.type === 'search' ? search.data?.total : parsed.type === 'phrase' ? phrase.data?.total : undefined;

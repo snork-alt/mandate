@@ -18,7 +18,7 @@ export const STORED_SPEC_STATUSES = ['draft', 'ready', 'done', 'archived'] as co
 export const PRIORITIES = ['p0', 'p1', 'p2', 'p3'] as const;
 
 /** Re-exported by index.ts. */
-export const WORK_ORDER_KINDS = ['implement', 'update', 'review', 'verify'] as const;
+export const WORK_ORDER_KINDS = ['implement', 'update', 'review', 'verify', 'fix'] as const;
 
 /** Re-exported by index.ts. */
 export const FEEDBACK_KINDS = ['ambiguity', 'conflict', 'bug', 'improvement', 'question'] as const;
@@ -63,4 +63,6 @@ export const FEEDBACK_STATUSES = ['open', 'accepted', 'closed'] as const;
 export const CRITERION_STATES = ['verified', 'failing', 'stale', 'unverified', 'waived', 'unknown'] as const;
 
 /** Re-exported by index.ts (standard lifecycle). */
+/** Component lifecycle (transitions: COMPONENT_TRANSITIONS in lifecycle.ts). */
+export const COMPONENT_STATUSES = ['active', 'deprecated', 'archived'] as const;
 export const STANDARD_STATUSES = ['draft', 'active', 'deprecated'] as const;

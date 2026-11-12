@@ -9,6 +9,8 @@ export interface AuthUser {
   login: string;
   name?: string;
   avatarUrl: string;
+  /** `local`: signed in with a one-time link from `getmandate open`. */
+  kind?: 'github' | 'local';
 }
 
 export interface AuthStatus {
@@ -21,6 +23,22 @@ export interface AuthStatus {
   /** The OAuth callback URL to register on GitHub (null when not derivable). */
   callbackUrl: string | null;
   loginUrl: string;
+  /** First-run setup: `inSetupMode` until the wizard is completed. */
+  setup?: { complete: boolean; inSetupMode: boolean };
+  /** This browser holds a valid setup cookie (from `getmandate setup-url`). */
+  setupAccess?: boolean;
+  /**
+   * `local`: this machine (projects folder, one-time local sign-in link, no GitHub); `server`: a remote server (GitHub
+   * sign-in with an allow-list, projects from GitHub repos).
+   */
+  mode?: 'local' | 'server';
+  /** Public URL of a server-mode instance (agents' MCP URLs). */
+  publicUrl?: string | null;
+  /** Pre-mode config with GitHub sign-in (behaves like server mode on localhost). */
+  legacy?: boolean;
+  isAdmin?: boolean;
+  /** Explicit server mode: per-project access comes from GitHub repo permissions (read / push). */
+  repoAuth?: boolean;
 }
 
 export async function fetchAuthStatus(): Promise<AuthStatus> {
@@ -51,9 +69,10 @@ export async function logout(): Promise<void> {
 /** Messages for `/login?error=`. */
 export const LOGIN_ERRORS: Record<string, string> = {
   state_mismatch: 'The login request expired or was started in another tab. Please try again.',
-  not_allowed: 'Your GitHub account is not allowed on this Mandate server. Ask an admin to add your login or organization to auth.github.allowedUsers / allowedOrgs.',
+  not_allowed: "Your GitHub account isn't on this server's allow-list. Ask whoever runs this Mandate server to add your login or organization (auth.github.allowedUsers / allowedOrgs).",
   github_error: 'GitHub returned an error during sign-in. Please try again.',
   not_configured: 'GitHub sign-in is not configured on this server yet.',
+  invalid_token: 'This link is invalid or has expired. Run the command again to get a new one.',
 };
 
 export const loginErrorMessage = (code: string | null) => (code ? (LOGIN_ERRORS[code] ?? `Sign-in failed (${code}).`) : null);
@@ -80,3 +99,9 @@ export function redirectToLogin(): void {
 /** The auth status the app was gated on (signed-in user for the sidebar). */
 export const AuthContext = createContext<AuthStatus | null>(null);
 export const useAuth = () => useContext(AuthContext);
+
+/** CLI hints: the published package and, in development, the workspace script. */
+export const cli = (args: string) => ({ npx: `npx getmandate ${args}`, dev: `npm run mandate -- ${args}` });
+
+/** Local mode = this machine, no GitHub. Legacy configs (GitHub, no mode) behave like server mode. */
+export const isLocalMode = (s: AuthStatus | null | undefined) => s?.mode === 'local';

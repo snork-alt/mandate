@@ -1,10 +1,13 @@
 /**
- * Compiles the Cypher AST to one SQLite statement (CTEs; recursive CTEs for variable-length
+ * Compiles the Cypher AST to one SQL statement (CTEs; recursive CTEs for variable-length
  * relationships). Every node and edge comes from the `N` / `E` CTEs, which hold exactly the
  * rows valid at the query's point in time: queries never see (or write) the temporal filter.
+ * This file is the shared plan (scopes, patterns, anchoring, aggregation, type checks); the SQL spelling comes from a
+ * target: SQLite (target.ts, the default) or Postgres (pg/target.ts).
  */
 import { DERIVED_LABELS, DERIVED_REL_TYPES, EDGE_KINDS, NODE_LABELS, relTypeOf } from '@mandate/shared';
 import { CypherError, isAggregate, suggest, type Clause, type Expr, type NodePat, type Pattern, type Pos, type RelPat } from './parser.js';
+import { NUMERIC_OPS, sqliteTarget, type SqlTarget } from './target.js';
 
 export type VType = 'node' | 'rel' | 'path' | 'list<node>' | 'list<rel>' | 'list' | 'json' | 'bool' | 'scalar';
 
@@ -40,6 +43,10 @@ export interface CompileOptions {
   boundVersions: string[];
   /** Rows returned at most (one more is fetched to detect truncation). */
   rowCap: number;
+  /** SQL dialect (default SQLite). */
+  target?: SqlTarget;
+  /** Rows a variable-length expansion may produce before the query fails with `cypher_budget` (default VAR_LENGTH_ROW_BUDGET). */
+  varLengthBudget?: number;
 }
 
 export interface Compiled {
@@ -53,20 +60,20 @@ export const LABELS: Map<string, { kind: string; prop?: string; value?: string }
   ...Object.entries(NODE_LABELS).map(([kind, label]) => [label, { kind }] as const),
   ...Object.entries(DERIVED_LABELS).map(([label, d]) => [label, { kind: d.kind, prop: d.prop, value: d.value }] as const),
 ]);
-/** Relationship type -> edge kind (+ optional `rel` constraint). */
-export const REL_TYPES: Map<string, { kind: string; rel?: string }> = new Map([
-  ...EDGE_KINDS.map((k) => [relTypeOf(k), { kind: k }] as const),
-  ...Object.entries(DERIVED_REL_TYPES).map(([t, d]) => [t, { kind: d.kind, rel: d.rel }] as const),
+/** Relationship type -> edge kinds (one, or several for an alias such as the deprecated `LINKS_TO`). */
+export const REL_TYPES: Map<string, { kinds: readonly string[] }> = new Map([
+  ...EDGE_KINDS.map((k) => [relTypeOf(k), { kinds: [k] }] as const),
+  ...Object.entries(DERIVED_REL_TYPES).map(([t, d]) => [t, { kinds: d.kinds }] as const),
 ]);
 
-/** Most rows a variable-length expansion may produce (SQLite stops the recursion there). */
+/** Most rows a variable-length expansion may produce; past it the query fails with `cypher_budget` (both targets). */
 export const VAR_LENGTH_ROW_BUDGET = 200_000;
 
 /** Per-row deadline check on the last FROM item of a step (non-deterministic, so evaluated per row). */
-const guard = (from: string[]) => {
+const guard = (t: SqlTarget, from: string[]) => {
   const last = from.at(-1)?.split(' AS ').pop();
   const column = last?.startsWith('n') ? 'uri' : last?.startsWith('e') ? 'id' : last?.startsWith('w') ? 'depth' : null;
-  return `cy_guard(${last && column ? `${last}.${column}` : '1'})`;
+  return t.guard(last && column ? `${last}.${column}` : '1');
 };
 
 const q = (name: string) => `"${name.replace(/"/g, '""')}"`;
@@ -77,7 +84,11 @@ class Compiler {
   private nb = 0;
   private na = 0;
   private ctes: string[] = [];
-  constructor(private readonly opts: CompileOptions) {}
+  private readonly t: SqlTarget;
+  constructor(private readonly opts: CompileOptions) {
+    this.t = opts.target ?? sqliteTarget;
+  }
+  private readonly b = (v: unknown) => this.bind(v);
 
   private bind(v: unknown): string {
     const name = `b${this.nb++}`;
@@ -95,35 +106,42 @@ class Compiler {
   }
 
   private baseCtes(): string[] {
-    const s = this.opts.seq === null ? null : this.bind(this.opts.seq);
+    const t = this.t;
+    const s = this.opts.seq === null ? null : t.int(this.bind(this.opts.seq));
     const vn = this.opts.virtualNodes.map(
-      (n) => `SELECT ${this.bind(n.uri)}, ${this.bind(n.kind)}, ${this.bind(n.label)}, ${this.bind(JSON.stringify(n.props))}, 0`,
+      (n) => `SELECT ${t.text(this.bind(n.uri))}, ${t.text(this.bind(n.kind))}, ${t.text(this.bind(n.label))}, ${t.text(this.bind(JSON.stringify(n.props)))}, 0`,
     );
     const ve = this.opts.virtualEdges.map(
       (e, i) =>
-        `SELECT 'x${i}', ${this.bind(e.from)}, ${this.bind(e.to)}, ${this.bind(e.kind)}, ${this.bind(e.props ? JSON.stringify(e.props) : null)}`,
+        `SELECT 'x${i}', ${t.text(this.bind(e.from))}, ${t.text(this.bind(e.to))}, ${t.text(this.bind(e.kind))}, ${t.text(this.bind(e.props ? JSON.stringify(e.props) : null))}`,
     );
-    const live = `SELECT e.id, e.from_uri, e.to_uri, e.kind, e.props FROM edges e WHERE ${this.valid('e', s)}`;
+    const live = `SELECT ${t.name === 'postgres' ? 'e.id::text' : 'e.id'}, e.from_uri, e.to_uri, e.kind, e.props FROM ${t.table('edges')} e WHERE ${this.valid('e', s)}`;
     // Version nodes expose the live node's outgoing edges as they were at the version.
-    const views = `SELECT 'v' || v.rowid || ':' || e.id, v.uri, e.to_uri, e.kind, e.props
-      FROM nodes v JOIN versions vv ON vv.uri = v.uri JOIN edges e ON e.from_uri = vv.of_uri
+    const views = `SELECT 'v' || ${t.rowid('v')} || ':' || e.id, v.uri, e.to_uri, e.kind, e.props
+      FROM ${t.table('nodes')} v JOIN ${t.table('versions')} vv ON vv.uri = v.uri JOIN ${t.table('edges')} e ON e.from_uri = vv.of_uri
        AND e.valid_from <= vv.point AND (e.valid_to IS NULL OR e.valid_to > vv.point)
-     WHERE v.kind = 'version' AND v.uri IN (${this.opts.boundVersions.map((u) => this.bind(u)).join(', ') || 'NULL'}) AND ${this.valid('v', s)}`;
+     WHERE v.kind = 'version' AND v.uri IN (${this.opts.boundVersions.map((u) => t.text(this.bind(u))).join(', ') || 'NULL'}) AND ${this.valid('v', s)}`;
     const edgeRows = [live, ...(this.opts.boundVersions.length ? [views] : []), ...ve].join('\n      UNION ALL ');
-    return [
-      `E0(id, from_uri, to_uri, kind, props) AS MATERIALIZED (${edgeRows})`,
-      `E AS MATERIALIZED (SELECT id, from_uri, to_uri, kind, props,
-        json_object('id', id, 'type', upper(kind), 'from', from_uri, 'to', to_uri, 'props', json(coalesce(props, '{}'))) AS r FROM E0)`,
-      // Nodes valid at the point, plus the last known state of nodes still referenced by a valid edge (e.g. deleted targets).
-      `N(uri, kind, label, props, ghost) AS MATERIALIZED (
-        SELECT n.uri, n.kind, n.label, n.props, 0 FROM nodes n WHERE ${this.valid('n', s)}
-        UNION ALL
-        SELECT g.uri, g.kind, g.label, g.props, 1 FROM (
-          SELECT n.*, row_number() OVER (PARTITION BY n.uri ORDER BY n.valid_from DESC) AS rn FROM nodes n
-           WHERE n.uri IN (SELECT to_uri FROM E0 UNION SELECT from_uri FROM E0) AND n.source IS NOT 'snapshot'
-             AND NOT EXISTS (SELECT 1 FROM nodes m WHERE m.uri = n.uri AND ${this.valid('m', s)})
+    const ghosts = `SELECT g.uri, g.kind, g.label, g.props, 1 FROM (
+          SELECT n.*, row_number() OVER (PARTITION BY n.uri ORDER BY n.valid_from DESC) AS rn FROM ${t.table('nodes')} n
+           WHERE n.uri IN (SELECT to_uri FROM E0 UNION SELECT from_uri FROM E0) AND ${t.isNot('n.source', "'snapshot'")}
+             AND NOT EXISTS (SELECT 1 FROM ${t.table('nodes')} m WHERE m.uri = n.uri AND ${this.valid('m', s)})
              ${s === null ? '' : `AND n.valid_from <= ${s}`}
-        ) g WHERE g.rn = 1
+        ) g WHERE g.rn = 1`;
+    // Postgres inlines N / E (lookups by uri use the indexes); the ghost set is computed once (G).
+    const pg = t.name === 'postgres';
+    return [
+      `E0(id, from_uri, to_uri, kind, props) AS ${t.materialized} (${edgeRows})`,
+      `E AS ${t.materialized} (SELECT id, from_uri, to_uri, kind, props,
+        ${t.relObject} AS r FROM E0)`,
+      ...(pg ? [`G(uri, kind, label, props, ghost) AS MATERIALIZED (${ghosts})`] : []),
+      // Nodes valid at the point, plus the last known state of nodes still referenced by a valid edge (e.g. deleted targets).
+      // One row per uri even if several rows of a node are valid at the point (the latest one wins).
+      `N(uri, kind, label, props, ghost) AS ${t.materialized} (
+        SELECT n.uri, n.kind, n.label, n.props, 0 FROM ${t.table('nodes')} n WHERE ${this.valid('n', s)}
+           AND NOT EXISTS (SELECT 1 FROM ${t.table('nodes')} m WHERE m.uri = n.uri AND m.valid_from > n.valid_from AND ${this.valid('m', s)})
+        UNION ALL
+        ${pg ? 'SELECT uri, kind, label, props, ghost FROM G' : ghosts}
         ${vn.length ? `UNION ALL ${vn.join(' UNION ALL ')}` : ''})`,
     ];
   }
@@ -131,21 +149,22 @@ class Compiler {
   /* ------------------------------------------------------------ expressions */
 
   private nodeField(uriSql: string, field: 'kind' | 'label' | 'props') {
-    return `(SELECT ${field} FROM N WHERE N.uri = ${uriSql})`;
+    return `(SELECT ${field} FROM N WHERE N.uri = ${uriSql}${this.t.oneRow})`;
   }
 
   expr(e: Expr, scope: Scope, allowAgg = false): { sql: string; type: VType } {
     switch (e.t) {
       case 'lit':
-        if (e.v === null) return { sql: 'NULL', type: 'scalar' };
-        if (typeof e.v === 'boolean') return { sql: e.v ? '1' : '0', type: 'bool' };
-        if (typeof e.v === 'string') return { sql: this.bind(this.opts.refs.get(e.v) ?? e.v), type: 'scalar' };
-        return { sql: this.bind(e.v), type: 'scalar' };
+        if (e.v === null) return { sql: this.t.nullValue, type: 'scalar' };
+        if (typeof e.v === 'boolean') return { sql: this.t.boolLit(e.v), type: 'bool' };
+        if (typeof e.v === 'string') return { sql: this.t.value(this.opts.refs.get(e.v) ?? e.v, this.b), type: 'scalar' };
+        return { sql: this.t.value(e.v, this.b), type: 'scalar' };
       case 'param': {
         if (!(e.name in this.opts.params)) throw new CypherError(`missing parameter $${e.name}`, e.pos, suggest(e.name, Object.keys(this.opts.params)));
         const v = this.opts.params[e.name];
-        if (Array.isArray(v) || (v && typeof v === 'object')) return { sql: `json(${this.bind(JSON.stringify(v))})`, type: Array.isArray(v) ? 'list' : 'json' };
-        return { sql: this.bind(v ?? null), type: typeof v === 'boolean' ? 'bool' : 'scalar' };
+        if (Array.isArray(v) || (v && typeof v === 'object')) return { sql: this.t.jsonParam(v, this.b), type: Array.isArray(v) ? 'list' : 'json' };
+        if (typeof v === 'boolean') return { sql: this.t.name === 'postgres' ? this.t.boolLit(v) : this.bind(v), type: 'bool' };
+        return { sql: v === null || v === undefined ? (this.t.name === 'postgres' ? this.t.nullValue : this.bind(null)) : this.t.value(v, this.b), type: 'scalar' };
       }
       case 'var': {
         const v = scope.get(e.name);
@@ -155,44 +174,37 @@ class Compiler {
       case 'prop': {
         const base = this.expr(e.e, scope, allowAgg);
         if (base.type === 'node') {
-          if (e.key === 'ref' || e.key === 'uri') return { sql: base.sql, type: 'scalar' };
-          if (e.key === 'kind' || e.key === 'label') return { sql: this.nodeField(base.sql, e.key), type: 'scalar' };
-          return { sql: `json_extract(${this.nodeField(base.sql, 'props')}, ${this.bind(`$.${jsonKey(e.key)}`)})`, type: 'json' };
+          if (e.key === 'ref' || e.key === 'uri') return { sql: this.t.nodeAsValue(base.sql), type: 'scalar' };
+          if (e.key === 'kind' || e.key === 'label') return { sql: this.t.textAsValue(this.nodeField(base.sql, e.key)), type: 'scalar' };
+          return { sql: this.t.propOf(this.nodeField(base.sql, 'props'), e.key, this.b), type: 'json' };
         }
         if (base.type === 'rel') {
-          if (e.key === 'type') return { sql: `json_extract(${base.sql}, '$.type')`, type: 'scalar' };
-          return { sql: `json_extract(${base.sql}, ${this.bind(`$.props.${jsonKey(e.key)}`)})`, type: 'json' };
+          if (e.key === 'type') return { sql: this.t.relField(base.sql, 'type'), type: 'scalar' };
+          return { sql: this.t.field(base.sql, ['props', e.key], this.b), type: 'json' };
         }
         if (base.type === 'path' || base.type.startsWith('list') || base.type === 'bool') {
           throw new CypherError(`cannot read property '${e.key}' of a ${base.type}`, e.pos);
         }
-        return { sql: `json_extract(${base.sql}, ${this.bind(`$.${jsonKey(e.key)}`)})`, type: 'json' };
+        return { sql: this.t.field(base.sql, [e.key], this.b), type: 'json' };
       }
       case 'index': {
         const base = this.expr(e.e, scope, allowAgg);
         const i = this.expr(e.i, scope, allowAgg);
         const elem: VType = base.type === 'list<node>' ? 'node' : base.type === 'list<rel>' ? 'rel' : 'json';
-        const n = `CAST(${i.sql} AS INTEGER)`;
-        return { sql: `json_extract(${base.sql}, CASE WHEN ${n} < 0 THEN '$[#' || ${n} || ']' ELSE '$[' || ${n} || ']' END)`, type: elem };
+        return { sql: this.t.index(base.sql, i.sql, elem), type: elem };
       }
       case 'list': {
         const items = e.items.map((x) => this.expr(x, scope, allowAgg));
         const allNodes = items.length > 0 && items.every((x) => x.type === 'node');
         const allRels = items.length > 0 && items.every((x) => x.type === 'rel');
-        return { sql: `json_array(${items.map((x) => (x.type === 'rel' || x.type === 'json' || x.type === 'path' || x.type.startsWith('list') ? `json(${x.sql})` : x.sql)).join(', ')})`, type: allNodes ? 'list<node>' : allRels ? 'list<rel>' : 'list' };
+        return { sql: this.t.list(items), type: allNodes ? 'list<node>' : allRels ? 'list<rel>' : 'list' };
       }
       case 'map':
-        return {
-          sql: `json_object(${e.entries.map(([k, v]) => {
-            const x = this.expr(v, scope, allowAgg);
-            return `${this.bind(k)}, ${x.type === 'rel' || x.type === 'json' || x.type.startsWith('list') ? `json(${x.sql})` : x.sql}`;
-          }).join(', ')})`,
-          type: 'json',
-        };
+        return { sql: this.t.map(e.entries.map(([k, v]) => [k, this.expr(v, scope, allowAgg)]), this.b), type: 'json' };
       case 'not':
-        return { sql: `(NOT ${this.expr(e.e, scope, allowAgg).sql})`, type: 'bool' };
+        return { sql: this.t.not(this.boolOperand(this.expr(e.e, scope, allowAgg), e.e.pos)), type: 'bool' };
       case 'neg':
-        return { sql: `(-${this.expr(e.e, scope, allowAgg).sql})`, type: 'scalar' };
+        return { sql: this.t.neg(this.expr(e.e, scope, allowAgg)), type: 'scalar' };
       case 'isnull':
         return { sql: `(${this.expr(e.e, scope, allowAgg).sql} IS ${e.not ? 'NOT ' : ''}NULL)`, type: 'bool' };
       case 'exists':
@@ -204,58 +216,73 @@ class Compiler {
     }
   }
 
+  /**
+   * A value used as a condition must be a boolean: values that cannot be one (nodes, lists, numbers, strings ...) are
+   * rejected; a property / JSON value is a condition only when it holds a boolean (else NULL, on both targets).
+   */
+  private boolOperand(x: { sql: string; type: VType }, pos: Pos): { sql: string; type: VType } {
+    if (x.type === 'bool' || x.type === 'json') return x;
+    throw new CypherError(`expected a boolean condition, got a ${x.type === 'scalar' ? 'number / string value' : x.type}`, pos, 'compare it explicitly, e.g. n.prop = true or n.prop IS NOT NULL', 'cypher_type');
+  }
+  private cond(x: Expr, scope: Scope): string {
+    return this.t.cond(this.boolOperand(this.expr(x, scope), x.pos));
+  }
+
+  /** SKIP / LIMIT: a non-negative integer literal or parameter (both targets would disagree on anything else). */
+  private count(x: Expr, what: string): string {
+    const v = x.t === 'lit' ? x.v : x.t === 'param' ? this.opts.params[x.name] : x.t === 'neg' && x.e.t === 'lit' && typeof x.e.v === 'number' ? -x.e.v : undefined;
+    if (x.t === 'param' && !(x.name in this.opts.params)) throw new CypherError(`missing parameter $${x.name}`, x.pos, suggest(x.name, Object.keys(this.opts.params)));
+    if (typeof v !== 'number' || !Number.isInteger(v) || v < 0) throw new CypherError(`${what} takes a non-negative integer (literal or $parameter)`, x.pos, undefined, 'cypher_type');
+    return this.t.limitExpr({ sql: this.t.value(v, this.b), type: 'scalar' });
+  }
+
   private binary(e: Extract<Expr, { t: 'bin' }>, scope: Scope, allowAgg: boolean): { sql: string; type: VType } {
     const l = this.expr(e.l, scope, allowAgg);
     const r = this.expr(e.r, scope, allowAgg);
     switch (e.op) {
       case 'AND':
       case 'OR':
-        return { sql: `(${l.sql} ${e.op} ${r.sql})`, type: 'bool' };
+        return { sql: this.t.logic(e.op, this.boolOperand(l, e.l.pos), this.boolOperand(r, e.r.pos)), type: 'bool' };
       case 'XOR':
-        return { sql: `((${l.sql}) <> (${r.sql}))`, type: 'bool' };
+        return { sql: this.t.compare(e.op, this.boolOperand(l, e.l.pos), this.boolOperand(r, e.r.pos)), type: 'bool' };
       case '=':
       case '<>':
       case '<':
       case '>':
       case '<=':
       case '>=':
-        return { sql: `(${l.sql} ${e.op} ${r.sql})`, type: 'bool' };
+        return { sql: this.t.compare(e.op, l, r), type: 'bool' };
       case '=~':
-        return { sql: `cy_regexp(${r.sql}, ${l.sql})`, type: 'bool' };
+        return { sql: this.t.regexp(l, r), type: 'bool' };
       case 'IN':
-        return { sql: `(${l.sql} IN (SELECT value FROM json_each(${r.sql})))`, type: 'bool' };
+        return { sql: this.t.inList(l, r), type: 'bool' };
       case 'STARTS WITH':
-        return { sql: `(substr(${l.sql}, 1, length(${r.sql})) = ${r.sql})`, type: 'bool' };
+        return { sql: this.t.startsWith(l, r), type: 'bool' };
       case 'ENDS WITH':
-        return { sql: `(length(${r.sql}) = 0 OR substr(${l.sql}, -length(${r.sql})) = ${r.sql})`, type: 'bool' };
+        return { sql: this.t.endsWith(l, r), type: 'bool' };
       case 'CONTAINS':
-        return { sql: `(instr(${l.sql}, ${r.sql}) > 0)`, type: 'bool' };
+        return { sql: this.t.contains(l, r), type: 'bool' };
       case '+':
-        return { sql: `cy_add(${l.sql}, ${r.sql})`, type: l.type.startsWith('list') || r.type.startsWith('list') ? 'list' : 'scalar' };
+        return { sql: this.t.add(l, r), type: l.type.startsWith('list') || r.type.startsWith('list') ? 'list' : 'scalar' };
       default:
-        return { sql: `(${l.sql} ${e.op} ${r.sql})`, type: 'scalar' };
+        return { sql: NUMERIC_OPS.has(e.op) || this.t.name === 'sqlite' ? this.t.arith(e.op, l, r) : `(${l.sql} ${e.op} ${r.sql})`, type: 'scalar' };
     }
   }
 
   private call(e: Extract<Expr, { t: 'call' }>, scope: Scope, allowAgg: boolean): { sql: string; type: VType } {
     if (isAggregate(e.name)) {
       if (!allowAgg) throw new CypherError(`aggregate ${e.name}() is only allowed in WITH / RETURN items`, e.pos);
-      if (e.star) return { sql: 'count(*)', type: 'scalar' };
+      if (e.star) return { sql: this.t.countStar, type: 'scalar' };
       if (e.args.length !== 1) throw new CypherError(`${e.name}() takes one argument`, e.pos);
       const a = this.expr(e.args[0]!, scope, false);
       const d = e.distinct ? 'DISTINCT ' : '';
       switch (e.name) {
-        case 'collect': {
-          const v = a.type === 'rel' || a.type === 'json' || a.type === 'path' || a.type.startsWith('list') ? `json(${a.sql})` : a.sql;
-          return {
-            sql: `json_group_array(${d}${v}) FILTER (WHERE ${a.sql} IS NOT NULL)`,
-            type: a.type === 'node' ? 'list<node>' : a.type === 'rel' ? 'list<rel>' : 'list',
-          };
-        }
+        case 'collect':
+          return { sql: this.t.collect(a, !!d), type: a.type === 'node' ? 'list<node>' : a.type === 'rel' ? 'list<rel>' : 'list' };
         case 'count':
-          return { sql: `count(${d}${a.sql})`, type: 'scalar' };
+          return { sql: this.t.count(a, !!d), type: 'scalar' };
         default:
-          return { sql: `${e.name}(${d}${a.sql})`, type: 'scalar' };
+          return { sql: this.t.agg(e.name, a, !!d), type: 'scalar' };
       }
     }
     const args = e.args.map((x) => this.expr(x, scope, allowAgg));
@@ -267,47 +294,47 @@ class Compiler {
       case 'labels': {
         const a = one(1);
         if (a.type !== 'node') throw new CypherError('labels() takes a node', e.pos);
-        return { sql: `cy_labels(${this.nodeField(a.sql, 'kind')}, ${this.nodeField(a.sql, 'props')})`, type: 'list' };
+        return { sql: this.t.labels(this.nodeField(a.sql, 'kind'), this.nodeField(a.sql, 'props')), type: 'list' };
       }
       case 'type': {
         const a = one(1);
         if (a.type !== 'rel') throw new CypherError('type() takes a relationship', e.pos);
-        return { sql: `json_extract(${a.sql}, '$.type')`, type: 'scalar' };
+        return { sql: this.t.relField(a.sql, 'type'), type: 'scalar' };
       }
       case 'id': {
         const a = one(1);
-        if (a.type === 'rel') return { sql: `json_extract(${a.sql}, '$.id')`, type: 'scalar' };
-        return { sql: a.sql, type: 'scalar' };
+        if (a.type === 'rel') return { sql: this.t.relField(a.sql, 'id'), type: 'scalar' };
+        return { sql: this.t.nodeAsValue(a.sql), type: 'scalar' };
       }
       case 'nodes':
-        return { sql: `json_extract(${this.pathArg(one(1), e.pos)}, '$.nodes')`, type: 'list<node>' };
+        return { sql: this.t.pathPart(this.pathArg(one(1), e.pos), 'nodes'), type: 'list<node>' };
       case 'relationships':
-        return { sql: `json_extract(${this.pathArg(one(1), e.pos)}, '$.rels')`, type: 'list<rel>' };
+        return { sql: this.t.pathPart(this.pathArg(one(1), e.pos), 'rels'), type: 'list<rel>' };
       case 'length': {
         const a = one(1);
-        if (a.type === 'path') return { sql: `json_array_length(${a.sql}, '$.rels')`, type: 'scalar' };
-        return { sql: `cy_size(${a.sql})`, type: 'scalar' };
+        if (a.type === 'path') return { sql: this.t.pathLength(a.sql), type: 'scalar' };
+        return { sql: this.t.size(a), type: 'scalar' };
       }
       case 'size':
-        return { sql: `cy_size(${one(1).sql})`, type: 'scalar' };
+        return { sql: this.t.size(one(1)), type: 'scalar' };
       case 'coalesce':
         if (!args.length) throw new CypherError('coalesce() needs arguments', e.pos);
-        return { sql: `coalesce(${args.map((a) => a.sql).join(', ')})`, type: args[0]!.type };
+        return { sql: this.t.coalesce(args), type: args.every((a) => a.type === args[0]!.type) ? args[0]!.type : this.t.name === 'postgres' ? 'json' : args[0]!.type };
       case 'tolower':
-        return { sql: `lower(${one(1).sql})`, type: 'scalar' };
+        return { sql: this.t.lower(one(1)), type: 'scalar' };
       case 'toupper':
-        return { sql: `upper(${one(1).sql})`, type: 'scalar' };
+        return { sql: this.t.upper(one(1)), type: 'scalar' };
       case 'tostring':
-        return { sql: `CAST(${one(1).sql} AS TEXT)`, type: 'scalar' };
+        return { sql: this.t.toString(one(1)), type: 'scalar' };
       case 'tointeger':
-        return { sql: `CAST(${one(1).sql} AS INTEGER)`, type: 'scalar' };
+        return { sql: this.t.toInteger(one(1)), type: 'scalar' };
       case 'isancestor': {
         // isAncestor(a, b): commit a is a proper ancestor of commit b (git ancestry, all parents).
         if (args.length !== 2 || args.some((x) => x.type !== 'node')) throw new CypherError('isAncestor(a, b) takes two Commit nodes', e.pos);
-        const sha = (x: string) => `substr(${x}, ${'mandate://commits/'.length + 1})`;
-        const [a, b] = [sha(args[0]!.sql), sha(args[1]!.sql)];
+        const [a, b] = [this.t.shaOf(args[0]!.sql), this.t.shaOf(args[1]!.sql)];
+        const cp = this.t.table('commit_parents');
         return {
-          sql: `EXISTS (WITH RECURSIVE anc(s) AS (SELECT p.parent FROM commit_parents p WHERE p.sha = ${b} UNION SELECT p.parent FROM commit_parents p JOIN anc ON p.sha = anc.s) SELECT 1 FROM anc WHERE anc.s = ${a})`,
+          sql: `EXISTS (WITH RECURSIVE anc(s) AS (SELECT p.parent FROM ${cp} p WHERE p.sha = ${b} UNION SELECT p.parent FROM ${cp} p JOIN anc ON p.sha = anc.s) SELECT 1 FROM anc WHERE anc.s = ${a})`,
           type: 'bool',
         };
       }
@@ -327,7 +354,7 @@ class Compiler {
     const parts = labels.map((l) => {
       const d = LABELS.get(l);
       if (!d) throw new CypherError(`unknown label '${l}'`, pos, suggest(l, LABELS.keys()) ?? `labels: ${[...LABELS.keys()].join(', ')}`, 'cypher_unknown_label');
-      return d.prop ? `(${a}.kind = ${this.bind(d.kind)} AND json_extract(${a}.props, ${this.bind(`$.${d.prop}`)}) = ${this.bind(d.value)})` : `${a}.kind = ${this.bind(d.kind)}`;
+      return d.prop ? `(${a}.kind = ${this.t.text(this.bind(d.kind))} AND ${this.t.propText(`${a}.props`, d.prop, this.b)} = ${this.t.text(this.bind(d.value))})` : `${a}.kind = ${this.t.text(this.bind(d.kind))}`;
     });
     return `(${parts.join(' OR ')})`;
   }
@@ -337,7 +364,7 @@ class Compiler {
     const parts = types.map((t) => {
       const d = REL_TYPES.get(t);
       if (!d) throw new CypherError(`unknown relationship type '${t}'`, pos, suggest(t, REL_TYPES.keys()) ?? 'see graph_schema for the relationship types', 'cypher_unknown_type');
-      return d.rel ? `(${a}.kind = ${this.bind(d.kind)} AND json_extract(${a}.props, '$.rel') = ${this.bind(d.rel)})` : `${a}.kind = ${this.bind(d.kind)}`;
+      return d.kinds.map((k) => `${a}.kind = ${this.t.text(this.bind(k))}`).join(' OR ');
     });
     return `(${parts.join(' OR ')})`;
   }
@@ -346,12 +373,12 @@ class Compiler {
     const node: Var = { type: 'node', sql: `${a}.uri` };
     return props.map(([k, v]) => {
       const lhs = this.expr({ t: 'prop', e: { t: 'var', name: '\u0000n', pos: { offset: 0, line: 0, column: 0 } }, key: k, pos: v.pos }, new Map([...scope, ['\u0000n', node]]));
-      return `(${lhs.sql} = ${this.expr(v, scope).sql})`;
+      return this.t.compare('=', lhs, this.expr(v, scope));
     });
   }
 
   private relPropConds(a: string, props: [string, Expr][], scope: Scope): string[] {
-    return props.map(([k, v]) => `(json_extract(${a}.props, ${this.bind(`$.${jsonKey(k)}`)}) = ${this.expr(v, scope).sql})`);
+    return props.map(([k, v]) => this.t.compare('=', { sql: this.t.propOf(`${a}.props`, k, this.b), type: 'json' }, this.expr(v, scope)));
   }
 
   /**
@@ -360,6 +387,8 @@ class Compiler {
    */
   private patterns(patterns: Pattern[], scope: Scope, prevCte: string | null, out: Scope, from: string[], where: string[], allowVarLength = true): void {
     const relAliases: string[] = [];
+    /** Variable-length expansions of this MATCH (their `visited` / `rels` columns), for relationship uniqueness. */
+    const varRels: { visited: string; rels: string }[] = [];
     const local = (name: string | undefined): Var | undefined => (name ? (out.get(name) ?? scope.get(name)) : undefined);
     for (const p of patterns) {
       const nodeCols: string[] = [];
@@ -398,7 +427,7 @@ class Compiler {
           const bound = local(r.var);
           if (bound) where.push(`${a}.r = ${bound.sql}`);
           else if (r.var) out.set(r.var, { type: 'rel', sql: `${a}.r` });
-          segs.push(`json_object('r', json(${a}.r))`);
+          segs.push(this.t.relSeg(`${a}.r`));
           return;
         }
         if (!allowVarLength) throw new CypherError('variable-length relationships are not supported inside EXISTS { }', r.pos);
@@ -415,22 +444,26 @@ class Compiler {
         const dir = fromRight ? (r.dir === 'out' ? 'in' : r.dir === 'in' ? 'out' : 'both') : r.dir;
         this.ctes.push(this.varLengthCte(cte, anchorPat, r, dir, scope, out, prevCte));
         from.push(`${cte} AS ${w}`);
+        varRels.push({ visited: `${w}.visited`, rels: `${w}.rels` });
         const [s, t] = fromRight ? [right, left] : [left, right];
-        where.push(`${w}.start = ${s} AND ${w}."end" = ${t} AND ${w}.depth >= ${this.bind(r.min)}`);
-        const nodesSql = fromRight ? `cy_reverse(${w}.nodes)` : `${w}.nodes`;
-        const relsSql = fromRight ? `cy_reverse(${w}.rels)` : `${w}.rels`;
+        where.push(`${w}.start = ${s} AND ${w}."end" = ${t} AND ${w}.depth >= ${this.t.int(this.bind(r.min))}`);
+        const nodesSql = fromRight ? this.t.reverse(`${w}.nodes`) : `${w}.nodes`;
+        const relsSql = fromRight ? this.t.reverse(`${w}.rels`) : `${w}.rels`;
         if (r.var) out.set(r.var, { type: 'list<rel>', sql: relsSql });
-        segs.push(`json_object('vn', json(${nodesSql}), 'vr', json(${relsSql}))`);
+        segs.push(this.t.varSeg(nodesSql, relsSql));
       });
       if (p.pathVar) {
         if (local(p.pathVar)) throw new CypherError(`'${p.pathVar}' is already bound`, p.pos);
-        const parts = [nodeCols[0]!];
-        segs.forEach((sg, k) => parts.push(sg, nodeCols[k + 1]!));
-        out.set(p.pathVar, { type: 'path', sql: `cy_path(${parts.join(', ')})` });
+        const parts = [{ sql: nodeCols[0]!, node: true }];
+        segs.forEach((sg, k) => parts.push({ sql: sg, node: false }, { sql: nodeCols[k + 1]!, node: true }));
+        out.set(p.pathVar, { type: 'path', sql: this.t.path(parts) });
       }
     }
     // Relationship uniqueness within one MATCH.
     for (let x = 0; x < relAliases.length; x++) for (let y = x + 1; y < relAliases.length; y++) where.push(`${relAliases[x]}.id <> ${relAliases[y]}.id`);
+    // ... including the relationships of variable-length expansions (their ids are in `visited`).
+    for (const v of varRels) for (const a of relAliases) where.push(this.t.notVisited(v.visited, `${a}.id`));
+    for (let x = 0; x < varRels.length; x++) for (let y = x + 1; y < varRels.length; y++) where.push(this.t.vlDisjoint(varRels[x]!.rels, varRels[y]!.visited));
   }
 
   private varLengthCte(name: string, anchor: NodePat, r: RelPat, dir: 'out' | 'in' | 'both', scope: Scope, out: Scope, prevCte: string | null): string {
@@ -457,15 +490,21 @@ class Compiler {
         : dir === 'in'
           ? { join: `${e}.to_uri = v."end"`, next: `${e}.from_uri` }
           : { join: `(${e}.from_uri = v."end" OR ${e}.to_uri = v."end")`, next: `CASE WHEN ${e}.from_uri = v."end" THEN ${e}.to_uri ELSE ${e}.from_uri END` };
-    return `${name}(start, "end", depth, visited, nodes, rels) AS (
-      SELECT ${a}.uri, ${a}.uri, 0, ',' || ${a}.uri || ',', json_array(${a}.uri), json_array() FROM N AS ${a}${conds.length ? ` WHERE ${conds.join(' AND ')}` : ''}
+    const start = this.t.vlStart(`${a}.uri`);
+    const next = this.t.vlAppend('v.nodes', 'v.rels', step.next, `${e}.r`);
+    // Relationship uniqueness (openCypher trail semantics): `visited` holds the edge ids taken so far, nodes may repeat.
+    // The expansion stops one row past the budget (SQLite); more rows than the budget fail the query on both targets.
+    const budget = this.opts.varLengthBudget ?? VAR_LENGTH_ROW_BUDGET;
+    const raw = `${name}r`;
+    return `${raw}(start, "end", depth, visited, nodes, rels) AS ${this.t.name === 'sqlite' ? 'MATERIALIZED ' : ''}(
+      SELECT ${a}.uri, ${a}.uri, 0, CAST(',' AS TEXT), ${start.nodes}, ${start.rels} FROM N AS ${a}${conds.length ? ` WHERE ${conds.join(' AND ')}` : ''}
       UNION ALL
-      SELECT v.start, ${step.next}, v.depth + 1, v.visited || ${step.next} || ',', json_insert(v.nodes, '$[#]', ${step.next}), json_insert(v.rels, '$[#]', json(${e}.r))
-        FROM ${name} v JOIN E AS ${e} ON ${step.join}
-       WHERE cy_guard(v.depth) AND v.depth < ${this.bind(r.max)} AND instr(v.visited, ',' || ${step.next} || ',') = 0
-         AND EXISTS (SELECT 1 FROM N WHERE N.uri = ${step.next})${filters ? ` AND ${filters}` : ''}
-       LIMIT ${VAR_LENGTH_ROW_BUDGET}
-    )`;
+      SELECT v.start, ${step.next}, v.depth + 1, v.visited || ${e}.id || ',', ${next.nodes}, ${next.rels}
+        FROM ${raw} v JOIN E AS ${e} ON ${step.join}
+       WHERE ${this.t.guard('v.depth')} AND v.depth < ${this.t.int(this.bind(r.max))} AND ${this.t.notVisited('v.visited', `${e}.id`)}
+         AND EXISTS (SELECT 1 FROM N WHERE N.uri = ${step.next})${filters ? ` AND ${filters}` : ''}${this.t.vlLimit(budget + 1)}
+    ),
+  ${name} AS (SELECT * FROM ${raw} WHERE ${this.t.budgetCheck(`(SELECT count(*) FROM ${raw})`, budget)})`;
   }
 
   private existsSql(patterns: Pattern[], whereExpr: Expr | undefined, scope: Scope): string {
@@ -473,7 +512,7 @@ class Compiler {
     const from: string[] = [];
     const where: string[] = [];
     this.patterns(patterns, scope, null, out, from, where, false);
-    if (whereExpr) where.push(this.expr(whereExpr, new Map([...scope, ...out])).sql);
+    if (whereExpr) where.push(this.cond(whereExpr, new Map([...scope, ...out])));
     return `EXISTS (SELECT 1 FROM ${from.join(', ')}${where.length ? ` WHERE ${where.join(' AND ')}` : ''})`;
   }
 
@@ -497,8 +536,8 @@ class Compiler {
           // Bound variables come from the previous step (p).
           const inScope: Scope = new Map([...scope].map(([k, v]) => [k, { ...v, sql: `p.${col(k)}` }]));
           this.patterns(c.patterns, inScope, prev, out, from, where);
-          if (c.where) where.push(this.expr(c.where, new Map([...inScope, ...out])).sql);
-          where.push(guard(from));
+          if (c.where) where.push(this.cond(c.where, new Map([...inScope, ...out])));
+          where.push(guard(this.t, from));
           const select = [...cols(scope), ...[...out].map(([k, v]) => `${v.sql} AS ${col(k)}`)];
           steps.push(
             `${name} AS (SELECT ${select.join(', ') || '1 AS _'} FROM ${[prev ? `${prev} AS p` : null, ...from].filter(Boolean).join(', ')}${where.length ? ` WHERE ${where.join(' AND ')}` : ''})`,
@@ -510,7 +549,7 @@ class Compiler {
           const sub: Scope = new Map();
           for (const p of c.patterns) for (const n of p.nodes) if (n.var && scope.has(n.var)) free.set(n.var, scope.get(n.var)!);
           this.patterns(c.patterns, new Map(), null, sub, from, where);
-          where.push(guard(from));
+          where.push(guard(this.t, from));
           const joinOn = [...free.keys()].map((k) => `o.${col(k)} = p.${col(k)}`);
           const newVars = [...sub].filter(([k]) => !scope.has(k));
           const subSelect = [...sub].map(([k, v]) => `${v.sql} AS ${col(k)}`);
@@ -518,10 +557,10 @@ class Compiler {
             ...[...scope].map(([k, v]) => [k, { ...v, sql: `p.${col(k)}` }] as [string, Var]),
             ...newVars.map(([k, v]) => [k, { type: v.type, sql: `o.${col(k)}` }] as [string, Var]),
           ]);
-          if (c.where) joinOn.push(this.expr(c.where, outerScope).sql);
+          if (c.where) joinOn.push(this.cond(c.where, outerScope));
           const subq = `(SELECT ${subSelect.join(', ') || '1 AS _'} FROM ${from.join(', ')}${where.length ? ` WHERE ${where.join(' AND ')}` : ''})`;
           const select = [...cols(scope), ...newVars.map(([k]) => `o.${col(k)} AS ${col(k)}`)];
-          steps.push(`${name} AS (SELECT ${select.join(', ') || '1 AS _'} FROM ${prev ? `${prev} AS p` : '(SELECT 1) AS p'} LEFT JOIN ${subq} AS o ON ${joinOn.join(' AND ') || '1'})`);
+          steps.push(`${name} AS (SELECT ${select.join(', ') || '1 AS _'} FROM ${prev ? `${prev} AS p` : '(SELECT 1) AS p'} LEFT JOIN ${subq} AS o ON ${joinOn.join(' AND ') || this.t.joinTrue})`);
           scope = new Map([...scope, ...newVars.map(([k, v]) => [k, { type: v.type, sql: col(k) }] as [string, Var])]);
         }
         prev = name;
@@ -531,7 +570,7 @@ class Compiler {
         const inScope: Scope = new Map([...scope].map(([k, v]) => [k, { ...v, sql: `p.${col(k)}` }]));
         const x = this.expr(c.e, inScope);
         const elem: VType = x.type === 'list<node>' ? 'node' : x.type === 'list<rel>' ? 'rel' : 'json';
-        steps.push(`${name} AS (SELECT ${[...cols(scope), `j.value AS ${col(c.as)}`].join(', ')} FROM ${prev ? `${prev} AS p, ` : ''}json_each(${x.sql}) AS j)`);
+        steps.push(`${name} AS (SELECT ${[...cols(scope), `${this.t.unwindValue(elem)} AS ${col(c.as)}`].join(', ')} FROM ${prev ? `${prev} AS p, ` : ''}${this.t.unwindFrom(x.sql)})`);
         scope = new Map([...scope, [c.as, { type: elem, sql: col(c.as) }]]);
         prev = name;
         return;
@@ -552,19 +591,30 @@ class Compiler {
       const groupBy = anyAgg ? compiled.filter((x) => !x.agg).map((x) => x.x.sql) : [];
       // ORDER BY sees the projected names and (without aggregation) the previous variables.
       const orderScope: Scope = new Map([...(anyAgg ? [] : [...inScope]), ...compiled.map((x) => [x.alias, { type: x.x.type, sql: outName(x.alias) }] as [string, Var])]);
+      // Postgres cannot use output names inside ORDER BY expressions: order a derived table (_o) that carries the
+      // projected columns plus, without aggregation / DISTINCT, the previous variables.
+      const outside = this.t.orderOutside && c.order.length > 0;
+      const carry = outside && !anyAgg && !c.distinct ? [...scope.keys()].filter((k) => !compiled.some((x) => outName(x.alias) === col(k))) : [];
+      const ref = (n: string) => (outside ? `_o.${n}` : n);
+      const orderScope2: Scope = outside
+        ? new Map([...(anyAgg || c.distinct ? [] : [...scope].map(([k, v]) => [k, { ...v, sql: `_o.${col(k)}` }] as [string, Var])), ...compiled.map((x) => [x.alias, { type: x.x.type, sql: ref(outName(x.alias)) }] as [string, Var])])
+        : orderScope;
       const order = c.order.map((o) => {
         // An ORDER BY expression equal to a projected one refers to that column (e.g. `RETURN s.ref, count(*) ... ORDER BY s.ref`).
         const same = compiled.find((x) => exprKey(x.e) === exprKey(o.e));
-        return `${same ? outName(same.alias) : this.expr(o.e, orderScope, anyAgg).sql}${o.desc ? ' DESC' : ''}`;
+        return `${same ? ref(outName(same.alias)) : this.expr(o.e, orderScope2, anyAgg && !outside).sql}${o.desc ? ' DESC' : ''}`;
       });
-      const skip = c.skip ? this.expr(c.skip, new Map()).sql : null;
-      const userLimit = c.limit ? this.expr(c.limit, new Map()).sql : null;
-      let sql = `SELECT ${c.distinct ? 'DISTINCT ' : ''}${select.join(', ')} FROM ${prev ? `${prev} AS p` : '(SELECT 1) AS p'}${groupBy.length ? ` GROUP BY ${groupBy.join(', ')}` : ''}${order.length ? ` ORDER BY ${order.join(', ')}` : ''}${userLimit || skip ? ` LIMIT ${userLimit ?? -1}${skip ? ` OFFSET ${skip}` : ''}` : ''}`;
+      const skip = c.skip ? this.count(c.skip, 'SKIP') : null;
+      const userLimit = c.limit ? this.count(c.limit, 'LIMIT') : null;
+      const limitSql = `${userLimit || skip ? ` LIMIT ${userLimit ?? this.t.limitAll}${skip ? ` OFFSET ${skip}` : ''}` : ''}`;
+      const from = `FROM ${prev ? `${prev} AS p` : '(SELECT 1) AS p'}${groupBy.length ? ` GROUP BY ${groupBy.join(', ')}` : ''}`;
+      let sql = outside
+        ? `SELECT ${compiled.map((x) => `_o.${outName(x.alias)}`).join(', ')} FROM (SELECT ${c.distinct ? 'DISTINCT ' : ''}${[...select, ...carry.map((k) => `p.${col(k)} AS ${col(k)}`)].join(', ')} ${from}) AS _o ORDER BY ${order.join(', ')}${limitSql}`
+        : `SELECT ${c.distinct ? 'DISTINCT ' : ''}${select.join(', ')} ${from}${order.length ? ` ORDER BY ${order.join(', ')}` : ''}${limitSql}`;
       const newScope: Scope = new Map(compiled.map((x) => [x.alias, { type: x.x.type, sql: col(x.alias) }]));
       if (c.t === 'with') {
         if (c.where) {
-          const w = this.expr(c.where, new Map([...newScope].map(([k, v]) => [k, { ...v, sql: `w.${v.sql}` }])));
-          sql = `SELECT * FROM (${sql}) AS w WHERE ${w.sql}`;
+          sql = `SELECT * FROM (${sql}) AS w WHERE ${this.cond(c.where, new Map([...newScope].map(([k, v]) => [k, { ...v, sql: `w.${v.sql}` }])))}`;
         }
         steps.push(`${name} AS (${sql})`);
         scope = newScope;
@@ -572,7 +622,7 @@ class Compiler {
         return;
       }
       columns = compiled.map((x) => ({ name: x.alias, type: x.x.type }));
-      final = `SELECT * FROM (${sql}) LIMIT ${this.bind(this.opts.rowCap + 1)}`;
+      final = `SELECT * FROM (${sql})${this.t.subAlias} LIMIT ${this.t.int(this.bind(this.opts.rowCap + 1))}`;
     });
     const sql = `WITH RECURSIVE\n  ${[...base, ...this.ctes, ...steps].join(',\n  ')}\n${final}`;
     return { sql, binds: this.binds, columns };
@@ -581,10 +631,6 @@ class Compiler {
 
 /** Structural identity of an expression (positions ignored). */
 const exprKey = (e: Expr) => JSON.stringify(e, (k, v) => (k === 'pos' ? undefined : v));
-
-function jsonKey(k: string): string {
-  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(k) ? k : `"${k.replace(/"/g, '\\"')}"`;
-}
 
 export function hasAggregate(e: Expr): boolean {
   switch (e.t) {

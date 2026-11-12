@@ -1,0 +1,343 @@
+/* People: avatars, stacks and contributors (server mode only; light + dark). */
+.pp-slot {
+  display: inline-flex;
+  flex-shrink: 0;
+  border-radius: 50%;
+  vertical-align: middle;
+}
+.pp-slot[data-clickable] {
+  cursor: pointer;
+}
+.pp-slot[data-clickable]:hover .pp-avatar {
+  box-shadow: 0 0 0 2px var(--mantine-primary-color-filled);
+}
+.pp-avatar {
+  display: inline-grid;
+  place-items: center;
+  border-radius: 50%;
+  flex-shrink: 0;
+  object-fit: cover;
+  background: var(--app-active);
+  box-shadow: 0 0 0 1px var(--app-border);
+}
+.pp-initials {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--mantine-color-lilac-8);
+  background: var(--mantine-color-lilac-1);
+}
+[data-mantine-color-scheme='dark'] .pp-initials {
+  color: var(--mantine-color-lilac-2);
+  background: color-mix(in srgb, var(--mantine-color-lilac-5) 28%, var(--app-bg));
+}
+.pp-service {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 5px;
+  border-radius: 4px;
+  border: 1px solid var(--app-border-strong);
+  color: var(--app-text-muted);
+  background: var(--app-surface);
+  line-height: 1;
+}
+
+/* Stack: overlapping round avatars with a thin ring in the background colour. */
+.pp-stack-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex-shrink: 0;
+}
+.pp-stack {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  cursor: default;
+}
+.pp-stack-item {
+  display: inline-flex;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--app-bg);
+  position: relative;
+}
+.pp-stack-item + .pp-stack-item,
+.pp-divider + .pp-stack-item {
+  margin-left: calc(var(--pp-size) * -0.3);
+}
+.pp-stack-item .pp-avatar {
+  box-shadow: none;
+}
+.pp-stack-item[data-kind='via'] {
+  opacity: 0.6;
+}
+.pp-divider {
+  width: 1px;
+  height: calc(var(--pp-size) * 0.8);
+  margin: 0 calc(var(--pp-size) * 0.3 + 3px) 0 4px;
+  background: var(--app-border-strong);
+}
+.pp-more {
+  margin-left: 4px;
+  font-size: 11px;
+  color: var(--app-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.pp-label {
+  font-size: 12.5px;
+  color: var(--app-text-muted);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pp-stack-wrap[data-form='compact'] .pp-label {
+  font-size: 11.5px;
+}
+.pp-login {
+  all: unset;
+  font-weight: 600;
+  color: var(--mantine-color-text);
+}
+button.pp-login {
+  cursor: pointer;
+}
+button.pp-login:hover {
+  text-decoration: underline;
+}
+.pp-cause {
+  color: var(--app-text-muted);
+  text-decoration: underline;
+  text-decoration-color: var(--app-border-strong);
+  text-underline-offset: 2px;
+}
+.pp-cause:hover {
+  color: var(--mantine-color-text);
+}
+
+/* Hover cards. */
+.pp-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12.5px;
+}
+.pp-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pp-card-who {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+.pp-card-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--app-text-muted);
+}
+.pp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 360px;
+  overflow-y: auto;
+}
+.pp-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.pp-list-head {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--app-text-faint);
+  padding: 6px 2px 2px;
+}
+.pp-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 2px;
+  font-size: 12.5px;
+}
+.pp-row[data-kind='via'] .pp-avatar {
+  opacity: 0.75;
+}
+.pp-row-main {
+  flex: 1;
+  min-width: 0;
+}
+.pp-row-meta {
+  font-size: 11.5px;
+  color: var(--app-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pp-count {
+  font-size: 11px;
+  color: var(--app-text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.pp-coauthors {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  font-size: 12px;
+}
+.pp-coauthor {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+/* Fixed slots so stacks never push or overlap their neighbours. */
+.row-slot-people {
+  width: 76px;
+  justify-content: flex-end;
+  overflow: hidden;
+}
+.section-people {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  max-width: 260px;
+  overflow: hidden;
+}
+.doc-people {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  min-width: 0;
+  margin-top: 6px;
+  font-size: 12.5px;
+  color: var(--app-text-muted);
+}
+.doc-section-header .section-people {
+  margin-left: auto;
+}
+.section-people + .section-actions {
+  margin-left: 0;
+}
+.rule-people {
+  align-self: center;
+  max-width: 220px;
+}
+span.row-slot.row-slot-people {
+  display: inline-flex;
+}
+@media (max-width: 48em) {
+  span.row-slot.row-slot-people {
+    display: none;
+  }
+}
+@container (max-width: 720px) {
+  span.row-slot.row-slot-people {
+    display: none;
+  }
+}
+.claim-user {
+  position: relative;
+  display: inline-flex;
+  border-radius: 50%;
+}
+/* claim state: small dot on the avatar's corner (green live, red stale); never a ring */
+.claim-dot {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--mantine-color-teal-6);
+  box-shadow: 0 0 0 1.5px var(--app-bg);
+}
+.claim-dot[data-stale] {
+  background: var(--mantine-color-red-6);
+}
+.cmdk-last-editor { margin-left: auto; display: inline-flex; }
+.pp-list-head .pp-cause {
+  display: inline-block;
+  max-width: 200px;
+  vertical-align: bottom;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+}
+.rule-people .pp-label {
+  max-width: 150px;
+}
+.attr-agent {
+  white-space: nowrap;
+}
+
+/* Coding-agent face (no user recorded): initials on a neutral disc with a small robot glyph; legacy items in server
+   mode get a dashed ring so they read differently from people. */
+.pp-agent {
+  position: relative;
+  overflow: visible;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--app-text-muted);
+  background: var(--app-surface);
+  box-shadow: inset 0 0 0 1px var(--app-border-strong);
+}
+.pp-agent[data-legacy] {
+  box-shadow: none;
+  outline: 1px dashed color-mix(in srgb, var(--app-text-faint) 80%, transparent);
+  outline-offset: -1px;
+}
+.pp-agent-glyph {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--mantine-primary-color-filled);
+  background: var(--app-bg);
+  line-height: 0;
+}
+.pp-stack-item .pp-agent {
+  box-shadow: inset 0 0 0 1px var(--app-border-strong);
+}
+.pp-stack-item .pp-agent[data-legacy] {
+  box-shadow: none;
+}
+.criterion-result-people {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.finding-people {
+  margin-left: auto;
+}
+.finding-people + .audit-finding-actions {
+  margin-left: 0;
+}
+.criterion-head .section-people {
+  margin-left: auto;
+}
+.ref-preview-people {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+.ref-preview-people:has(.pp-stack-wrap) {
+  display: flex;
+}
+.ref-preview-people:not(:has(.pp-stack-wrap)) {
+  display: none;
+}
+.lin-node-people { display: inline-flex; flex-shrink: 0; text-transform: none; }

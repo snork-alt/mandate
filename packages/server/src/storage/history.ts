@@ -1,6 +1,6 @@
 import { stat } from 'node:fs/promises';
 import path from 'node:path';
-import type { FileMeta, FileVersion, HistoryEntry } from '@mandate/shared';
+import { causesOfTrailers, userOfTrailers, type Attribution, type FileMeta, type FileVersion, type HistoryEntry } from '@mandate/shared';
 import { NotFoundError } from './GitBackedRepository.js';
 import { diffDocs, type DocFormat } from '@mandate/doc';
 import type { FileCommit, GitStore } from '../git/GitStore.js';
@@ -27,6 +27,9 @@ export function parseCommitMessage(message: string): Pick<HistoryEntry, 'subject
 export function toHistoryEntry(c: FileCommit): HistoryEntry {
   const { subject, body, trailers } = parseCommitMessage(c.message);
   const find = (key: string) => Object.entries(trailers).find(([k]) => k.toLowerCase() === key)?.[1];
+  const user = userOfTrailers(trailers);
+  const causes = causesOfTrailers(trailers);
+  const coAuthors = [...c.message.matchAll(/^Co-authored-by:[ \t]*([^<\n]+?)\s*<[^>\n]*>\s*$/gim)].map((m) => m[1]!.trim());
   return {
     commit: c.id,
     subject,
@@ -37,7 +40,15 @@ export function toHistoryEntry(c: FileCommit): HistoryEntry {
     trailers,
     agent: find('agent'),
     branch: find('branch'),
+    ...(user ? { user } : {}),
+    ...(causes.length ? { causes } : {}),
+    ...(coAuthors.length ? { coAuthors } : {}),
   };
+}
+
+/** Who made a commit: the user (server mode trailers only) and the agent (else the commit author). */
+export function attributionOf(e: HistoryEntry): Attribution {
+  return { ...(e.user ? { user: e.user } : {}), agent: e.agent ?? e.author, at: e.date, commit: e.commit };
 }
 
 /** Derives per-file times, last author and history from git (cached per HEAD by the GitStore). */
@@ -163,6 +174,7 @@ export class HistoryService {
       );
     }
     const last = newest && toHistoryEntry(newest);
+    const first = oldest && toHistoryEntry(oldest);
     return {
       createdAt: oldest?.date ?? fallback!,
       updatedAt: newest?.date ?? fallback!,
@@ -170,6 +182,8 @@ export class HistoryService {
       revisions: commits.length,
       versionCount: commits.length,
       lastCommit: newest?.id ?? null,
+      ...(first ? { createdBy: attributionOf(first) } : {}),
+      ...(last ? { lastEditedBy: attributionOf(last) } : {}),
     };
   }
 }

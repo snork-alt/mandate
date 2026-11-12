@@ -1,17 +1,18 @@
 import { diffDocs, diffText, type DocFormat } from '@mandate/doc';
-import { buildNodeUri, buildRef, matchingAppliesTo, parseRef, type ChangeKind, type IndexStatus, type StoredComponent, type StoredSpec, type StoredStandard } from '@mandate/shared';
+import { buildNodeUri, buildRef, buildUserRef, matchingAppliesTo, parseRef, userOfTrailers, type ChangeKind, type IndexStatus, type StoredComponent, type StoredSpec, type StoredStandard } from '@mandate/shared';
 import type { GitStore } from '../git/GitStore.js';
 import { parseCommitMessage } from '../storage/history.js';
+import { BULK_WORK_ORDERS, commitCauses, ID_TRAILER_FAMILY, isMigrationCommit } from './lineage.js';
 import { clearDerived, json, parseJson, type DB } from './db.js';
 import { enqueueHashes, forgetHashes, PRIORITY, type EmbedTarget } from './embed/jobs.js';
-import { componentEdges, ruleEdges } from './rules.js';
+import { codeNodeRefs, componentEdges, ruleEdges } from './rules.js';
 import { specComponents, standardInForce, type Model } from '../storage/model.js';
 import { componentCodec, specCodec, standardCodec } from '../storage/codecs.js';
 import { DOC_FILE_RE, extractFile, type DocDir, type EdgeRow, type ExtractContext, type FileRecords, type NodeRow } from './extract.js';
 
 /** Repo content the index reads. */
-export const INDEX_DIRS = ['specs', 'standards', 'components'];
-export const INDEX_FILES = ['work-orders.jsonl', 'queue.jsonl', 'feedback.jsonl', 'verifications.jsonl'];
+export const INDEX_DIRS = ['specs', 'standards', 'components', 'audits', 'work-orders'];
+export const INDEX_FILES = ['work-orders.jsonl', 'queue.jsonl', 'feedback.jsonl', 'verifications.jsonl', 'comments.jsonl', 'questions.jsonl', 'lineage.jsonl'];
 /** Older names of indexed files: the same logical file (work orders were the "queue" before). */
 const FILE_ALIASES: Record<string, string> = { 'queue.jsonl': 'work-orders.jsonl' };
 const logicalPath = (p: string) => FILE_ALIASES[p] ?? p;
@@ -32,6 +33,21 @@ async function readLogical(git: GitStore, commit: string, p: string): Promise<st
     if (t !== null) return t;
   }
   return null;
+}
+
+/** Records of a JSONL text (bad lines skipped). */
+function parseJsonl(text: string | null): Record<string, unknown>[] {
+  const out: Record<string, unknown>[] = [];
+  for (const l of (text ?? '').split('\n')) {
+    if (!l.trim()) continue;
+    try {
+      const o = JSON.parse(l) as unknown;
+      if (o && typeof o === 'object' && !Array.isArray(o)) out.push(o as Record<string, unknown>);
+    } catch {
+      /* skip */
+    }
+  }
+  return out;
 }
 
 export interface ChangeEvent {
@@ -73,9 +89,14 @@ export class Indexer {
     private readonly git: GitStore,
     private readonly ctx: ExtractContext,
     /** Embedding outbox: chunk writes enqueue jobs for this model in the same transaction (null: semantic search off). */
-    private readonly embed: EmbedTarget | null = null,
+    private embed: EmbedTarget | null = null,
   ) {
     this.graphCtx = { ...ctx, graphOnly: true };
+  }
+
+  /** Embedding model switch (hot reload): new chunk texts enqueue jobs for this target. */
+  setEmbedTarget(target: EmbedTarget | null): void {
+    this.embed = target;
   }
 
   state(): { head: string | null; seq: number; lastSyncAt: string | null; lastError: string | null } {
@@ -201,14 +222,19 @@ export class Indexer {
 
       this.db.transaction(() => {
         this.writeCommit(info, seq, parents, true, events);
+        if (changed.includes('lineage.jsonl')) this.writeAnnotations(before.get('lineage.jsonl') ?? null, after.get('lineage.jsonl') ?? null, seq);
         for (const [p, rec] of records) {
           this.applyTemporal(p, rec?.nodes ?? [], (rec?.edges ?? []).map((e) => this.resolveCommitEdge(e)), seq);
         }
-        if (changed.some((p) => DOC_FILE_RE.test(p))) {
-          for (const p of changed) updateModel(model, p, after.get(p) ?? null);
+        // Derived edges: when docs change, or new code enters the graph (G-6: its owner is derived too).
+        const docsChanged = changed.some((p) => DOC_FILE_RE.test(p));
+        const codeSeen = [...records.values()].some((r) => r?.nodes.some((n) => n.kind === 'code_file' || n.kind === 'code_range'));
+        if (docsChanged || codeSeen) {
+          if (docsChanged) for (const p of changed) updateModel(model, p, after.get(p) ?? null);
           const m = modelOf(model);
           this.applyTemporal('applies', [], appliesEdges(m), seq);
-          this.applyTemporal('rules', [], [...ruleEdges(m), ...componentEdges(m)], seq);
+          const code = codeNodeRefs(this.db.prepare("SELECT kind, props FROM nodes WHERE kind IN ('code_file', 'code_range') AND valid_to IS NULL").all() as { kind: string; props: string }[]);
+          this.applyTemporal('rules', [], [...ruleEdges(m), ...componentEdges(m, code)], seq);
         }
         this.writeVersions(events, sha, seq, parents[0] ?? null);
         this.db.prepare('UPDATE index_state SET head_commit = ?, head_seq = ? WHERE id = 1').run(sha, seq);
@@ -278,7 +304,7 @@ export class Indexer {
       updateModel(snapModel, p, text);
     }
     const sm = modelOf(snapModel);
-    edges.push(...appliesEdges(sm), ...ruleEdges(sm), ...componentEdges(sm));
+    edges.push(...appliesEdges(sm), ...ruleEdges(sm), ...componentEdges(sm, codeNodeRefs(nodes)));
     const info = await this.git.commitInfo(sha);
     this.db.transaction(() => {
       this.writeCommit(info, point, parents, false, events, book);
@@ -326,6 +352,38 @@ export class Indexer {
     return m;
   }
 
+  /**
+   * A shared node (agent, branch) touched by a commit (G-1): one open row per uri. Unchanged -> no new row (its
+   * valid_from moves back if an earlier point sees it first, e.g. a side-branch commit); changed -> the open row is
+   * closed at `seq` and a new one opened.
+   */
+  private upsertShared(uri: string, kind: string, label: string, props: unknown, seq: number): void {
+    const db = this.db;
+    const p = json(props);
+    const cur = db.prepare('SELECT valid_from AS f, label, props FROM nodes WHERE uri = ? AND valid_to IS NULL ORDER BY valid_from DESC LIMIT 1').get(uri) as
+      | { f: number; label: string; props: string }
+      | undefined;
+    if (!cur) {
+      db.prepare('INSERT OR IGNORE INTO nodes (uri, kind, label, props, source, valid_from, valid_to) VALUES (?, ?, ?, ?, NULL, ?, NULL)').run(uri, kind, label, p, seq);
+      return;
+    }
+    if (cur.label === label && cur.props === p) {
+      if (seq < cur.f && !db.prepare('SELECT 1 FROM nodes WHERE uri = ? AND valid_from = ?').get(uri, seq))
+        db.prepare('UPDATE nodes SET valid_from = ? WHERE uri = ? AND valid_from = ?').run(seq, uri, cur.f);
+      return;
+    }
+    if (seq <= cur.f) return; // an older point never overrides a newer state
+    db.prepare('UPDATE nodes SET valid_to = ? WHERE uri = ? AND valid_from = ?').run(seq, uri, cur.f);
+    db.prepare('INSERT OR REPLACE INTO nodes (uri, kind, label, props, source, valid_from, valid_to) VALUES (?, ?, ?, ?, NULL, ?, NULL)').run(uri, kind, label, p, seq);
+  }
+
+  /** An agent / user node: created once (case-folded uri), never relabelled by a differently cased name. */
+  private insertIdentity(uri: string, kind: 'agent' | 'user', name: string, seq: number): void {
+    this.db
+      .prepare('INSERT INTO nodes (uri, kind, label, props, source, valid_from, valid_to) SELECT ?, ?, ?, ?, NULL, ?, NULL WHERE NOT EXISTS (SELECT 1 FROM nodes WHERE uri = ?)')
+      .run(uri, kind, name, json(kind === 'user' ? { login: name.toLowerCase() } : { name }), seq, uri);
+  }
+
   /** Close rows of `source` that are gone or changed and open new ones (nodes and edges). */
   private applyTemporal(source: string, nodes: NodeRow[], edges: EdgeRow[], seq: number): void {
     const db = this.db;
@@ -345,6 +403,14 @@ export class Indexer {
     const shared = db.prepare('INSERT INTO nodes (uri, kind, label, props, source, valid_from, valid_to) SELECT ?, ?, ?, ?, NULL, ?, NULL WHERE NOT EXISTS (SELECT 1 FROM nodes WHERE uri = ?)');
     for (const n of nodes) if (!n.owned) shared.run(n.uri, n.kind, n.label, json(n.props), seq, n.uri);
 
+    // Shared structural edges (G-7): code range -> file (`in_file`), code file -> repo (`in_repo`) are facts about
+    // the code, not about the document that mentions it: written once (source 'shared'), like shared nodes.
+    const isShared = (e: EdgeRow) => e.kind === 'in_file' || (e.kind === 'in_repo' && e.from.startsWith('mandate://code/'));
+    const sharedEdge = db.prepare(
+      "INSERT INTO edges (from_uri, to_uri, kind, props, source, valid_from) SELECT ?, ?, ?, NULL, 'shared', ? WHERE NOT EXISTS (SELECT 1 FROM edges WHERE from_uri = ? AND to_uri = ? AND kind = ? AND source = 'shared')",
+    );
+    for (const e of edges) if (isShared(e)) sharedEdge.run(e.from, e.to, e.kind, seq, e.from, e.to, e.kind);
+    edges = edges.filter((e) => !isShared(e));
     // Edges, identified by from/to/kind/props.
     const key = (e: { from: string; to: string; kind: string; props?: unknown }) => `${e.from}\u0000${e.to}\u0000${e.kind}\u0000${e.props ? json(e.props) : ''}`;
     const want = new Map(edges.map((e) => [key(e), e]));
@@ -404,14 +470,24 @@ export class Indexer {
       });
       return out;
     }
-    if (path === 'work-orders.jsonl' || path === 'feedback.jsonl' || path === 'verifications.jsonl') {
-      const kind = path === 'work-orders.jsonl' ? 'work-orders' : path === 'feedback.jsonl' ? 'feedback' : 'verifications';
-      const itemUri = (id: string) => (kind === 'verifications' ? buildNodeUri({ kind, id }) : buildRef({ kind, id }));
+    if (path === 'work-orders.jsonl' || path === 'feedback.jsonl' || path === 'verifications.jsonl' || path === 'comments.jsonl' || path === 'questions.jsonl') {
+      const kind = path === 'work-orders.jsonl' ? 'work-orders' : path === 'feedback.jsonl' ? 'feedback' : path === 'comments.jsonl' ? 'comments' : path === 'questions.jsonl' ? 'questions' : 'verifications';
+      const itemUri = (id: string) => (kind === 'verifications' || kind === 'comments' || kind === 'questions' ? buildNodeUri({ kind, id }) : buildRef({ kind, id }));
       const items = (t: string | null) => {
         const map = new Map<string, Record<string, unknown>>();
         for (const l of (t ?? '').split('\n')) {
           try {
             const o = JSON.parse(l) as Record<string, unknown>;
+            // Comment state records (resolve / reopen) change their comment node.
+            if (path === 'comments.jsonl' && typeof o.commentId === 'string') {
+              map.set(`${o.commentId}#${String(o.id)}`, { ...o, id: o.commentId });
+              continue;
+            }
+            // Question events (answered / cancelled) change their question node.
+            if (path === 'questions.jsonl' && typeof o.questionId === 'string') {
+              map.set(`${o.questionId}#${String(o.id)}`, { ...o, id: o.questionId });
+              continue;
+            }
             if (typeof o.id === 'string') map.set(o.id, o);
           } catch {
             /* skip */
@@ -434,7 +510,8 @@ export class Indexer {
           const rest = (o: Record<string, unknown>) => JSON.stringify({ ...o, status: 0, body: 0, note: 0, quote: 0, resolutionNote: 0, updatedAt: 0 });
           if (rest(x) !== rest(y)) kinds.add('metadata');
         }
-        out.push({ uri: itemUri(id), action: !x ? 'created' : !y ? 'deleted' : 'modified', changeKinds: [...kinds], linesAdded: y ? 1 : 0, linesRemoved: x ? 1 : 0 });
+        // Legacy work-order lines: no version nodes (versions are of `work-orders/<id>.md`).
+        out.push({ uri: itemUri(String((y ?? x)!.id)), action: !x ? ((path === 'comments.jsonl' || path === 'questions.jsonl') && id.includes('#') ? 'modified' : 'created') : !y ? 'deleted' : 'modified', changeKinds: [...kinds], linesAdded: y ? 1 : 0, linesRemoved: x ? 1 : 0, ...(kind === 'work-orders' ? { props: { legacy: true } } : {}) });
       }
       return out;
     }
@@ -456,7 +533,8 @@ export class Indexer {
     const commitUri = buildNodeUri({ kind: 'commits', sha });
     for (const e of events) {
       const ref = parseRef(e.uri);
-      if (!ref || (ref.kind !== 'specs' && ref.kind !== 'standards' && ref.kind !== 'components')) continue;
+      if (!ref || (ref.kind !== 'specs' && ref.kind !== 'standards' && ref.kind !== 'components' && ref.kind !== 'audits' && ref.kind !== 'work-orders')) continue;
+      if (e.props?.legacy) continue;
       const uri = buildRef({ kind: ref.kind, id: ref.id, sectionId: ref.sectionId, commit: sha });
       // The version current at this commit before it: nearest among all parents' ancestry (merges see their side branch).
       const prev = firstParent ? versionBefore(db, e.uri, sha) : null;
@@ -516,12 +594,28 @@ export class Indexer {
     parents.forEach((p, i) => edge.run(uri, buildNodeUri({ kind: 'commits', sha: p }), 'parent', json({ idx: i }), book));
     const seq = book;
     const who = agent ?? info.authorName;
+    // G-9: identities are case-folded (`Giulia` and `giulia` are one node, labelled as first seen).
     const agentUri = buildNodeUri({ kind: 'agents', name: who });
-    node.run(agentUri, 'agent', who, json({ name: who }), null, seq);
+    this.insertIdentity(agentUri, 'agent', who, seq);
     edge.run(uri, agentUri, 'authored_by', agent ? json({ trailer: true }) : null, seq);
+    // P6: the user (server mode, `Mandate-User` trailer) authored the commit too; local mode has no user nodes. The
+    // feedback / work orders the commit creates are filed / created by that user.
+    const user = userOfTrailers(trailers);
+    if (user) {
+      const userUri = buildUserRef(user);
+      this.insertIdentity(userUri, 'user', user, seq);
+      edge.run(uri, userUri, 'authored_by', json({ trailer: true }), seq);
+      for (const e of events) {
+        if (e.action !== 'created' || (e.props as { merge?: boolean } | undefined)?.merge) continue;
+        const ref = parseRef(e.uri);
+        if (!ref || ref.sectionId) continue;
+        if (ref.kind === 'feedback') edge.run(e.uri, userUri, 'filed_by', null, seq);
+        else if (ref.kind === 'work-orders') edge.run(e.uri, userUri, 'created_by', null, seq);
+      }
+    }
     if (branch) {
       const b = buildNodeUri({ kind: 'branches', name: branch });
-      node.run(b, 'branch', branch, json({ name: branch }), null, seq);
+      this.upsertShared(b, 'branch', branch, { name: branch }, seq);
       edge.run(uri, b, 'on_branch', null, seq);
     }
     // Only real trailers (the last paragraph), and only well-formed ids.
@@ -531,6 +625,65 @@ export class Indexer {
     }
     for (const e of events) {
       edge.run(uri, e.uri, 'changed', json({ action: e.action, changeKinds: e.changeKinds, linesAdded: e.linesAdded, linesRemoved: e.linesRemoved, ...e.props }), seq);
+    }
+    // Lineage: the commit and everything it changed (sections included) -> each recorded cause (Caused-By and the
+    // Feedback / Work-Order / Audit trailers). An entity is never its own cause (id trailers). Migration and bulk
+    // commits (many work orders rewritten at once) record no causes (L-1).
+    if (isMigrationCommit(trailers)) return;
+    const workOrders = new Set(events.filter((e) => e.uri.startsWith('mandate://work-orders/')).map((e) => e.uri.split('/sections/')[0]));
+    if (workOrders.size > BULK_WORK_ORDERS) return;
+    for (const c of commitCauses(trailers)) {
+      const props = json({ commit: info.id, trailer: c.trailer, date: info.date });
+      const family = ID_TRAILER_FAMILY[c.trailer.toLowerCase()];
+      const effects = events.filter(
+        (e) =>
+          e.uri !== c.uri &&
+          !e.uri.startsWith(`${c.uri}/`) &&
+          e.action !== 'deleted' &&
+          // An id trailer names one record: its siblings in a rewritten file are not its effects (L-1).
+          !(family && e.uri.startsWith(family)) &&
+          // A backlink (the cause already records the effect as its own cause / finding) is not a cause (L-6).
+          !this.causedBy(c.uri, e.uri.split('/sections/')[0]!),
+      );
+      // A commit that only wrote the entity its trailer names (an id trailer) records no cause.
+      if (!effects.length && events.length) continue;
+      edge.run(uri, c.uri, 'caused_by', props, seq);
+      for (const e of effects) edge.run(e.uri, c.uri, 'caused_by', props, seq);
+    }
+  }
+
+  /** Whether `cause` (or one of its sections) currently records `effect` (or a part of it) as its cause / finding. */
+  private causedBy(cause: string, effect: string): boolean {
+    // Index-friendly: the cause's own edges (and its parts') by from_uri range, filtered here.
+    const rows = this.db
+      .prepare("SELECT to_uri FROM edges WHERE (from_uri = ? OR (from_uri > ? AND from_uri < ?)) AND kind IN ('caused_by', 'from_finding') AND valid_to IS NULL")
+      .all(cause, `${cause}/`, `${cause}/\uffff`) as { to_uri: string }[];
+    return rows.some((r) => r.to_uri === effect || r.to_uri.startsWith(`${effect}/`));
+  }
+
+  /**
+   * Lineage annotations (`lineage.jsonl`, L-annotations): each new record adds `caused_by` edges from the annotated
+   * commit and everything it changed to each cause, exactly like trailers, with `source: 'annotation'`. Visible from
+   * the annotation's own commit (history is never rewritten). Unknown commits are skipped.
+   */
+  private writeAnnotations(before: string | null, after: string | null, seq: number): void {
+    const ids = new Set(parseJsonl(before).map((r) => String(r.id)));
+    const added = parseJsonl(after).filter((r) => !ids.has(String(r.id)));
+    if (!added.length) return;
+    const edge = this.db.prepare("INSERT INTO edges (from_uri, to_uri, kind, props, source, valid_from) VALUES (?, ?, 'caused_by', ?, 'annotation', ?)");
+    for (const a of added) {
+      const sha = typeof a.commit === 'string' ? a.commit : '';
+      const row = this.db.prepare('SELECT date FROM commits WHERE sha = ?').get(sha) as { date: string } | undefined;
+      if (!row || !Array.isArray(a.causes)) continue;
+      const commitUri = buildNodeUri({ kind: 'commits', sha });
+      const changed = (this.db.prepare("SELECT DISTINCT to_uri, props FROM edges WHERE from_uri = ? AND kind = 'changed'").all(commitUri) as { to_uri: string; props: string | null }[]).filter(
+        (r) => parseJson<{ action?: string }>(r.props, {}).action !== 'deleted',
+      );
+      for (const cause of a.causes.filter((c): c is string => typeof c === 'string')) {
+        const props = json({ commit: sha, trailer: 'annotation', source: 'annotation', annotation: a.id, date: row.date, ...(typeof a.by === 'string' ? { by: a.by } : {}), ...(a.confidence === 'low' ? { confidence: 'low' } : {}) });
+        edge.run(commitUri, cause, props, seq);
+        for (const e of changed) if (e.to_uri !== cause && !e.to_uri.startsWith(`${cause}/`)) edge.run(e.to_uri, cause, props, seq);
+      }
     }
   }
 
@@ -576,34 +729,57 @@ export class Indexer {
 }
 
 /**
- * Standard `appliesTo` rules resolved to concrete targets (same as storage): specs (repo / tag / category / path / lang,
- * and component / componentKind through the components the spec touches; draft standards never apply), and components
- * (component:<id> / componentKind:<kind>, standards in force).
+ * `uses_standard` (P3: one edge per document and standard, `applies_to` is gone): a spec / component / standard uses a
+ * standard when one of its sections links to it (`follows` / `deviates_from`, via `links`) or the standard's `appliesTo`
+ * rules match it (via `appliesTo`, `rules`: the matching rules). appliesTo resolves like storage: specs (repo / tag /
+ * category / path / lang, and component / componentKind through the components the spec touches; draft standards
+ * never apply), components (component:<id> / componentKind:<kind>, standards in force).
  */
 function appliesEdges(m: Model): EdgeRow[] {
-  const out: EdgeRow[] = [];
+  const uses = new Map<string, { from: string; to: string; via: Set<string>; rules: string[] }>();
+  const use = (from: string, to: string, via: 'links' | 'appliesTo', rules: string[] = []) => {
+    if (from === to) return;
+    const k = `${from}|${to}`;
+    const u = uses.get(k) ?? { from, to, via: new Set<string>(), rules: [] };
+    u.via.add(via);
+    for (const r of rules) if (!u.rules.includes(r)) u.rules.push(r);
+    uses.set(k, u);
+  };
+  // Section links to a standard (or one of its sections).
+  const linked = (kind: 'specs' | 'standards' | 'components', id: string, sections: { archived?: boolean; links?: { to: string; rel: string }[] }[]) => {
+    const from = buildRef({ kind, id });
+    for (const s of sections) {
+      for (const l of s.links ?? []) {
+        if (l.rel !== 'follows' && l.rel !== 'deviates_from') continue;
+        const t = parseRef(l.to);
+        if (t?.kind === 'standards') use(from, buildRef({ kind: 'standards', id: t.id }), 'links');
+      }
+    }
+  };
+  for (const spec of m.specs) linked('specs', spec.id, spec.sections);
+  for (const std of m.standards) linked('standards', std.id, std.sections);
+  for (const c of m.components ?? []) linked('components', c.id, c.sections);
   for (const std of m.standards) {
     if (!std.appliesTo.length) continue;
     const stdUri = buildRef({ kind: 'standards', id: std.id });
     if (std.status !== 'draft') {
       for (const spec of m.specs) {
         const rules = matchingAppliesTo(std.appliesTo, spec, specComponents(spec, m));
-        if (!rules.length) continue;
-        const specUri = buildRef({ kind: 'specs', id: spec.id });
-        out.push({ from: stdUri, to: specUri, kind: 'applies_to', props: { rules } });
-        out.push({ from: specUri, to: stdUri, kind: 'uses_standard', props: { derived: true, via: 'appliesTo' } });
+        if (rules.length) use(buildRef({ kind: 'specs', id: spec.id }), stdUri, 'appliesTo', rules);
       }
     }
     if (!standardInForce(std)) continue;
     for (const c of m.components ?? []) {
       const rules = matchingAppliesTo(std.appliesTo.filter((a) => a.startsWith('component')), { repo: undefined, tags: [], category: undefined }, [{ id: c.id, kind: c.kind }]);
-      if (!rules.length) continue;
-      const cUri = buildRef({ kind: 'components', id: c.id });
-      out.push({ from: stdUri, to: cUri, kind: 'applies_to', props: { rules } });
-      out.push({ from: cUri, to: stdUri, kind: 'uses_standard', props: { derived: true, via: 'appliesTo' } });
+      if (rules.length) use(buildRef({ kind: 'components', id: c.id }), stdUri, 'appliesTo', rules);
     }
   }
-  return out;
+  return [...uses.values()].map((u) => ({
+    from: u.from,
+    to: u.to,
+    kind: 'uses_standard' as const,
+    props: { via: ['links', 'appliesTo'].filter((v) => u.via.has(v)), ...(u.rules.length ? { rules: u.rules } : {}) },
+  }));
 }
 
 function writeCurrent(db: DB, rec: FileRecords): void {
@@ -693,6 +869,7 @@ function updateModel(m: DocModel, path: string, text: string | null): void {
   const r = DOC_FILE_RE.exec(path);
   if (!r) return;
   const dir = r[1] as DocDir;
+  if (dir === 'audits' || dir === 'work-orders') return; // audits and work orders never feed the derived document edges
   const map = m[dir] as Map<string, unknown>;
   if (text === null) {
     map.delete(r[2]!);

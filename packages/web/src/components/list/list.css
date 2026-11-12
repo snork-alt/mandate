@@ -1,0 +1,282 @@
+/* Shared list rows (ListRow): fixed-width columns right of the title, so every row lines up at every width.
+   Columns hide with the row's own width (container queries), never by clipping. */
+.row.lr {
+  container-type: inline-size;
+  overflow: hidden;
+  gap: 10px;
+}
+.lr > * {
+  flex: none;
+  min-width: 0;
+}
+.lr-lead {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.row .lr-id {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lr > .lr-main {
+  flex: 1 1 0;
+  min-width: 240px;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  overflow: hidden;
+}
+.lr-main .row-title {
+  flex: 0 1 auto;
+}
+.lr > .lr-copy {
+  width: 28px;
+  justify-content: flex-end;
+}
+/* Chips: a fixed basis that only shrinks with the row (identically on every row), whole chips only. */
+.lr > .lr-chips {
+  flex: 0 1 auto;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+/* Never narrower than a "+N" counter: the chip list never shows a sliver of a chip (see ChipList). */
+.lr > .lr-chips {
+  min-width: 36px;
+}
+.lr-chip {
+  display: inline-flex;
+  flex: none;
+  max-width: 100%;
+}
+.lr-chips-measure {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: inline-flex;
+  gap: 4px;
+  visibility: hidden;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.lr-more {
+  flex: none;
+  cursor: default;
+}
+.lr-more::before {
+  display: none;
+}
+.lr-more-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12.5px;
+}
+.lr-col {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  white-space: nowrap;
+  color: var(--app-text-muted);
+  font-size: var(--mantine-font-size-xs);
+  font-variant-numeric: tabular-nums;
+}
+.lr-col[data-align='end'] {
+  justify-content: flex-end;
+}
+.lr-col[data-align='center'] {
+  justify-content: center;
+}
+.lr > .lr-people-col {
+  display: inline-flex;
+  align-items: center;
+  width: 64px;
+}
+.lr .row-slot-people {
+  display: inline-flex;
+  align-items: center;
+  width: 100%;
+}
+.lr > .lr-time {
+  display: inline-flex;
+  justify-content: flex-end;
+  white-space: nowrap;
+  color: var(--app-text-muted);
+  font-size: var(--mantine-font-size-xs);
+  font-variant-numeric: tabular-nums;
+}
+.lr-time-text {
+  white-space: nowrap;
+}
+
+@container (max-width: 1400px) {
+  .lr > [data-hide='2xl'] {
+    display: none;
+  }
+}
+@container (max-width: 1100px) {
+  .lr > [data-hide='xl'] {
+    display: none;
+  }
+}
+@container (max-width: 940px) {
+  .lr > [data-hide='xl'],
+  .lr > [data-hide='lg'],
+  .lr > .lr-copy {
+    display: none;
+  }
+}
+@container (max-width: 780px) {
+  .lr > [data-hide='md'] {
+    display: none;
+  }
+}
+@container (max-width: 620px) {
+  .lr > [data-hide='sm'] {
+    display: none;
+  }
+  .lr .row-excerpt {
+    display: none;
+  }
+  .lr > .lr-main {
+    min-width: 120px;
+  }
+}
+@container (max-width: 440px) {
+  .lr > [data-hide='xs'] {
+    display: none;
+  }
+  .lr > .lr-main {
+    min-width: 100px;
+  }
+  .lr[data-list='work-orders'] > .lr-lead {
+    width: 18px !important;
+  }
+  .lr[data-list='work-orders'] > .lr-lead .kind-badge {
+    display: none;
+  }
+}
+.lr-ellipsis {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Columns with a narrow form (data-narrow = breakpoint): the width drops to --lr-narrow. A maturity badge in its narrow
+   form keeps its label (and overlay word) and drops the meter: the state stays readable. */
+@container (max-width: 1400px) {
+  .lr > [data-narrow='2xl'] {
+    width: var(--lr-narrow) !important;
+  }
+  .lr > [data-narrow='2xl'] .maturity-meter {
+    display: none;
+  }
+}
+@container (max-width: 1100px) {
+  .lr > [data-narrow='xl'] {
+    width: var(--lr-narrow) !important;
+  }
+  .lr > [data-narrow='xl'] .maturity-meter {
+    display: none;
+  }
+}
+@container (max-width: 940px) {
+  .lr > [data-narrow='lg'] {
+    width: var(--lr-narrow) !important;
+  }
+  .lr > [data-narrow='lg'] .maturity-meter {
+    display: none;
+  }
+}
+@container (max-width: 780px) {
+  .lr > [data-narrow='md'] {
+    width: var(--lr-narrow) !important;
+  }
+  .lr > [data-narrow='md'] .maturity-meter {
+    display: none;
+  }
+}
+@container (max-width: 620px) {
+  .lr > [data-narrow='sm'] {
+    width: var(--lr-narrow) !important;
+  }
+  .lr > [data-narrow='sm'] .maturity-meter {
+    display: none;
+  }
+}
+.lr > .lr-col .maturity-badge {
+  max-width: 100%;
+  min-width: 0;
+}
+.lr > .lr-col .maturity-label {
+  min-width: 0;
+}
+.lr > .lr-col .maturity-marker {
+  flex: none;
+}
+
+/* Column header row (ListHeader): same box and columns as the rows, slim and sticky under the top bar. */
+.row.lr.lr-head {
+  min-height: 28px;
+  position: sticky;
+  top: 48px;
+  z-index: 4;
+  background: var(--app-bg);
+  color: var(--app-text-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+.row.lr.lr-head:hover {
+  background: var(--app-bg);
+}
+.lr-head > .lr-main,
+.lr-head > .lr-col,
+.lr-head > .lr-chips,
+.lr-head > .lr-id,
+.lr-head > .lr-time {
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--app-text-muted);
+  align-items: center;
+}
+.lr-head-label {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: help;
+  border-radius: 3px;
+}
+.lr-head-label:focus-visible {
+  outline: 2px solid var(--mantine-primary-color-filled);
+  outline-offset: 1px;
+}
+/* Squeezed rows (e.g. a narrow window with the side panel open): the title gives way, the badges stay. */
+@container (max-width: 300px) {
+  .lr > .lr-main {
+    min-width: 24px;
+  }
+  .lr > [data-col='gaps'] {
+    display: none;
+  }
+}
+
+/* Avatars (people stacks, claim avatars) carry rings, status dots and overlap borders that extend 1–3px beyond their
+   box: their columns must never clip them. They keep their fixed width; only overflow is released. */
+.lr > .lr-people-col,
+.lr .row-slot-people,
+.lr .row-slot:has(.pp-avatar, .pp-stack, .claim-user, .claim-avatar),
+.row-meta > .row-slot:has(.pp-avatar, .pp-stack, .claim-user, .claim-avatar),
+.lr-col:has(.pp-avatar, .pp-stack, .claim-user, .claim-avatar) {
+  overflow: visible;
+}
+.lr > .lr-people-col { width: 72px; justify-content: flex-start; }
+.lr .row-slot-people .pp-stack { max-width: 100%; }

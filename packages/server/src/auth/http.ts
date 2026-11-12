@@ -9,11 +9,18 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { KeyStore } from './keys.js';
 import type { AuthStore, SessionUser } from './sessions.js';
+import { AGENT_TOKEN_PREFIX, type AgentTokens } from './agent-tokens.js';
+import { verifyAccessToken, type OAuthStore } from './mcp-oauth.js';
 
 export const SESSION_COOKIE = 'mandate_session';
 
 /** Who is calling: an agent key (bound to one project) or a signed-in UI user (read-only, any project). */
-export type Principal = { kind: 'key'; keyId: string; keyName: string; project: string } | { kind: 'ui'; user: SessionUser };
+export type Principal =
+  /** `service`: a named service-account key (server mode CI), attributed as `service:<keyName>`. */
+  | { kind: 'key'; keyId: string; keyName: string; project: string; service?: boolean }
+  | { kind: 'ui'; user: SessionUser }
+  /** Server mode: an agent acting AS a GitHub user (MCP OAuth access token or personal agent token), bound to one project. */
+  | { kind: 'user'; login: string; project: string; via: 'oauth' | 'pat'; tokenId: string; tokenName: string };
 
 export const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
 
@@ -28,6 +35,26 @@ export interface AuthOptions {
   store: AuthStore;
   /** Extra browser origins for the UI cookie besides same-origin. */
   uiOrigins?: string[];
+  /** Deployment mode: local sessions are refused in server mode, GitHub sessions in local mode. */
+  mode?: 'local' | 'server';
+  /** Shared per-project keys (`mnd_…`) accepted (local mode and legacy installs; default true). */
+  sharedKeys?: boolean;
+  /** Server mode: personal agent tokens (`mndp_…`). */
+  agentTokens?: AgentTokens;
+  /** Server mode: MCP OAuth access tokens (`mat_…`). */
+  oauth?: OAuthStore;
+  /** Who may administer (create projects, Settings); default: every signed-in user. */
+  isAdmin?: (login: string) => boolean;
+}
+
+/**
+ * Agent auth policy of a deployment. Server mode (explicit, or LEGACY: auth.github without server.mode) authenticates
+ * agents per user: MCP OAuth or personal tokens; shared project keys are refused except service accounts.
+ * `repoAuth` (project access from GitHub repo permissions, admins from allowedUsers) stays explicit-server-mode only.
+ */
+export function agentAuthPolicy(c: { mode: 'local' | 'server'; legacyMode: boolean }): { perUserAgents: boolean; sharedKeys: boolean; repoAuth: boolean } {
+  const perUserAgents = c.mode === 'server';
+  return { perUserAgents, sharedKeys: !perUserAgents, repoAuth: c.mode === 'server' && !c.legacyMode };
 }
 
 export function cookieOf(req: FastifyRequest, name: string): string | undefined {
@@ -55,8 +82,14 @@ export function originOk(req: FastifyRequest, extra: string[] = []): boolean {
 }
 
 /** The signed-in UI user of a request (null when there is no valid session cookie). */
-export function sessionUser(req: FastifyRequest, opts: AuthOptions): SessionUser | null {
-  return opts.store.session(cookieOf(req, SESSION_COOKIE));
+export async function sessionUser(req: FastifyRequest, opts: AuthOptions): Promise<SessionUser | null> {
+  return sessionForMode(await opts.store.session(cookieOf(req, SESSION_COOKIE)), opts.mode);
+}
+
+/** A session is only valid for its mode (a local one-time session never works on a remote server). */
+export function sessionForMode(user: SessionUser | null, mode: AuthOptions['mode']): SessionUser | null {
+  if (!user || !mode) return user;
+  return (user.kind ?? 'github') === (mode === 'local' ? 'local' : 'github') ? user : null;
 }
 
 export type AuthResult = { ok: true; principal: Principal } | { ok: false; status: number; message: string };
@@ -65,16 +98,30 @@ export type AuthResult = { ok: true; principal: Principal } | { ok: false; statu
  * Authenticate one request for `project` (null = the unscoped endpoint, any project's key accepted).
  * The bearer key wins when present (an invalid one is never downgraded to the cookie).
  */
-export function authenticate(req: FastifyRequest, project: string | null, opts: AuthOptions): AuthResult {
+export async function authenticate(req: FastifyRequest, project: string | null, opts: AuthOptions): Promise<AuthResult> {
   const authz = req.headers.authorization;
   if (typeof authz === 'string' && authz.length) {
     const m = /^Bearer\s+(\S+)\s*$/i.exec(authz);
     if (!m) return { ok: false, status: 401, message: 'unauthorized: expected Authorization: Bearer <key>' };
+    const presented = m[1]!;
+    if (presented.startsWith('mat_') && opts.oauth) {
+      const t = await verifyAccessToken(opts.oauth, opts, presented, project);
+      if (!t) return { ok: false, status: 401, message: 'unauthorized: invalid or expired access token (sign in again from your agent)' };
+      return { ok: true, principal: { kind: 'user', login: t.login, project: t.project, via: 'oauth', tokenId: t.clientId, tokenName: (await opts.oauth.client(t.clientId))?.client_name ?? 'oauth' } };
+    }
+    if (presented.startsWith(AGENT_TOKEN_PREFIX) && opts.agentTokens) {
+      const t = await opts.agentTokens.verify(presented);
+      if (!t || (project !== null && t.project !== project) || !(await opts.store.token(t.login))) return { ok: false, status: 401, message: `unauthorized: invalid token${project ? ` for project '${project}'` : ''}` };
+      return { ok: true, principal: { kind: 'user', login: t.login, project: t.project, via: 'pat', tokenId: t.id, tokenName: t.name } };
+    }
+    const perUser = 'unauthorized: this server uses per-user access so every write is attributed: use MCP sign-in or a personal token (Connect dialog); CI: a service account key (mandate key create <project> --service <name>)';
     const problem = opts.keys.status();
-    if (problem) return { ok: false, status: 401, message: `unauthorized: agent keys are disabled (${problem})` };
-    const k = opts.keys.verify(project, m[1]!);
+    if (problem) return { ok: false, status: 401, message: opts.sharedKeys === false ? perUser : `unauthorized: agent keys are disabled (${problem})` };
+    const k = opts.keys.verify(project, presented);
+    // Server mode: shared project keys are refused; only named service accounts are accepted (attributed service:<name>).
+    if (opts.sharedKeys === false && !k?.service) return { ok: false, status: 401, message: perUser };
     if (!k) return { ok: false, status: 401, message: `unauthorized: invalid key${project ? ` for project '${project}'` : ''}` };
-    return { ok: true, principal: { kind: 'key', keyId: k.id, keyName: k.name, project: k.project } };
+    return { ok: true, principal: { kind: 'key', keyId: k.id, keyName: k.name, project: k.project, ...(k.service ? { service: true } : {}) } };
   }
   const cookie = cookieOf(req, SESSION_COOKIE);
   if (cookie !== undefined) {
@@ -83,14 +130,14 @@ export function authenticate(req: FastifyRequest, project: string | null, opts: 
     if ((needsOrigin || req.headers.origin !== undefined) && !originOk(req, opts.uiOrigins)) {
       return { ok: false, status: 403, message: 'forbidden: cookie-authenticated requests need a same-origin Origin header' };
     }
-    const user = opts.store.session(cookie);
+    const user = sessionForMode(await opts.store.session(cookie), opts.mode);
     if (!user) return { ok: false, status: 401, message: 'unauthorized: sign in again (session expired or logged out)' };
     return { ok: true, principal: { kind: 'ui', user } };
   }
   return { ok: false, status: 401, message: 'unauthorized: send Authorization: Bearer <key> (keys live in ~/.mandate/keys.json; npm run mandate -- key create <project>)' };
 }
 
-export function rpcError(reply: FastifyReply, status: number, code: number, message: string) {
-  if (status === 401) reply.header('WWW-Authenticate', 'Bearer realm="mandate"');
+export function rpcError(reply: FastifyReply, status: number, code: number, message: string, wwwAuthenticate?: string) {
+  if (status === 401) reply.header('WWW-Authenticate', wwwAuthenticate ?? 'Bearer realm="mandate"');
   return reply.code(status).send({ jsonrpc: '2.0', error: { code, message }, id: null });
 }

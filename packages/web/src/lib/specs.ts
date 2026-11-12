@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { Claim, Priority, Spec, SpecStatus } from '@mandate/shared';
+import type { Claim, Priority, Spec, SpecStatus, WorkOrderKind } from '@mandate/shared';
 
 export const SPEC_STATUS_META: Record<SpecStatus, { label: string; color: string }> = {
   draft: { label: 'Draft', color: 'var(--app-text-faint)' },
@@ -71,6 +71,8 @@ export const FRONTMATTER_FIELDS = {
   specs: ['title', 'summary', 'category', 'status', 'priority', 'tags', 'owner', 'repo', 'implementedCommit', 'exemptFrom'],
   standards: ['title', 'summary', 'status', 'effectiveFrom', 'supersededBy', 'tags', 'owner', 'appliesTo'],
   components: ['title', 'summary', 'kind', 'owns', 'tags', 'owner', 'status'],
+  'work-orders': ['title', 'status', 'priority', 'note', 'claim', 'claims', 'dependencies', 'fastPath', 'touched', 'git', 'completedAt', 'updatedAt'],
+  audits: ['title', 'summary', 'target', 'commit', 'code', 'auditor', 'status', 'startedAt', 'completedAt', 'abandonedAt', 'abandonReason', 'counts'],
 } as const;
 
 /** The entity as of a past version: its frontmatter fields replaced by that version's values. */
@@ -80,11 +82,12 @@ export function withFrontmatter<T extends object>(entity: T, kind: keyof typeof 
   return out as T;
 }
 
-export const KIND_LABEL: Record<'implement' | 'update' | 'review' | 'verify', string> = {
+export const KIND_LABEL: Record<WorkOrderKind, string> = {
   implement: 'Implement',
   update: 'Update',
   review: 'Review',
   verify: 'Verify',
+  fix: 'Fix',
 };
 
 /** A document as of a past version (used to view deleted documents in track-changes mode). */

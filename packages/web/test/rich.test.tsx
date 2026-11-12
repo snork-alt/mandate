@@ -149,8 +149,12 @@ describe('embeds', () => {
   });
   it('graph embed draws the neighbours of the refs', async () => {
     render(<R><GraphEmbed refs={[URIS.spec]} depth={1} /></R>);
-    await waitFor(() => expect(document.querySelector('svg[aria-label="Dependency graph"]')).toBeTruthy());
-    expect(document.querySelectorAll('[data-ref]').length).toBeGreaterThanOrEqual(2);
+    await waitFor(() => expect(document.querySelector('[role="img"][aria-label^="Relation graph"]')).toBeTruthy(), { timeout: 5000 });
+    expect(document.querySelectorAll('.graph-node[data-ref]').length).toBeGreaterThanOrEqual(2);
+    // The seed is highlighted and every style is inline (the fullscreen portal is outside any scoped CSS).
+    const seed = document.querySelector<HTMLElement>('.graph-node[data-seed]')!;
+    expect(seed.style.background).toContain('--mantine-primary-color-light');
+    expect(document.querySelector('marker path')?.getAttribute('style')).toContain('fill');
   });
 });
 
@@ -244,7 +248,7 @@ describe('activity renderers', () => {
     ev({ type: 'spec.section.updated', details: { preview: [{ op: 'equal', text: 'keep ' }, { op: 'insert', text: 'added' }, { op: 'delete', text: 'removed' }] } }),
     ev({ type: 'spec.status_changed', refs: [URIS.spec], details: { status: { from: 'draft', to: 'in_progress' } } }),
     ev({ type: 'work_order.section_done', refs: [URIS.work_order], details: { progress: { done: 2, total: 3 }, sectionTitle: 'Overview' } }),
-    ev({ type: 'work_order.claimed', refs: [URIS.work_order] }),
+    ev({ type: 'work_order.claimed', refs: [URIS.work_order], agent: 'other-agent' }), // another actor: one actor's runs group
     ev({ type: 'feedback.closed', refs: [URIS.feedback], details: { kind: 'ambiguity', resolution: 'applied' } }),
     ev({ type: 'verification.recorded', details: { result: 'pass' } }),
     ev({ type: 'git.pulled', refs: [], details: { commits: ['a', 'b'] } }),
@@ -262,7 +266,7 @@ describe('activity renderers', () => {
     expect(screen.getByText('applied')).toBeTruthy();
     expect(screen.getByText('pass')).toBeTruthy();
     expect(screen.getByText(/2 commits pulled/)).toBeTruthy();
-    expect(screen.getByText('summary of commit')).toBeTruthy();
+    expect(screen.getByText('Summary of commit')).toBeTruthy();
     expect(screen.getByText('Live')).toBeTruthy();
   });
   it('groups consecutive heartbeats of one work order', () => {
@@ -270,7 +274,7 @@ describe('activity renderers', () => {
     const rows = groupHeartbeats([hb(1), hb(2), hb(3), ev({ type: 'work_order.claimed', refs: [URIS.work_order] })]);
     expect(rows.map((r) => r.count)).toEqual([3, 1]);
     render(<R><ActivityPanel events={[hb(1), hb(2), hb(3)]} /></R>);
-    expect(screen.getByText('heartbeat ×3')).toBeTruthy();
+    expect(screen.getByText(/^3 heartbeats on /)).toBeTruthy();
   });
   it('filters with the shared multi-select menus (no native selects), shows the offline state', async () => {
     render(<R><ActivityPanel events={[...fixtures, ev({ type: 'spec.updated', agent: 'claude-code@mbp' }), ev({ type: 'feedback.created', agent: 'codex' })]} connected={false} /></R>);
@@ -278,18 +282,18 @@ describe('activity renderers', () => {
     expect(document.querySelector('select')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /^Type/ }));
     fireEvent.click(await screen.findByText('feedback'));
-    expect(screen.queryByText('summary of commit')).toBeNull();
+    expect(screen.queryByText('Summary of commit')).toBeNull();
     expect(screen.getAllByText('applied').length).toBeGreaterThan(0);
     fireEvent.click(await screen.findByText('git'));
     expect(screen.getByText(/2 commits pulled/)).toBeTruthy();
     expect(screen.getByRole('button', { name: /^Type: / }).textContent).toContain('feedback +1');
     fireEvent.click(screen.getByLabelText('Clear Type filter'));
-    expect(screen.getByText('summary of commit')).toBeTruthy();
+    expect(screen.getByText('Summary of commit')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /^Agent/ }));
     await waitFor(() => expect(document.querySelector('.filter-option [data-testid], .filter-option')?.textContent).toBeTruthy());
     fireEvent.click(await waitFor(() => { const o = [...document.querySelectorAll('.filter-option')].find((e) => e.textContent?.endsWith('codex')); if (!o) throw new Error('no codex option'); return o; }));
-    await waitFor(() => expect(screen.queryByText('summary of commit')).toBeNull());
-    expect(screen.getByText('summary of feedback.created')).toBeTruthy();
+    await waitFor(() => expect(screen.queryByText('Summary of commit')).toBeNull());
+    expect(screen.getByText('Summary of feedback.created')).toBeTruthy();
   });
   it('pause holds events back (button label counts them)', () => {
     const on = vi.fn();

@@ -5,6 +5,7 @@ import {
   graphQueryInputSchema,
   graphSchemaInputSchema,
   parseNodeUri,
+  DERIVED_REL_TYPES,
   relTypeOf,
   type CommitPoint,
   type GraphNode,
@@ -16,7 +17,15 @@ import { parseJson } from '../db.js';
 import { labelOf, pub, resolveAt, resolveRef, type GraphContext, type Point } from '../resolve.js';
 import { LABELS, REL_TYPES, compileCypher, type VType, type VirtualEdge, type VirtualNode } from './compile.js';
 import { CypherError, FUNCTIONS, parseCypher, type Expr, type Query } from './parser.js';
-import type { CypherRunner } from './runner.js';
+import type { SqlTarget } from './target.js';
+
+/** Executes compiled Cypher: the SQLite worker runner, or the Postgres runner (pg/runner.ts) with its SQL target. */
+export interface CypherExec {
+  run(sql: string, binds: Record<string, unknown>, explain?: boolean): Promise<unknown[]>;
+  readonly target?: SqlTarget;
+  /** Rows a variable-length expansion may produce before the query fails with `cypher_budget`. */
+  readonly varLengthBudget?: number;
+}
 
 export { CypherError } from './parser.js';
 export { CypherRunner } from './runner.js';
@@ -37,7 +46,7 @@ function refLiterals(q: Query): string[] {
   return out;
 }
 
-export async function graphQuery(ctx: GraphContext, runner: CypherRunner, input: GraphQueryInput): Promise<GraphQueryResult> {
+export async function graphQuery(ctx: GraphContext, runner: CypherExec, input: GraphQueryInput): Promise<GraphQueryResult> {
   const inp = graphQueryInputSchema.parse(input);
   const t0 = performance.now();
   const ast = parseCypher(inp.query);
@@ -75,7 +84,7 @@ export async function graphQuery(ctx: GraphContext, runner: CypherRunner, input:
   // Literals may be prefixes or patterns (`STARTS WITH 'mandate://specs/'`): canonicalise only those that resolve.
   for (const lit of refLiterals(ast)) refs.set(lit, await canon(lit).catch(() => lit));
 
-  const compiled = compileCypher(ast.clauses, { seq, params, refs, virtualNodes, virtualEdges, boundVersions: [...boundVersions], rowCap: inp.limit });
+  const compiled = compileCypher(ast.clauses, { seq, params, refs, virtualNodes, virtualEdges, boundVersions: [...boundVersions], rowCap: inp.limit, ...(runner.target ? { target: runner.target } : {}), ...(runner.varLengthBudget ? { varLengthBudget: runner.varLengthBudget } : {}) });
   const rows = (await runner.run(compiled.sql, compiled.binds)) as unknown[][];
   const truncated = rows.length > inp.limit;
   const nodeCache = new Map<string, GraphNode>();
@@ -130,9 +139,9 @@ export async function graphQuery(ctx: GraphContext, runner: CypherRunner, input:
 }
 
 /** The EXPLAIN QUERY PLAN of a query (tests, debugging). */
-export async function explainQuery(ctx: GraphContext, runner: CypherRunner, query: string, params: Record<string, unknown> = {}): Promise<string[]> {
+export async function explainQuery(ctx: GraphContext, runner: CypherExec, query: string, params: Record<string, unknown> = {}): Promise<string[]> {
   const ast = parseCypher(query);
-  const compiled = compileCypher(ast.clauses, { seq: null, params, refs: new Map(), virtualNodes: [], virtualEdges: [], boundVersions: [], rowCap: 500 });
+  const compiled = compileCypher(ast.clauses, { seq: null, params, refs: new Map(), virtualNodes: [], virtualEdges: [], boundVersions: [], rowCap: 500, ...(runner.target ? { target: runner.target } : {}) });
   const rows = (await runner.run(compiled.sql, compiled.binds, true)) as { detail: string }[];
   void ctx;
   return rows.map((r) => r.detail);
@@ -141,9 +150,12 @@ export async function explainQuery(ctx: GraphContext, runner: CypherRunner, quer
 export const EXAMPLE_QUERIES: { question: string; query: string }[] = [
   {
     question: 'Which spec sections reference src/auth/session.ts, and which standards do they follow?',
-    query: "MATCH (s:Section)-[:REFERENCES_CODE]->(c:CodeRange) WHERE c.path = 'src/auth/session.ts' OPTIONAL MATCH (s)-[l:LINKS_TO]->(t) WHERE l.rel IN ['follows', 'deviates_from'] RETURN s.ref, c.ref, collect(DISTINCT t.ref) AS standards",
+    query: "MATCH (s:Section)-[:REFERENCES_CODE]->(c:CodeRange) WHERE c.path = 'src/auth/session.ts' OPTIONAL MATCH (s)-[:FOLLOWS|DEVIATES_FROM]->(t) RETURN s.ref, c.ref, collect(DISTINCT t.ref) AS standards",
   },
-  { question: 'Sections blocked by another section (depends_on links)', query: "MATCH (s:Section)-[l:LINKS_TO]->(b:Section) WHERE l.rel = 'depends_on' RETURN s.ref AS blocked, b.ref AS blocker" },
+  { question: 'Sections blocked by another section (depends_on links)', query: 'MATCH (s:Section)-[:DEPENDS_ON]->(b:Section) RETURN s.ref AS blocked, b.ref AS blocker' },
+  { question: 'Spec dependency cycles (derived document-level spec_depends_on)', query: 'MATCH p = (a:Spec)-[:SPEC_DEPENDS_ON*1..5]->(a) RETURN a.ref, length(p) AS hops LIMIT 10' },
+  { question: 'Work orders acting on feedback, with who filed it (server mode)', query: 'MATCH (w:WorkOrder)-[:ACTS_ON]->(f:Feedback) OPTIONAL MATCH (f)-[:FILED_BY]->(u:User) RETURN w.ref, f.ref, u.login' },
+  { question: 'Spec sections a work order covers (through its sections)', query: 'MATCH (w:WorkOrder {ref: $ref})-[:HAS_SECTION]->(ws:Section)-[c:COVERS]->(s:Section) RETURN ws.ref, c.status, s.ref' },
   {
     question: 'Acceptance criteria without a passing verification, for specs using security-baseline',
     query:
@@ -157,7 +169,7 @@ export const EXAMPLE_QUERIES: { question: string; query: string }[] = [
   {
     question: 'Architecture: component dependencies (depends_on from component sections) and the code each component owns',
     query:
-      "MATCH (a:Component)-[:HAS_SECTION]->(s:Section)-[l:LINKS_TO]->(b) WHERE l.rel = 'depends_on' AND b.ref STARTS WITH 'mandate://components/' OPTIONAL MATCH (f:CodeFile)-[:OWNED_BY]->(a) RETURN a.ref, a.componentKind, collect(DISTINCT b.ref) AS dependsOn, count(DISTINCT f) AS ownedFiles",
+      "MATCH (a:Component)-[:HAS_SECTION]->(s:Section)-[:DEPENDS_ON]->(b) WHERE b.ref STARTS WITH 'mandate://components/' OPTIONAL MATCH (f:CodeFile)-[:OWNED_BY]->(a) RETURN a.ref, a.componentKind, collect(DISTINCT b.ref) AS dependsOn, count(DISTINCT f) AS ownedFiles",
   },
   {
     question: 'Rules that govern a code file (by scope), strictest first, with how they are checked',
@@ -172,7 +184,7 @@ export const EXAMPLE_QUERIES: { question: string; query: string }[] = [
   { question: 'Versions of a section with the commits that made them', query: 'MATCH (v:Version)-[:VERSION_OF]->(s {ref: $ref}) MATCH (v)-[:CREATED_IN]->(c:Commit) RETURN v.ref, v.action, c.date ORDER BY c.date' },
   {
     question: 'A path from a symbol to a standard (structural relationships only)',
-    query: 'MATCH p = (y:Symbol {ref: $symbol})-[:MENTIONS_SYMBOL|HAS_SECTION|LINKS_TO|APPLIES_TO|USES_STANDARD*1..4]-(s:Standard) RETURN p ORDER BY length(p) LIMIT 1',
+    query: 'MATCH p = (y:Symbol {ref: $symbol})-[:MENTIONS_SYMBOL|HAS_SECTION|FOLLOWS|DEVIATES_FROM|USES_STANDARD*1..4]-(s:Standard) RETURN p ORDER BY length(p) LIMIT 1',
   },
 ];
 
@@ -194,14 +206,24 @@ export function graphSchema(ctx: GraphContext, input: Record<string, never> = {}
       description: d.prop ? `${labelOfKind.get(d.kind)} with ${d.prop} = '${d.value}'` : `${d.kind} nodes`,
       properties: ['ref', 'kind', 'label', ...props.filter((p) => p.kind === d.kind).map((p) => p.key)],
     })),
-    relationships: [...REL_TYPES].map(([type, d]) => ({
-      type,
-      kind: d.kind,
-      reverse: REVERSE_EDGE_NAMES[d.kind as (typeof EDGE_KINDS)[number]]?.toUpperCase() ?? '',
-      from: [...new Set(ends.filter((e) => e.kind === d.kind).map((e) => labelOfKind.get(e.fk) ?? e.fk))],
-      to: [...new Set(ends.filter((e) => e.kind === d.kind).map((e) => labelOfKind.get(e.tk) ?? e.tk))],
-      ...(d.rel ? { description: `${relTypeOf(d.kind as (typeof EDGE_KINDS)[number])} with rel = '${d.rel}'` } : {}),
-    })),
+    relationships: [...REL_TYPES].map(([type, d]) => {
+      const alias = DERIVED_REL_TYPES[type];
+      const kind = alias ? type.toLowerCase() : d.kinds[0]!;
+      const mine = ends.filter((e) => d.kinds.includes(e.kind));
+      return {
+        type,
+        kind,
+        reverse: alias ? 'LINKED_FROM' : (REVERSE_EDGE_NAMES[kind as (typeof EDGE_KINDS)[number]]?.toUpperCase() ?? ''),
+        from: [...new Set(mine.map((e) => labelOfKind.get(e.fk) ?? e.fk))],
+        to: [...new Set(mine.map((e) => labelOfKind.get(e.tk) ?? e.tk))],
+        ...(alias
+          ? {
+              description: `DEPRECATED alias (one release): any of ${d.kinds.map((k) => relTypeOf(k as (typeof EDGE_KINDS)[number])).join('|')}; l.rel reads the link's rel. ${alias.deprecated ?? ''}`.trim(),
+              deprecated: true,
+            }
+          : {}),
+      };
+    }),
     functions: [...FUNCTIONS],
     examples: EXAMPLE_QUERIES,
   };

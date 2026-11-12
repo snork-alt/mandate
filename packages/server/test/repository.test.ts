@@ -4,7 +4,7 @@ import path from 'node:path';
 import { initRepository } from 'es-git';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createSpecSchema, createStandardSchema } from '@mandate/shared';
-import { createStorage } from '../src/storage/index.js';
+import { createStorage, migrateWorkOrders } from '../src/storage/index.js';
 import { cleanupTempDirs, newStore, tempDir, testBackend } from './helpers.js';
 
 afterEach(cleanupTempDirs);
@@ -14,6 +14,11 @@ const spec = (title: string, body: string) =>
   createSpecSchema.parse({ title, sections: [{ id: 'main', title: 'Main', body }] });
 const std = (title: string, body: string) =>
   createStandardSchema.parse({ title, sections: [{ id: 'rules', title: 'Rules', body }] });
+/** Ready gate: every section needs a criterion (here the main section is verified by an acceptance section). */
+const covered = (body: string) => [
+  { id: 'main', title: 'Main', type: 'markdown', refs: [], symbols: [], links: [], verifiedBy: ['ac'], body },
+  { id: 'ac', title: 'It works', type: 'acceptance', method: 'test', refs: [], symbols: [], links: [], verifiedBy: [], body: 'ok' },
+];
 const bodyOf = (s: { sections: { body: string }[] }) => s.sections[0]?.body;
 
 describe(`EntityRepository + GitStore (${testBackend})`, () => {
@@ -30,7 +35,7 @@ describe(`EntityRepository + GitStore (${testBackend})`, () => {
     );
 
     const updated = await storage.specs.update('hello-world', {
-      sections: [{ id: 'main', title: 'Main', type: 'markdown', refs: [], symbols: [], links: [], verifiedBy: [], body: 'changed' }],
+      sections: covered('changed'),
       status: 'ready',
     });
     expect(updated).toMatchObject({ status: 'ready', tags: [] });
@@ -58,17 +63,21 @@ describe(`EntityRepository + GitStore (${testBackend})`, () => {
     const t1 = new Date('2026-01-02T12:00:00Z');
     await storage.specs.create(spec('Timed', 'x'), { date: t0 });
     await storage.standards.create(std('Unrelated', ''), { date: t1 });
-    await storage.specs.update('timed', { status: 'ready' }, { date: t1, message: 'spec(timed): start', agent: 'claude@box', branch: 'spec/timed' });
+    await storage.specs.update('timed', { status: 'ready', sections: covered('x') } as never, { date: t1, message: 'spec(timed): start', agent: 'claude@box', branch: 'spec/timed' });
 
     const file = storage.specs.pathOf('timed');
-    expect(await storage.history.meta(file)).toEqual({
+    expect(await storage.history.meta(file)).toMatchObject({
       createdAt: t0.toISOString(),
       updatedAt: t1.toISOString(),
       updatedBy: 'claude@box',
       revisions: 2,
       versionCount: 2,
       lastCommit: (await git.log(1))[0]!.id,
+      // attribution: agent only (no Mandate-User trailer); the creation falls back to the commit author
+      lastEditedBy: { agent: 'claude@box' },
+      createdBy: { agent: 'Test' },
     });
+    expect((await storage.history.meta(file)).lastEditedBy?.user).toBeUndefined();
     const log = await storage.history.log(file);
     expect(log.map((h) => h.subject)).toEqual(['spec(timed): start', 'spec: create timed']);
     expect(log[0]).toMatchObject({ agent: 'claude@box', branch: 'spec/timed', trailers: { Agent: 'claude@box', Branch: 'spec/timed' }, body: '' });
@@ -81,7 +90,7 @@ describe(`EntityRepository + GitStore (${testBackend})`, () => {
     const storage = createStorage(git);
     await storage.specs.create(spec('Versioned', 'one'));
     const c1 = (await git.log(1))[0]!.id;
-    await storage.specs.update('versioned', { status: 'ready' });
+    await storage.specs.update('versioned', { status: 'ready', sections: covered('one') } as never);
     const c2 = (await git.log(1))[0]!.id;
     // A hand-made deletion (documents cannot be deleted through the storage API).
     const { rm } = await import('node:fs/promises');
@@ -110,25 +119,29 @@ describe(`EntityRepository + GitStore (${testBackend})`, () => {
     await expect(storage.history.version('specs/other.md', c1)).rejects.toMatchObject({ statusCode: 404 });
   });
 
-  it('lists the other records when one jsonl line is invalid, with its issues attached', async () => {
+  it('migrates legacy jsonl lines to documents; unparsable lines are kept verbatim, never dropped', async () => {
     const git = await newStore(path.join(await tempDir(), 'repo'));
     const storage = createStorage(git);
     await storage.specs.create(createSpecSchema.parse({ id: 's', title: 'S', sections: [{ id: 'a', title: 'A', body: 'x' }] }));
-    const { id: first } = await storage.workOrderService.create({ spec: 's', kind: 'implement', status: 'pending', sections: [{ id: 'a' }] });
-    const { appendFile } = await import('node:fs/promises');
-    const file = path.join(git.dir, 'work-orders.jsonl');
-    await appendFile(file, '{"id":"q-0009","spec":"s","kind":"nope","status":"pending","sections":[]}\nnot json\n');
-    const items = (await storage.workOrders.list()) as (Record<string, unknown> & { id: string })[];
-    expect(items.map((i) => i.id)).toEqual([first, 'q-0009']);
-    expect(items[0]!.validationIssues).toBeUndefined();
-    expect((items[1]!.validationIssues as string[]).join(' ')).toMatch(/kind/);
-    // Writes stay strict and never persist the annotation.
-    await storage.workOrderService.update(first, { status: 'in_progress' });
-    expect(await readFile(file, 'utf8')).not.toContain('validationIssues');
-    expect(await readFile(file, 'utf8')).toContain('not json'); // unparsable lines are kept, not dropped
+    const sha = (await git.log(1))[0]!.id;
+    const { writeFile } = await import('node:fs/promises');
+    const ok = { id: 'q-0001', spec: 's', specCommit: sha.slice(0, 7), kind: 'implement', status: 'pending', sections: [{ id: 'a', status: 'pending' }], reason: [], createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-02T00:00:00.000Z' };
+    await writeFile(path.join(git.dir, 'work-orders.jsonl'), `${JSON.stringify(ok)}\n{"id":"q-0009","spec":"s","kind":"nope","status":"pending","sections":[]}\nnot json\n`);
+    await git.commit(['work-orders.jsonl'], 'work-orders: legacy\n\nWork-Order: q-0001');
+    // Before the migration the legacy items are listed read-only.
+    expect((await storage.workOrders.list()).map((w) => w.id)).toEqual(['q-0001']);
+    await expect(storage.workOrderService.update('q-0001', { status: 'in_progress' })).rejects.toMatchObject({ code: 'migration_pending' });
+    const r = await migrateWorkOrders({ git, lock: storage.lock, history: storage.history });
+    expect(r).toMatchObject({ migrated: ['q-0001'], unmigrated: 2 });
+    const kept = await readFile(path.join(git.dir, 'work-orders/unmigrated.jsonl'), 'utf8');
+    expect(kept).toContain('not json');
+    expect(kept).toContain('q-0009');
+    const w = await storage.workOrders.get('q-0001');
+    expect(w).toMatchObject({ specCommit: sha, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-02T00:00:00.000Z', sections: [{ id: 'a', status: 'pending' }] });
+    expect((await git.status()).clean).toBe(true);
   });
 
-  it('reads legacy queue history: `Queue-Item:` trailers and pre-rename ids', async () => {
+  it('reads legacy queue history: `Queue-Item:` trailers, pre-rename ids and the migration commit', async () => {
     const git = await newStore(path.join(await tempDir(), 'repo'));
     const storage = createStorage(git);
     await storage.specs.create(createSpecSchema.parse({ id: 's', title: 'S', sections: [{ id: 'a', title: 'A', body: 'x' }] }));
@@ -136,9 +149,11 @@ describe(`EntityRepository + GitStore (${testBackend})`, () => {
     const line = { id: 'q-0007', spec: 's', specCommit: (await git.log(1))[0]!.id.slice(0, 7), kind: 'implement', status: 'pending', sections: [{ id: 'a', status: 'pending' }], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
     await writeFile(path.join(git.dir, 'work-orders.jsonl'), JSON.stringify(line) + '\n');
     await git.commit(['work-orders.jsonl'], 'queue: create q-0007\n\nQueue-Item: q-0007');
+    await migrateWorkOrders({ git, lock: storage.lock, history: storage.history });
     await storage.workOrderService.update('q-0007', { status: 'in_progress' });
     const history = await storage.workOrderService.historyOf('q-0007');
-    expect(history.map((h) => h.trailers)).toEqual([{ 'Work-Order': 'q-0007' }, { 'Queue-Item': 'q-0007' }]);
+    expect(history.map((h) => h.trailers)).toEqual([{ 'Work-Order': 'q-0007' }, { 'Mandate-Migration': 'work-orders-md' }, { 'Queue-Item': 'q-0007' }]);
+    expect((await storage.workOrderService.resolve('q-0007')).doc!.history).toContain('queue: create q-0007');
   });
 
   it('skips invalid files in list() and reports them on get()', async () => {
@@ -149,10 +164,10 @@ describe(`EntityRepository + GitStore (${testBackend})`, () => {
     await writeFile(path.join(git.dir, 'specs/bad.md'), '# no frontmatter\n');
     expect((await storage.specs.list()).map((s) => s.id)).toEqual(['good']);
     await expect(storage.specs.get('bad')).rejects.toMatchObject({ statusCode: 422 });
-    await expect(storage.specs.create(spec('Bad', ''))).rejects.toThrow(/already exists/);
+    expect((await storage.specs.create(spec('Bad', ''))).id).toBe('bad-2'); // ids are never reused: a generated id skips the existing file
   });
 
-  it('stores work orders as JSON Lines and enforces work-order rules', async () => {
+  it('stores work orders as markdown documents and enforces work-order rules', async () => {
     const git = await newStore(path.join(await tempDir(), 'repo'));
     const storage = createStorage(git);
     const q = storage.workOrderService;
@@ -163,7 +178,7 @@ describe(`EntityRepository + GitStore (${testBackend})`, () => {
 
     const item = await q.create({ spec: 'login', kind: 'implement', status: 'pending', sections: [{ id: 'a' }, { id: 'b' }] });
     const id = item.id;
-    expect(id).toMatch(/^wo-[0-9a-hjkmnp-tv-z]{26}$/);
+    expect(id).toMatch(/^q-\d{4}$/);
     expect(item).toMatchObject({ specCommit, status: 'pending', sections: [{ id: 'a', status: 'pending' }, { id: 'b', status: 'pending' }] });
     // Validation: unknown spec / sections; one open implement/update per (spec, section) (I6); review is exempt.
     await expect(q.create({ spec: 'nope', kind: 'implement', status: 'pending', sections: [{ id: 'a' }] })).rejects.toThrow(/does not exist|no committed version/);
@@ -173,20 +188,21 @@ describe(`EntityRepository + GitStore (${testBackend})`, () => {
     const review = await q.create({ spec: 'login', kind: 'review', status: 'pending', sections: [{ id: 'a' }] });
     await q.update(review.id, { status: 'cancelled' });
 
-    // Done once every section is done.
+    // Not done automatically: completion is explicit (work_order_complete needs an outcome).
     const half = await q.update(id, { status: 'in_progress', sections: [{ id: 'a', status: 'done' }, { id: 'b', status: 'pending' }] });
     expect(half.status).toBe('in_progress');
-    const done = await q.update(id, { sections: [{ id: 'a', status: 'done' }, { id: 'b', status: 'done' }] });
-    expect(done.status).toBe('done');
+    expect((await q.update(id, { sections: [{ id: 'a', status: 'done' }, { id: 'b', status: 'done' }] })).status).toBe('in_progress');
+    const done = await q.update(id, { status: 'done' });
+    expect(done).toMatchObject({ status: 'done', completedAt: expect.any(String) });
     // Closed items no longer block a new one.
     const second = (await q.create({ spec: 'login', kind: 'implement', status: 'pending', sections: [{ id: 'b' }] })).id;
-    expect(second).toMatch(/^wo-/);
+    expect(second).toMatch(/^q-\d{4}$/);
     expect(second).not.toBe(id);
 
-    const lines = (await readFile(path.join(git.dir, 'work-orders.jsonl'), 'utf8')).trim().split('\n');
-    expect(lines.map((l) => JSON.parse(l).id)).toEqual([id, review.id, second]);
+    const { readdir } = await import('node:fs/promises');
+    expect((await readdir(path.join(git.dir, 'work-orders'))).sort()).toEqual([id, review.id, second].map((x) => `${x}.md`).sort());
     const history = await q.historyOf(id);
-    expect(history.map((h) => h.subject)).toEqual([`work order: update ${id}`, `work order: update ${id}`, `work order: create ${id}`]);
+    expect(history.map((h) => h.subject)).toEqual([`work order: update ${id}`, `work order: update ${id}`, `work order: update ${id}`, `work order: create ${id}`]);
     expect(history[0]!.trailers).toEqual({ 'Work-Order': id });
 
     // Resolved view flags sections of open work orders changed since specCommit; done ones resolve at their own commit.
@@ -203,7 +219,7 @@ describe(`EntityRepository + GitStore (${testBackend})`, () => {
     const git = await newStore(path.join(await tempDir(), 'repo'));
     const storage = createStorage(git);
     await storage.specs.create(createSpecSchema.parse({ id: 's', title: 'S', sections: [{ id: 'a', title: 'A', body: 'v1' }, { id: 'b', title: 'B', body: 'v1' }] }));
-    const c1 = (await git.log(1))[0]!.id.slice(0, 7);
+    const c1 = (await git.log(1))[0]!.id;
     const sec = (id: string, body: string) => ({ id, title: id.toUpperCase(), type: 'markdown', refs: [], symbols: [], links: [], verifiedBy: [], body, implementedCommit: c1 });
     await storage.specs.update('s', { sections: [sec('a', 'v1'), sec('b', 'v2')] });
     expect(await storage.workOrderService.implementation('s')).toEqual({

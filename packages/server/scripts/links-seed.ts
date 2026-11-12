@@ -43,8 +43,9 @@ export const LINKS: L[] = [
     feedback: 'fb-0010',
   },
   // standard -> standard
-  { from: T('rate-limit-headers', 'rules'), to: T('api-conventions', 'rules'), rel: 'extends' },
-  { from: T('rate-limit-headers', 'rules'), to: T('api-conventions', 'example'), rel: 'supersedes', note: 'The example still shows the old X-RateLimit headers' },
+  // Not `extends` / `supersedes`: rate-limit-headers is later superseded by api-conventions, and a standard never
+  // extends or supersedes its own successor (integrity error standard_successor_loop; Fable D-T2).
+  { from: T('rate-limit-headers', 'rules'), to: T('api-conventions', 'rules'), rel: 'relates_to', note: 'The header rules moved into api-conventions' },
   { from: T('testing-policy', 'rules'), to: T('security-baseline', 'checklist'), rel: 'conflicts_with', note: 'Authz tests for every endpoint vs. E2E only on critical paths' },
   { from: T('ui-accessibility', 'checklist'), to: T('testing-policy', 'checklist'), rel: 'relates_to' },
 ];

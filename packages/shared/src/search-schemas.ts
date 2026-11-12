@@ -4,7 +4,7 @@
  */
 import { z } from 'zod';
 import { parseNodeUri, parseRef } from './refs.js';
-import { CHANGE_KINDS, EDGE_KINDS, SEARCH_KINDS, SEARCH_MODES, SYMBOL_MATCHES } from './search.js';
+import { CHANGE_KINDS, EDGE_KINDS, LINK_EDGE_KINDS, SEARCH_KINDS, SEARCH_MODES, SYMBOL_MATCHES } from './search.js';
 
 const shortText = (max = 120) => z.string().trim().min(1).max(max);
 const list = <T extends z.ZodType>(item: T, max = 20) => z.array(item).min(1).max(max);
@@ -156,7 +156,22 @@ export type HistorySearchInput = z.input<typeof historySearchInputSchema>;
 
 /* ------------------------------------------------------------------ graph */
 
-const edgeKinds = list(z.enum(EDGE_KINDS), EDGE_KINDS.length);
+/** Edge kinds; the deprecated `links_to` (one release) expands to the per-rel section link kinds. */
+const edgeKinds = z.preprocess(
+  (v) => (Array.isArray(v) && v.includes('links_to') ? [...new Set(v.flatMap((k) => (k === 'links_to' ? [...LINK_EDGE_KINDS] : [k])))] : v),
+  // A plain string in the JSON schema (the 68-value enum cost ~250 tokens per tool); validated here with close matches.
+  list(
+    z
+      .string()
+      .describe('edge kind (graph_schema lists them)')
+      .superRefine((k, ctx) => {
+        if ((EDGE_KINDS as readonly string[]).includes(k)) return;
+        const near = EDGE_KINDS.filter((e) => e.includes(k) || k.includes(e) || e.split('_')[0] === k.split('_')[0]).slice(0, 6);
+        ctx.addIssue({ code: 'custom', message: `unknown edge kind '${k}'${near.length ? ` (did you mean ${near.join(', ')}?)` : ''}; graph_schema lists the edge kinds` });
+      }) as unknown as z.ZodEnum<{ [K in (typeof EDGE_KINDS)[number]]: K }>,
+    EDGE_KINDS.length,
+  ),
+);
 
 export const graphNodeInputSchema = z
   .object({ uri: nodeUriSchema, at: atSchema.optional(), limit: z.number().int().min(1).max(100).default(10) })

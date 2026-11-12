@@ -49,6 +49,8 @@ import { copyText } from '../../lib/copy';
 import type { CopyTarget } from '../../lib/refs';
 import { copyTargetProps, CopyMenu } from '../copy';
 import { sectionAnchor } from '../doc/anchors';
+import { ArchAuditDot, ArchAuditProvider } from '../audits/ArchAudit';
+import { ComponentMaturityDot } from '../maturity/SpecMaturity';
 import { defaultCollapsed, GUTTER, layoutArchitecture, midOf, roundedPath, type Band, type Layout, type PlacedEdge, type PlacedNode } from './layout';
 
 export const KIND_ICON: Record<ComponentKind, typeof IconServer> = {
@@ -159,37 +161,39 @@ function NodeMenu({ n, opened, onChange, children }: { n: ArchitectureNode; open
 function FocusButton({ n }: { n: ArchitectureNode }) {
   const { onFocus } = useContext(FlowCtx);
   return (
-    <button
-      type="button"
-      className="arch-node-focus nodrag"
-      aria-label={`Focus ${n.title}`}
-      title="Focus: highlight its upstream and downstream"
-      onClick={(e) => {
-        e.stopPropagation();
-        onFocus(n.id);
-      }}
-    >
-      <IconFocus2 size={13} />
-    </button>
+    <Tooltip label="Focus: highlight its upstream and downstream" openDelay={300}>
+      <button
+        type="button"
+        className="arch-node-focus nodrag"
+        aria-label={`Focus ${n.title}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          onFocus(n.id);
+        }}
+      >
+        <IconFocus2 size={13} />
+      </button>
+    </Tooltip>
   );
 }
 
 function ToggleButton({ n, open }: { n: ArchitectureNode; open: boolean }) {
   const { toggle } = useContext(FlowCtx);
   return (
-    <button
-      type="button"
-      className="arch-group-toggle nodrag"
-      aria-label={`${open ? 'Collapse' : 'Expand'} ${n.title}`}
-      aria-expanded={open}
-      title={open ? 'Collapse: hide its children (their edges attach to it)' : 'Expand: show its children'}
-      onClick={(e) => {
-        e.stopPropagation();
-        toggle(n.id);
-      }}
-    >
-      {open ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
-    </button>
+    <Tooltip label={open ? 'Collapse: hide its children (their edges attach to it)' : 'Expand: show its children'} multiline maw={320} openDelay={300}>
+      <button
+        type="button"
+        className="arch-group-toggle nodrag"
+        aria-label={`${open ? 'Collapse' : 'Expand'} ${n.title}`}
+        aria-expanded={open}
+        onClick={(e) => {
+          e.stopPropagation();
+          toggle(n.id);
+        }}
+      >
+        {open ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
+      </button>
+    </Tooltip>
   );
 }
 
@@ -224,7 +228,11 @@ function NodeCard({ p }: { p: PlacedNode }) {
                 <Icon size={15} stroke={1.7} />
               </span>
               <span className="arch-node-titles">
-                <span className="arch-node-title">{n.title}</span>
+                <span className="arch-node-title">
+                  {n.title}
+                  <ArchAuditDot id={n.id} />
+                  <ComponentMaturityDot ids={[n.id, ...n.children]} />
+                </span>
                 <span className="arch-node-kind">
                   {n.kind}
                   {n.repos[0] ? ` · ${n.repos.join(', ')}` : ''}
@@ -235,9 +243,9 @@ function NodeCard({ p }: { p: PlacedNode }) {
             <span className="arch-node-foot">
               <Badges n={n} />
               {p.group === 'collapsed' && (
-                <span className="arch-children-pill" title={`${plural(p.hidden, 'nested component')} hidden`}>
-                  +{p.hidden}
-                </span>
+                <Tooltip label={`${plural(p.hidden, 'nested component')} hidden`} openDelay={300}>
+                  <span className="arch-children-pill">+{p.hidden}</span>
+                </Tooltip>
               )}
             </span>
           </div>
@@ -275,6 +283,8 @@ function GroupBox({ p }: { p: PlacedNode }) {
             <span className="arch-group-title">
               <Icon size={14} stroke={1.7} />
               <span className="arch-node-title">{n.title}</span>
+              <ArchAuditDot id={n.id} />
+              <ComponentMaturityDot ids={[n.id, ...n.children]} />
               {n.status !== 'active' && <span className="arch-status">{n.status}</span>}
             </span>
           </Tooltip>
@@ -452,6 +462,9 @@ function buildEdges(l: Layout): ArchEdge[] {
   });
 }
 
+/** Below this zoom node text is too small to read (C1). */
+export const MIN_READABLE_ZOOM = 0.8;
+
 function Flow({ g, l, onFocus, toggle }: { g: ArchitectureGraph; l: Layout; onFocus: (id: string) => void; toggle: (id: string) => void }) {
   const navigate = useNavigate();
   const scheme = useComputedColorScheme('light');
@@ -459,7 +472,19 @@ function Flow({ g, l, onFocus, toggle }: { g: ArchitectureGraph; l: Layout; onFo
   const box = useRef<HTMLDivElement>(null);
   const nodes = useMemo(() => buildNodes(l), [l]);
   const edges = useMemo(() => buildEdges(l), [l]);
-  const fit = useCallback(() => void rf.fitView({ padding: 0.04, duration: 0 }), [rf]);
+  // C1: fit the whole graph when it stays readable; otherwise fit to width with a readable minimum zoom and
+  // let the user scroll (pan) vertically instead of shrinking node text to a few pixels.
+  const fit = useCallback(() => {
+    const el = box.current;
+    if (!el || !l.width || !l.height) return void rf.fitView({ padding: 0.04, duration: 0 });
+    const { width: bw, height: bh } = el.getBoundingClientRect();
+    const pad = 16;
+    const whole = Math.min((bw - 2 * pad) / l.width, (bh - 2 * pad) / l.height);
+    if (whole >= MIN_READABLE_ZOOM) return void rf.fitView({ padding: 0.04, duration: 0, maxZoom: 1 });
+    const zoom = Math.min(1, Math.max(MIN_READABLE_ZOOM, (bw - 2 * pad) / l.width));
+    const x = Math.max(pad, (bw - l.width * zoom) / 2);
+    void rf.setViewport({ x, y: pad, zoom }, { duration: 0 });
+  }, [rf, l]);
   // New layout: fit to the canvas.
   useEffect(() => {
     const t = requestAnimationFrame(() => requestAnimationFrame(fit));
@@ -501,6 +526,8 @@ function Flow({ g, l, onFocus, toggle }: { g: ArchitectureGraph; l: Layout; onFo
           colorMode={scheme}
           minZoom={0.15}
           maxZoom={2.5}
+          panOnScroll
+          zoomActivationKeyCode={['Meta', 'Control']}
           nodesConnectable={false}
           elementsSelectable={false}
           edgesFocusable={false}
@@ -613,16 +640,16 @@ export function ArchitectureView({ initialFocus }: { initialFocus?: string | nul
           </span>
         )}
         {violations.length > 0 && (
-          <Tooltip multiline w={300} label={`Dependencies pointing upward (a lower layer depending on a higher one): ${violations.map((e) => `${e.from} → ${e.to}`).join(', ')}`}>
+          <Tooltip multiline w={300} label={`A lower layer depends on a higher one (a layering violation): ${violations.map((e) => `${e.from} → ${e.to}`).join(', ')}`}>
             <span className="arch-violation-pill">
-              <IconAlertTriangle size={12} /> {plural(violations.length, 'upward dependency', 'upward dependencies')}
+              <IconAlertTriangle size={12} /> {plural(violations.length, 'layering violation', 'layering violations')}
             </span>
           </Tooltip>
         )}
         <span style={{ flex: 1 }} />
         <span className="arch-legend small">
           <span className="arch-legend-edge" /> depends on
-          <span className="arch-legend-edge" data-tone="violation" /> upward
+          <span className="arch-legend-edge" data-tone="violation" /> depends on a higher layer (violation)
           <span className="arch-legend-node" data-status="deprecated" /> deprecated
         </span>
         {groups.length > 0 && (
@@ -640,9 +667,11 @@ export function ArchitectureView({ initialFocus }: { initialFocus?: string | nul
       </div>
       {g.isError && <div className="faint small">Could not load the architecture: {(g.error as Error).message}</div>}
       {g.data && l && g.data.nodes.length > 0 && (
-        <ReactFlowProvider>
-          <Flow g={g.data} l={l} onFocus={setFocus} toggle={toggle} />
-        </ReactFlowProvider>
+        <ArchAuditProvider>
+          <ReactFlowProvider>
+            <Flow g={g.data} l={l} onFocus={setFocus} toggle={toggle} />
+          </ReactFlowProvider>
+        </ArchAuditProvider>
       )}
       {g.data && !g.data.nodes.length && <div className="faint small">No components yet.</div>}
     </div>

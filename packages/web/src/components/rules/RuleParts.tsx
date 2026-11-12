@@ -1,8 +1,8 @@
 import { HoverCard, Loader, Tooltip } from '@mantine/core';
-import { IconChecklist, IconCopy, IconFolder, IconLanguage, IconScale } from '@tabler/icons-react';
+import { IconCheck, IconCopy, IconX } from '@tabler/icons-react';
 import type { CriterionState, RuleHit, Section } from '@mandate/shared';
 import { ruleExamples } from '@mandate/doc';
-import { parseNodeUri } from '@mandate/shared/refs';
+import { buildCodeRef, parseNodeUri } from '@mandate/shared/refs';
 import { Link } from 'react-router';
 import { copyText } from '../../lib/copy';
 import type { CopyTarget } from '../../lib/refs';
@@ -13,6 +13,10 @@ import { CodeRefChip } from '../doc/Chips';
 import { CopyRef, copyTargetProps } from '../copy';
 import { CriterionStateIcon } from '../doc/Acceptance';
 import { sectionAnchor } from '../doc/anchors';
+import { CodeRulesLines } from '../refs/CodeRules';
+import { LineageButton, WhereUsedButton } from '../lineage/LineageButton';
+import { Contributors } from '../people/People';
+import { bareRef } from '../../lib/lineage';
 
 export type RuleLevel = 'must' | 'should' | 'may';
 export const LEVEL_META: Record<RuleLevel, { label: string; tone: string; hint: string }> = {
@@ -40,81 +44,93 @@ function ExampleChip({ uri }: { uri: string }) {
   return <CodeRefChip codeRef={{ repo: n.repo, path: n.path, ...(lines ? { lines } : {}) }} />;
 }
 
-/** Rationale, scope chips, the check (copyable command) and example chips of a rule. */
+/** Why, scope, check and examples of a rule as a compact details list (no chips). */
 export function RuleMeta({ section }: { section: Section }) {
   const scope = section.scope;
+  const scopeItems = [...(scope?.paths ?? []).map((p) => ({ key: p, mono: true, text: p })), ...(scope?.languages ?? []).map((l) => ({ key: l, mono: false, text: l }))];
   return (
-    <div className="rule-meta">
+    <>
       {section.rationale && (
-        <div className="rule-rationale">
-          <IconScale size={13} /> <span>{section.rationale}</span>
-        </div>
+        <p className="rule-why">
+          <span className="rule-why-label">Why</span> {section.rationale}
+        </p>
       )}
-      {(scope?.paths?.length || scope?.languages?.length || section.check || section.examples?.length) && (
-        <div className="rule-chips">
-          {scope?.paths?.map((p) => (
-            <span key={p} className="chip chip-scope" title="Applies to these paths">
-              <IconFolder size={12} />
-              <span className="mono">{p}</span>
-            </span>
-          ))}
-          {scope?.languages?.map((l) => (
-            <span key={l} className="chip chip-scope" title="Applies to these languages">
-              <IconLanguage size={12} />
-              {l}
-            </span>
-          ))}
-          {section.check && (
-            <span className="chip chip-check" title={section.check.note ?? `Checked by ${section.check.kind}`}>
-              <IconChecklist size={12} />
-              {section.check.kind}
-              {section.check.command && (
-                <button type="button" className="chip-check-cmd mono" onClick={() => void copyText(section.check!.command!, 'Copied command')} title="Copy command">
-                  {section.check.command}
-                  <IconCopy size={11} />
-                </button>
-              )}
-            </span>
+      {(scopeItems.length > 0 || section.check || (section.examples?.length ?? 0) > 0) && (
+        <dl className="rule-facts">
+          {scopeItems.length > 0 && (
+            <>
+              <dt>Applies to</dt>
+              <dd>
+                {scopeItems.map((x, i) => (
+                  <span key={x.key}>
+                    {i > 0 && <span className="rule-sep"> · </span>}
+                    <span className={x.mono ? 'mono' : undefined}>{x.text}</span>
+                  </span>
+                ))}
+              </dd>
+            </>
           )}
-          {section.examples?.map((e) => <ExampleChip key={e} uri={e} />)}
-        </div>
+          {section.check && (
+            <>
+              <dt>Check</dt>
+              <dd>
+                <span className="rule-check-kind">{section.check.kind}</span>
+                {section.check.command && (
+                  <Tooltip label="Copy command" openDelay={300}>
+                    <button type="button" className="rule-check-cmd mono" onClick={() => void copyText(section.check!.command!, 'Copied command')}>
+                      {section.check.command}
+                      <IconCopy size={11} />
+                    </button>
+                  </Tooltip>
+                )}
+                {section.check.note && <span className="rule-sep"> · {section.check.note}</span>}
+              </dd>
+            </>
+          )}
+          {(section.examples?.length ?? 0) > 0 && (
+            <>
+              <dt>Examples</dt>
+              <dd className="rule-examples">
+                {section.examples!.map((e) => (
+                  <ExampleChip key={e} uri={e} />
+                ))}
+              </dd>
+            </>
+          )}
+        </dl>
       )}
-    </div>
+    </>
   );
 }
 
-/** Body of a rule: prose, then Do (green) and Don't (red) code blocks side by side. */
+/** Body of a rule: prose, then Do / Don't examples stacked (full width, never truncated), then the details list. */
 export function RuleBody({ section }: { section: Section }) {
   const { prose, do: good, dont: bad } = ruleExamples(section.body);
   return (
     <div className="rule-body">
       {prose && <Markdown>{prose}</Markdown>}
-      {(good.length > 0 || bad.length > 0) && (
-        <div className="rule-dodont">
-          {good.length > 0 && (
-            <div className="rule-do">
-              <div className="rule-dodont-label">Do</div>
-              {good.map((b, i) => (
-                <CodeBlock key={i} code={b.code} lang={b.lang} bare />
-              ))}
-            </div>
-          )}
-          {bad.length > 0 && (
-            <div className="rule-dont">
-              <div className="rule-dodont-label">Don't</div>
-              {bad.map((b, i) => (
-                <CodeBlock key={i} code={b.code} lang={b.lang} bare />
-              ))}
-            </div>
-          )}
+      {good.map((b, i) => (
+        <div key={`do-${i}`} className="rule-example" data-kind="do">
+          <div className="rule-example-label">
+            <IconCheck size={13} /> Do
+          </div>
+          <CodeBlock code={b.code} lang={b.lang} bare />
         </div>
-      )}
+      ))}
+      {bad.map((b, i) => (
+        <div key={`dont-${i}`} className="rule-example" data-kind="dont">
+          <div className="rule-example-label">
+            <IconX size={13} /> Don't
+          </div>
+          <CodeBlock code={b.code} lang={b.lang} bare />
+        </div>
+      ))}
       <RuleMeta section={section} />
     </div>
   );
 }
 
-/** A rule as a card (standard pages): level, title, state, body, meta. */
+/** A rule in a standard: a document entry separated by a hairline (no card), level as a small tag. */
 export function RuleCard({ section, state, target }: { section: Section; state?: CriterionState; target?: CopyTarget }) {
   return (
     <section
@@ -125,15 +141,28 @@ export function RuleCard({ section, state, target }: { section: Section; state?:
       {...(target ? copyTargetProps(target) : {})}
     >
       <div className="rule-head">
-        <LevelBadge level={section.level} />
+        <Tooltip label={LEVEL_META[section.level ?? 'should'].hint} multiline maw={320} openDelay={300}>
+          <span className="rule-level" data-level={section.level ?? 'should'}>
+            {LEVEL_META[section.level ?? 'should'].label.toLowerCase()}
+          </span>
+        </Tooltip>
         <h3 className="rule-title">{section.title}</h3>
         {state && <CriterionStateIcon state={state.state} />}
+        {target && (
+          <span className="section-people rule-people">
+            <Contributors refUri={bareRef(target.ref)} size="xs" max={3} form="compact" />
+          </span>
+        )}
         {section.archived && (
           <span className="link-badge" data-tone="muted">
             Archived
           </span>
         )}
-        <span className="section-actions">{target && <CopyRef target={target} />}</span>
+        <span className="section-actions">
+          {target && parseNodeUri(bareRef(target.ref))?.kind === 'standards' && <WhereUsedButton refUri={bareRef(target.ref)} />}
+          {target && <LineageButton refUri={bareRef(target.ref)} label="rule" />}
+          {target && <CopyRef target={target} />}
+        </span>
       </div>
       <RuleBody section={section} />
     </section>
@@ -167,6 +196,31 @@ export function RulesForCode({ repo, path, lines }: { repo: string; path: string
   );
 }
 
+/** Work orders that touched this file (`code_owner.workOrders`): "touched by q-0003". */
+function TouchedBy({ repo, path }: { repo: string; path: string }) {
+  const q = useMcpTool<{ workOrders?: { id: string; title?: string; status: string; change?: string; lines?: string[] }[] }>('code_owner', { repo, path });
+  const list = q.data?.workOrders ?? [];
+  if (!list.length) return null;
+  return (
+    <div className="wo-touched-by">
+      {list.slice(0, 5).map((w) => (
+        <div key={w.id}>
+          Touched by{' '}
+          <Link to={`/work-orders/${w.id}`} className="mono">
+            {w.id}
+          </Link>
+          <span className="faint">
+            {' '}
+            · {w.status.replace('_', ' ')}
+            {w.change ? ` · ${w.change}` : ''}
+            {w.lines?.length ? ` · L${w.lines.join(', L')}` : ''}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** Hover popover on a code chip showing the rules for that code. */
 export function RulesHover({ repo, path, lines, children }: { repo: string; path: string; lines?: string; children: React.ReactNode }) {
   return (
@@ -177,7 +231,14 @@ export function RulesHover({ repo, path, lines, children }: { repo: string; path
           Rules for <span className="mono">{path}</span>
           {lines ? <span className="mono faint">:{lines}</span> : null}
         </div>
+        <div className="ref-preview-people" data-testid="code-people">
+          <span className="faint">Touched by</span>
+          {/* The file (work orders record touched files, not ranges). */}
+          <Contributors refUri={buildCodeRef({ repo, path })} size="xs" max={5} form="compact" />
+        </div>
+        <TouchedBy repo={repo} path={path} />
         <RulesForCode repo={repo} path={path} lines={lines} />
+        <CodeRulesLines refUri={buildCodeRef({ repo, path, lines })} />
       </HoverCard.Dropdown>
     </HoverCard>
   );

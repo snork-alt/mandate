@@ -1,4 +1,5 @@
 import type { MermaidConfig } from 'mermaid';
+import { stripWrappingFence } from '../../../lib/fence';
 
 /**
  * Diagram engine: mermaid 12 with the `neo` look, ELK layout (flowchart / state / class / ER)
@@ -96,7 +97,9 @@ function config(scheme: 'light' | 'dark', layout: 'elk' | 'dagre'): MermaidConfi
 let counter = 0;
 
 /** Render mermaid source to an SVG string; falls back to the dagre layout if ELK fails. */
-export function renderMermaid(code: string, scheme: 'light' | 'dark'): Promise<string> {
+export function renderMermaid(source: string, scheme: 'light' | 'dark'): Promise<string> {
+  // A body wrapped in its own ```mermaid fence would read as "No diagram type detected".
+  const code = stripWrappingFence(source);
   const job = queue.then(async () => {
     const mermaid = await load();
     let lastError: unknown;

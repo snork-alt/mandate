@@ -10,6 +10,8 @@ export interface SnippetInput {
   url: string;
   /** The key (or a masked placeholder for display). */
   key: string;
+  /** Env var for the key in Claude Code / Codex guides (default `MANDATE_KEY_<ID>`). */
+  envVar?: string;
 }
 
 export interface Snippet {
@@ -63,6 +65,14 @@ export function agentSnippets(input: SnippetInput): Snippet[] {
       code: `claude mcp add --transport http ${name} ${url} \\\n  --header ${sh(`Authorization: Bearer ${key}`)}`,
     },
     {
+      id: 'codex',
+      label: 'Codex',
+      where: '~/.codex/config.toml',
+      language: 'toml',
+      code: `[mcp_servers.${name}]\nurl = ${sh(url)}\nhttp_headers = { "Authorization" = ${sh(`Bearer ${key}`)} }`,
+      note: 'Or keep the key out of the file: bearer_token_env_var = "MANDATE_KEY" and export MANDATE_KEY.',
+    },
+    {
       id: 'cursor',
       label: 'Cursor',
       where: '.cursor/mcp.json (or ~/.cursor/mcp.json)',
@@ -75,14 +85,6 @@ export function agentSnippets(input: SnippetInput): Snippet[] {
       where: '.vscode/mcp.json',
       language: 'json',
       code: json({ servers: { [name]: { type: 'http', url, headers: auth(key) } } }),
-    },
-    {
-      id: 'codex',
-      label: 'Codex',
-      where: '~/.codex/config.toml',
-      language: 'toml',
-      code: `[mcp_servers.${name}]\nurl = ${sh(url)}\nhttp_headers = { "Authorization" = ${sh(`Bearer ${key}`)} }`,
-      note: 'Or keep the key out of the file: bearer_token_env_var = "MANDATE_KEY" and export MANDATE_KEY.',
     },
     {
       id: 'gemini',
@@ -120,3 +122,126 @@ export function mcpUrlFor(loc: { protocol: string; hostname: string; origin: str
 declare const __MANDATE_API_PORT__: string | undefined;
 /** The API port when running under the Vite dev server (undefined in a production build). */
 export const devApiPort = (): string | undefined => (import.meta.env?.DEV && typeof __MANDATE_API_PORT__ !== 'undefined' ? __MANDATE_API_PORT__ : undefined);
+
+/** Env var holding a project's key: `MANDATE_KEY_<ID>` (dashes become underscores). */
+export const keyEnvVar = (project: string) => `MANDATE_KEY_${project.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`;
+
+/** First thing to ask the agent once connected. */
+export const FIRST_PROMPT = 'Use Mandate to show me the open work orders';
+
+/** One manual setup guide (Claude Code and Codex read the key from an env var). */
+export interface AgentGuide {
+  id: string;
+  label: string;
+  /** `export MANDATE_KEY_<ID>=…` (shell profile), when the agent reads the key from the environment. */
+  env?: string;
+  register: Snippet;
+  verify: string;
+}
+
+export function agentGuides(input: SnippetInput): AgentGuide[] {
+  const { project, url, key } = input;
+  const name = serverName(project);
+  const env = input.envVar ?? keyEnvVar(project);
+  const exportLine = `export ${env}=${key}`;
+  const rest = agentSnippets(input).filter((s) => s.id !== 'claude-code' && s.id !== 'codex');
+  const verify: Record<string, string> = {
+    cursor: 'Cursor Settings → MCP: mandate-' + project + ' shows a green dot and its tools.',
+    vscode: 'Command palette → "MCP: List Servers" → mandate-' + project + ' is running.',
+    gemini: 'Run /mcp in Gemini CLI: mandate-' + project + ' is connected.',
+    windsurf: 'Cascade → MCP servers: mandate-' + project + ' is enabled.',
+    opencode: 'Run `opencode mcp list`: mandate-' + project + ' is connected.',
+  };
+  return [
+    {
+      id: 'claude-code',
+      label: 'Claude Code',
+      env: exportLine,
+      register: {
+        id: 'claude-code',
+        label: 'Claude Code',
+        where: 'terminal, in your code repository (add --scope user for every repository)',
+        language: 'bash',
+        code: `claude mcp add --transport http ${name} ${url} \\\n  --header "Authorization: Bearer $${env}"`,
+      },
+      verify: 'Run /mcp inside Claude Code: ' + name + ' is listed as connected.',
+    },
+    {
+      id: 'codex',
+      label: 'Codex',
+      env: exportLine,
+      register: {
+        id: 'codex',
+        label: 'Codex',
+        where: '~/.codex/config.toml',
+        language: 'toml',
+        code: `[mcp_servers.${name}]\nurl = "${url}"\nbearer_token_env_var = "${env}"`,
+      },
+      verify: 'Run `codex mcp list`: ' + name + ' is listed.',
+    },
+    ...rest.map((s) => ({ id: s.id, label: s.label, register: s, verify: verify[s.id] ?? 'Check the agent’s MCP server list.' })),
+  ];
+}
+
+/** The recommended path: the Mandate CLI wires the agent up in the current code repository. */
+export const connectCommand = (project: string) => `mandate connect --project ${project}`;
+
+/** Env var for a personal token (server mode): the same `MANDATE_KEY_<ID>` the CLI exports (env.sh) and Mandate's upload curl reads. */
+export const tokenEnvVar = keyEnvVar;
+
+/** Server mode: agents that sign in with GitHub themselves (MCP OAuth discovery); no key to copy. */
+export interface OAuthGuide {
+  id: string;
+  label: string;
+  steps: Snippet[];
+  verify: string;
+}
+
+export function oauthGuides(project: string, url: string): OAuthGuide[] {
+  const name = serverName(project);
+  return [
+    {
+      id: 'claude-code',
+      label: 'Claude Code',
+      steps: [{ id: 'claude-code', label: 'Claude Code', where: 'terminal (add --scope user for every repository)', language: 'bash', code: `claude mcp add --transport http ${name} ${url}` }],
+      verify: `Run /mcp in Claude Code: ${name} shows “authenticate”. Pick it; your browser opens GitHub sign-in.`,
+    },
+    {
+      id: 'codex',
+      label: 'Codex',
+      steps: [
+        { id: 'codex-add', label: 'Codex', where: 'terminal', language: 'bash', code: `codex mcp add ${name} --url ${url}` },
+        { id: 'codex-login', label: 'Codex login', where: 'terminal (opens GitHub sign-in in the browser)', language: 'bash', code: `codex mcp login ${name}` },
+      ],
+      verify: `Run \`codex mcp list\`: ${name} is listed and logged in.`,
+    },
+    {
+      id: 'cursor',
+      label: 'Cursor',
+      steps: [{ id: 'cursor', label: 'Cursor', where: '.cursor/mcp.json (or ~/.cursor/mcp.json)', language: 'json', code: JSON.stringify({ mcpServers: { [name]: { url } } }, null, 2) }],
+      verify: `Cursor Settings → MCP: click “Needs login” next to ${name}.`,
+    },
+    {
+      id: 'vscode',
+      label: 'VS Code',
+      steps: [{ id: 'vscode', label: 'VS Code', where: '.vscode/mcp.json', language: 'json', code: JSON.stringify({ servers: { [name]: { type: 'http', url } } }, null, 2) }],
+      verify: `Start ${name} from the MCP view; VS Code asks you to sign in with GitHub.`,
+    },
+  ];
+}
+
+/** True for URLs only reachable from this machine (localhost, 127.x, ::1, 0.0.0.0). */
+export function isLoopbackUrl(url: string): boolean {
+  try {
+    const h = new URL(url).hostname.replace(/^\[|\]$/g, '');
+    return h === 'localhost' || h.endsWith('.localhost') || h === '::1' || h === '0.0.0.0' || /^127\./.test(h);
+  } catch {
+    return false;
+  }
+}
+
+/** One line under the MCP URL: whether remote agents can reach it (E1). */
+export const urlReachNote = (url: string, withKey = false): string =>
+  isLoopbackUrl(url)
+    ? 'This URL works on this machine only. Set a public URL in Settings to connect remote agents.'
+    : `This URL is public: remote agents, including ChatGPT connectors that need a public HTTPS MCP URL, can connect${withKey ? ' with the key' : ''}.`;

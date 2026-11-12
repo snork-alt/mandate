@@ -1,5 +1,5 @@
 import type { z } from 'zod';
-import { slugify } from '@mandate/shared';
+import { idFromTitle, uniqueId } from '@mandate/shared';
 import type { GitStore } from '../git/GitStore.js';
 import type { Mutex } from './Mutex.js';
 
@@ -81,6 +81,21 @@ export interface RepositoryDeps<T> {
   appendOnly?: boolean;
   /** Entities are never deleted; the message explains the alternative (409 `archive_only`). */
   noDelete?: string;
+  /**
+   * Sequenced ids (`<prefix>-0001`, ...): allocated inside the write lock when a create has no id (feedback `fb`,
+   * work orders `q`, verifications `vr`). Without it, ids are slugs of the title.
+   */
+  sequence?: { prefix: string; width?: number };
+  /** Ids that existed before (history): a generated id skips them too (ids are never reused). */
+  idTaken?: (id: string) => Promise<boolean>;
+  /** Integrity gate and incremental report update, both inside the write lock (see IntegrityService.hook). */
+  integrity?: IntegrityHook<T>;
+}
+
+/** Pre-commit integrity gate (throws on an introduced ERROR) and post-commit report update, inside the write lock. */
+export interface IntegrityHook<T> {
+  check(next: T, current: T | undefined): Promise<unknown>;
+  committed(token: unknown, sha: string | null): void;
 }
 
 /** What a write is about to commit (for hooks that check trailers or the acting agent). */
@@ -121,6 +136,9 @@ export abstract class GitBackedRepository<T extends BaseEntity> implements Entit
   private readonly appendOnly: boolean;
   private readonly noDelete?: string;
   private readonly afterWrite?: (entity: T, current: T | undefined, meta: CommitMeta) => Promise<void>;
+  private readonly idTaken?: (id: string) => Promise<boolean>;
+  private readonly sequence?: { prefix: string; width?: number };
+  private readonly integrity?: IntegrityHook<T>;
 
   constructor(deps: RepositoryDeps<T>) {
     this.label = deps.label;
@@ -134,6 +152,9 @@ export abstract class GitBackedRepository<T extends BaseEntity> implements Entit
     this.appendOnly = deps.appendOnly ?? false;
     this.noDelete = deps.noDelete;
     this.afterWrite = deps.afterWrite;
+    this.idTaken = deps.idTaken;
+    this.sequence = deps.sequence;
+    this.integrity = deps.integrity;
   }
 
   abstract list(): Promise<T[]>;
@@ -152,14 +173,17 @@ export abstract class GitBackedRepository<T extends BaseEntity> implements Entit
 
   async create(input: CreateInput<T>, meta: CommitMeta = {}): Promise<T> {
     const created = await this.lock.run(async () => {
-      const id = input.id ?? slugify(input.title ?? '');
-      if (!id) throw new ConflictError('Cannot derive an id from the title');
+      // Ids are assigned here, inside the write lock: a slug of the title, de-duplicated (-2, -3, ...) against existing
+      // and former ids. An explicit id is for internal callers only (seeds, migrations, server-generated ids).
+      const taken = async (c: string) => (await this.exists(c)) || ((await this.idTaken?.(c)) ?? false);
+      const id = input.id ?? (this.sequence ? await this.nextInSequence(taken) : await uniqueId(idFromTitle(input.title ?? '', this.label.replace(/[^a-z0-9]+/g, '-')), taken));
+      if (!input.id && meta.message) meta = { ...meta, message: meta.message.replaceAll('{id}', id) };
       if (await this.exists(id)) throw new ConflictError(`${this.label} '${id}' already exists`);
       const now = (meta.date ?? new Date()).toISOString();
       let entity = this.schema.parse({ ...input, id, ...(this.stamp ? { createdAt: now, updatedAt: now } : {}) });
       const message = await this.message(`create ${id}`, meta, id);
       entity = (await this.beforeWrite?.(entity, undefined, { meta, message })) ?? entity;
-      await this.commit(await this.persist(entity), message, meta);
+      await this.commitChecked(entity, undefined, message, meta);
       return entity;
     });
     await this.afterWrite?.(created, undefined, meta);
@@ -182,7 +206,31 @@ export abstract class GitBackedRepository<T extends BaseEntity> implements Entit
       let entity = this.schema.parse(merged);
       const message = await this.message(`update ${id}`, meta, id);
       entity = (await this.beforeWrite?.(entity, current, { meta, message })) ?? entity;
-      await this.commit(await this.persist(entity), message, meta);
+      await this.commitChecked(entity, current, message, meta);
+      return entity;
+    });
+    if (!this.afterWrite) return updated;
+    return updated.then(async (entity) => {
+      await this.afterWrite!(entity, before, meta);
+      return entity;
+    });
+  }
+
+  /**
+   * Read-modify-write inside the write lock: `fn` gets the current entity and returns the next one (no lost updates
+   * between concurrent writers). Nothing is committed when the result does not change the file.
+   */
+  modify(id: string, fn: (current: T) => T | Promise<T>, meta: CommitMeta = {}): Promise<T> {
+    if (this.appendOnly) return Promise.reject(new AppendOnlyError(`append_only: ${this.label} records cannot be updated`));
+    let before: T | undefined;
+    const updated = this.lock.run(async () => {
+      const current = await this.get(id);
+      before = current;
+      const changed = await fn(current);
+      let entity = this.schema.parse({ ...changed, id, ...(this.stamp ? { updatedAt: (meta.date ?? new Date()).toISOString() } : {}) });
+      const message = await this.message(`update ${id}`, meta, id);
+      entity = (await this.beforeWrite?.(entity, current, { meta, message })) ?? entity;
+      await this.commitChecked(entity, current, message, meta);
       return entity;
     });
     if (!this.afterWrite) return updated;
@@ -202,6 +250,21 @@ export abstract class GitBackedRepository<T extends BaseEntity> implements Entit
     });
   }
 
+  /** Next free `<prefix>-NNNN` after the highest sequenced id in use (other id formats, e.g. older ulids, are ignored). */
+  private async nextInSequence(taken: (id: string) => Promise<boolean>): Promise<string> {
+    const { prefix, width = 4 } = this.sequence!;
+    const re = new RegExp(`^${prefix}-(\\d+)$`);
+    let max = 0;
+    for (const e of await this.list().catch(() => [] as T[])) {
+      const n = re.exec(e.id);
+      if (n) max = Math.max(max, Number(n[1]));
+    }
+    for (let i = max + 1; ; i++) {
+      const id = `${prefix}-${String(i).padStart(width, '0')}`;
+      if (!(await taken(id))) return id;
+    }
+  }
+
   /** True when the entity's file exists, even if it does not parse. */
   protected async exists(id: string): Promise<boolean> {
     return (await this.read(id)) !== null;
@@ -215,12 +278,20 @@ export abstract class GitBackedRepository<T extends BaseEntity> implements Entit
     return message;
   }
 
-  private async commit(paths: string[], message: string, meta: CommitMeta): Promise<void> {
+  /** The integrity gate (may reject: nothing is written), then write + commit, then the incremental report update. */
+  private async commitChecked(entity: T, current: T | undefined, message: string, meta: CommitMeta): Promise<void> {
+    const token = await this.integrity?.check(entity, current);
+    const sha = await this.commit(await this.persist(entity), message, meta);
+    this.integrity?.committed(token, sha);
+  }
+
+  private async commit(paths: string[], message: string, meta: CommitMeta): Promise<string | null> {
     const sha = await this.git.commit(paths, message, {
       date: meta.date,
       author: meta.author,
     });
     if (sha) meta.onCommit?.(sha);
+    return sha;
   }
 }
 

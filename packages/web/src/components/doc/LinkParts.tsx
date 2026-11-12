@@ -18,6 +18,7 @@ const WAIVER_REASON: Record<string, string> = {
   feedback_missing: 'approval feedback is missing',
   not_accepted: 'approval feedback is not accepted yet',
   same_author: 'approved by its own author (needs someone else)',
+  self_approved: 'accepted by the same person who wrote the waiver (needs someone else)',
   stale: 'lapsed: the criteria changed since approval',
 };
 

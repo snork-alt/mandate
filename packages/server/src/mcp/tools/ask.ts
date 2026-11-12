@@ -14,6 +14,8 @@ export const ASK_EXCLUDED_TOOLS: Readonly<Record<string, string>> = {
   ask: 'recursion',
   // A per-session streaming subscription (it only changes which notifications this MCP session receives): no result for a model.
   activity_subscribe: 'streaming subscription',
+  // Answer no user question about the project (settings, operations, raw files, self-batching): tokens on every request.
+  ...Object.fromEntries(['project_info', 'flow_clients_list', 'users_resolve', 'decision_access', 'ask_status', 'embedding_jobs', 'index_status', 'doc_list', 'doc_raw', 'section_types', 'graph_batch'].map((n) => [n, 'not a project question'])),
 };
 /** Tools the model may call: every read tool except ASK_EXCLUDED_TOOLS. */
 export function askToolset(all: AnyToolDef[]): AnyToolDef[] {
@@ -36,8 +38,9 @@ export const askTools = [
     kind: 'read',
     // Reads Mandate only, but calls the configured model's API.
     annotations: { openWorldHint: true },
-    description: `Answer a question with the model configured in ~/.mandate/config.json (\`ask\` block; see ask_status), which uses Mandate's read tools (search, graph, Cypher, get, history) and cites mandate:// references. Streams \`${ASK_NOTIFICATION}\` notifications (text deltas, tool steps, done) on the request's stream; cancel the request to stop. Returns the markdown answer (mandate:// links and mandate-embed / mandate-table / mandate-graph blocks), parsed embeds, every reference checked with resolveRef, the tool steps, token usage and the stop reason. conversationId continues a conversation. model picks a configured model by id (default: the configured default); a conversation may switch models between questions. Unknown model -> invalid_input; not configured -> error not_configured with the missing fields.
-Example: {"question":"What blocks login-sso?","context":["mandate://specs/login-sso"],"model":"opus"}`,
+    description: `Answer a question with the configured Ask model (see ask_status), which uses Mandate's read tools and cites mandate:// refs.
+Streams \`${ASK_NOTIFICATION}\` notifications; cancel the request to stop. Returns the markdown answer, parsed embeds, checked references, tool steps, usage and stop reason. conversationId continues a conversation; model picks a configured model id (default: the configured default). Unknown model -> invalid_input; unconfigured -> not_configured with the missing fields.
+Example: {"question":"What blocks login-sso?","context":["mandate://specs/login-sso"]}`,
     input: askInputSchema,
     run: async (a, ctx: ToolContext) => {
       const cfg = liveAskConfig(ctx.ask ?? DEFAULT_ASK_CONFIG);

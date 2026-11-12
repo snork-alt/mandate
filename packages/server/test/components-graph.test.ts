@@ -1,5 +1,5 @@
 /**
- * Components in the graph: Component nodes, affects / depends_on / owns / owned_by / follows / applies_to edges, the
+ * Components in the graph: Component nodes, affects / depends_on / owns / owned_by / follows / uses_standard edges, the
  * virtual architecture node, and equivalence with storage (`ownerOf`, `architecture.get` in graph format).
  */
 import { buildRef, ownerOf } from '@mandate/shared';
@@ -44,11 +44,11 @@ describe('component nodes and edges', () => {
     expect(affects.length).toBeGreaterThan(0);
     for (const [, c] of affects) expect(String(c)).toMatch(/^mandate:\/\/components\//);
     const deps = comps.flatMap((c) => c.sections.flatMap((s) => s.links.filter((l) => l.rel === 'depends_on').map((l) => `${comp(c.id)}/sections/${s.id}`)));
-    const gotDeps = await cy("MATCH (s:Section)-[l:LINKS_TO]->(t) WHERE l.rel = 'depends_on' AND s.ref STARTS WITH 'mandate://components/' RETURN DISTINCT s.ref");
+    const gotDeps = await cy("MATCH (s:Section)-[:DEPENDS_ON]->(t) WHERE s.ref STARTS WITH 'mandate://components/' RETURN DISTINCT s.ref");
     expect(new Set(gotDeps.map((r) => r[0]))).toEqual(new Set(deps));
     const follows = comps.flatMap((c) => c.sections.flatMap((s) => s.links.filter((l) => l.rel === 'follows' || l.rel === 'deviates_from').map(() => `${comp(c.id)}/sections/${s.id}`)));
     if (follows.length) {
-      const gotF = await cy("MATCH (s:Section)-[l:LINKS_TO]->(t) WHERE l.rel IN ['follows', 'deviates_from'] AND s.ref STARTS WITH 'mandate://components/' RETURN DISTINCT s.ref");
+      const gotF = await cy("MATCH (s:Section)-[:FOLLOWS|DEVIATES_FROM]->(t) WHERE s.ref STARTS WITH 'mandate://components/' RETURN DISTINCT s.ref");
       expect(new Set(gotF.map((r) => r[0]))).toEqual(new Set(follows));
     }
   });

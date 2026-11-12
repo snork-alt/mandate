@@ -1,7 +1,7 @@
-import { useMemo, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Typography } from '@mantine/core';
+import { Tooltip, Typography } from '@mantine/core';
 import { IconAlertTriangle, IconCheck, IconChevronRight, IconCopy, IconLoader2, IconPlayerStop, IconSearch, IconTerminal2, IconTool } from '@tabler/icons-react';
 import { answerSegments, type AskResult, type AskToolCall, type ReferenceCheck } from '@mandate/shared';
 import { copyText } from '../../lib/copy';
@@ -76,9 +76,11 @@ export function AnswerView({ result }: { result: AskResult }) {
             <IconCopy size={12} /> Copy answer
           </button>
           <span className="rail-faint">
-            <span className="ask-model-tag" title={`${result.provider}/${result.model}`} data-testid="answer-model">
-              {result.modelLabel ?? result.model}
-            </span>{' '}
+            <Tooltip label={`${result.provider}/${result.model}`} openDelay={300}>
+              <span className="ask-model-tag" data-testid="answer-model">
+                {result.modelLabel ?? result.model}
+              </span>
+            </Tooltip>{' '}
             · {result.usage.inputTokens + result.usage.outputTokens} tokens
           </span>
         </div>
@@ -223,9 +225,16 @@ function ToolSteps({ calls, running }: { calls: AskToolCall[]; running: AskTurn[
   const failed = calls.filter((c) => !c.ok).length;
   const ms = calls.reduce((n, c) => n + c.ms, 0);
   const label = running.length ? `Using tools… ${calls.length + 1}` : `Used ${calls.length} tool${calls.length === 1 ? '' : 's'}`;
+  // Collapsed by default; once the user opens or closes it, that choice sticks (new tool calls never collapse it).
+  const [open, setOpen] = useState(false);
   return (
-    <details className="ask-steps" open={running.length > 0 || undefined}>
-      <summary>
+    <details className="ask-steps" open={open}>
+      <summary
+        onClick={(e) => {
+          e.preventDefault();
+          setOpen((o) => !o);
+        }}
+      >
         {running.length ? <IconLoader2 size={13} className="ask-spin" /> : <IconTool size={13} />}
         <span>{label}</span>
         {failed > 0 && <span className="ask-steps-failed">{failed} failed</span>}
@@ -246,8 +255,27 @@ function ToolSteps({ calls, running }: { calls: AskToolCall[]; running: AskTurn[
   );
 }
 
-export function AskTurnView({ turn, stepsOpen }: { turn: AskTurn; stepsOpen?: boolean }) {
+/** A configured model the user can switch to after a failure. */
+export interface AskModelChoice {
+  id: string;
+  label: string;
+}
+
+export function AskTurnView({
+  turn,
+  stepsOpen,
+  onRetry,
+  otherModels = [],
+}: {
+  turn: AskTurn;
+  stepsOpen?: boolean;
+  /** Re-ask this question in the same conversation (with another configured model when given). */
+  onRetry?: (model?: string) => void;
+  /** Other configured models offered after a provider failure. */
+  otherModels?: AskModelChoice[];
+}) {
   const { state } = turn;
+  const failure = state.result?.error;
   const steps = state.toolCalls.length + state.running.length;
   return (
     <div className="ask-turn">
@@ -264,11 +292,31 @@ export function AskTurnView({ turn, stepsOpen }: { turn: AskTurn; stepsOpen?: bo
           </div>
         )
       )}
-      {turn.running && !state.text && state.running.length === 0 && <div className="rail-faint ask-thinking"><IconLoader2 size={13} className="ask-spin" /> Thinking…</div>}
+      {turn.running && state.notice && (
+        <div className="rail-faint ask-notice-line" role="status">
+          <IconLoader2 size={13} className="ask-spin" /> {state.notice}
+        </div>
+      )}
+      {turn.running && !state.notice && !state.text && state.running.length === 0 && <div className="rail-faint ask-thinking"><IconLoader2 size={13} className="ask-spin" /> Thinking…</div>}
       {state.stopped && <div className="rail-faint"><IconPlayerStop size={12} /> Stopped</div>}
-      {state.error && (
+      {(failure ?? state.error) && (
         <div className="ask-error" role="alert">
-          <IconAlertTriangle size={13} /> {state.error.message}
+          <IconAlertTriangle size={13} /> {(failure ?? state.error)!.message}
+          {failure && onRetry && !turn.running && (
+            <div className="ask-error-actions">
+              <button type="button" className="ask-add" onClick={() => onRetry(state.result?.modelId)}>
+                Retry
+              </button>
+              {otherModels
+                .filter((m) => m.id !== state.result?.modelId)
+                .slice(0, 2)
+                .map((m) => (
+                  <button key={m.id} type="button" className="ask-add" onClick={() => onRetry(m.id)}>
+                    Try with {m.label}
+                  </button>
+                ))}
+            </div>
+          )}
         </div>
       )}
     </div>

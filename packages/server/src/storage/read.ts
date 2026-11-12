@@ -4,6 +4,7 @@
  * (throws ZodError) and throws `ReadError` / `NotFoundError` for domain problems, so the MCP read tools (and REST)
  * wrap it 1:1.
  */
+import { maturities } from './maturity.js';
 import { diffDocs, sectionLineRange, type DocFormat, type Section } from '@mandate/doc';
 import {
   buildRef,
@@ -43,14 +44,14 @@ import {
   type WorkOrderGetInput,
   type WorkOrderListInput,
 } from '@mandate/shared';
-import { componentCodec, componentFormat, specCodec, specFormat, standardCodec, standardFormat } from './codecs.js';
+import { auditCodec, auditFormat, componentCodec, componentFormat, specCodec, specFormat, standardCodec, standardFormat, workOrderCodec, workOrderFormat } from './codecs.js';
 import { deriveComponents } from './components.js';
 import { NotFoundError } from './GitBackedRepository.js';
 import type { Storage } from './index.js';
 
-type DocKind = 'specs' | 'standards' | 'components';
+type DocKind = 'specs' | 'standards' | 'components' | 'audits' | 'work-orders';
 type AnyDoc = StoredSpec | StoredStandard | StoredComponent;
-const formatOf = (kind: DocKind) => (kind === 'specs' ? specFormat : kind === 'standards' ? standardFormat : componentFormat) as DocFormat<unknown, unknown>;
+const formatOf = (kind: DocKind) => (kind === 'specs' ? specFormat : kind === 'standards' ? standardFormat : kind === 'audits' ? auditFormat : kind === 'work-orders' ? workOrderFormat : componentFormat) as DocFormat<unknown, unknown>;
 
 /** A domain error with a machine-readable code and a hint for the caller (agents self-correct from it). */
 export class ReadError extends Error {
@@ -103,7 +104,7 @@ export class DocReadService {
   constructor(private readonly storage: Storage) {}
 
   private repo(kind: DocKind) {
-    return kind === 'specs' ? this.storage.specs : kind === 'standards' ? this.storage.standards : this.storage.components;
+    return kind === 'specs' ? this.storage.specs : kind === 'standards' ? this.storage.standards : kind === 'audits' ? this.storage.audits : kind === 'work-orders' ? this.storage.workOrderDocs : this.storage.components;
   }
 
   /** Full sha of a commit-ish (short shas, HEAD); ReadError when unknown. */
@@ -128,7 +129,7 @@ export class DocReadService {
     if (raw === null) {
       throw new NotFoundError(`${kind}/${id} does not exist${commit ? ` at ${commit.slice(0, 7)}` : ''}`);
     }
-    const doc = kind === 'specs' ? specCodec.decode(raw, id) : kind === 'standards' ? standardCodec.decode(raw, id) : (componentCodec.decode(raw, id) as StoredComponent);
+    const doc = kind === 'specs' ? specCodec.decode(raw, id) : kind === 'standards' ? standardCodec.decode(raw, id) : kind === 'audits' ? (auditCodec.decode(raw, id) as unknown as StoredComponent) : kind === 'work-orders' ? (workOrderCodec.decode(raw, id) as unknown as StoredComponent) : (componentCodec.decode(raw, id) as StoredComponent);
     return { doc, raw };
   }
 
@@ -166,6 +167,15 @@ export class DocReadService {
     if (inp.blocked !== undefined) specs = specs.filter((s) => (blocked[s.id]?.length ?? 0) > 0 === inp.blocked);
     const rollups = await this.storage.verificationService.rollups(specs);
     if (inp.verification) specs = specs.filter((s) => inp.verification!.some((v) => matchesRollup(rollups[s.id], v)));
+    const audits = await this.storage.auditService.lastAudits(specs.map((s) => s.id));
+    const mat = await maturities(this.storage, specs);
+    if (inp.maturity) specs = specs.filter((s) => inp.maturity!.some((f) => mat[s.id]!.step === f || mat[s.id]!.overlays.some((o) => o.kind === f)));
+    if (inp.audit) {
+      specs = specs.filter((s) => {
+        const a = audits[s.id];
+        return inp.audit!.some((f) => (f === 'never' ? !a : !!a && (f === 'stale' ? a.stale : f === 'open_findings' ? a.openFindings > 0 : a.result === f)));
+      });
+    }
     const metas = await Promise.all(specs.map((s) => this.storage.history.meta(this.storage.specs.pathOf(s.id))));
     const items = specs
       .map((s, i) => ({
@@ -176,6 +186,8 @@ export class DocReadService {
         updatedBy: metas[i]!.updatedBy,
         verification: rollups[s.id],
         blockedSections: blocked[s.id] ?? [],
+        lastAudit: audits[s.id] ?? null,
+        maturity: mat[s.id],
       }))
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     return paginate(items, inp.limit, inp.cursor);
@@ -189,11 +201,13 @@ export class DocReadService {
     if (inp.tags) stds = stds.filter((s) => s.tags.some((t) => inp.tags!.includes(t)));
     const specs = (await this.storage.specs.list()).filter((s) => s.status !== 'archived');
     const metas = await Promise.all(stds.map((s) => this.storage.history.meta(this.storage.standards.pathOf(s.id))));
+    const audits = await this.storage.auditService.lastAudits(stds.map((s) => s.id), undefined, 'standards');
     const items = stds
       .map((s, i) => ({
         uri: buildRef({ kind: 'standards', id: s.id }),
         ...frontmatterOf(s),
         usedBy: standardUsage(s, specs).length,
+        lastAudit: audits[s.id] ?? null,
         updatedAt: metas[i]!.updatedAt,
         updatedBy: metas[i]!.updatedBy,
       }))
@@ -232,12 +246,17 @@ export class DocReadService {
       if (kind === 'specs') {
         out.verification = slimVerification(await this.storage.verificationService.forSpec(doc as StoredSpec));
         out.implementation = await this.storage.workOrderService.implementation(ref.id);
+        out.maturity = (await maturities(this.storage, [doc as StoredSpec]))[ref.id];
       } else if (kind === 'standards') {
         out.verification = await this.storage.verificationService.forStandard(doc as StoredStandard);
+      } else if (kind === 'audits') {
+        out.audit = (await this.storage.auditService.get(ref.id)).audit;
+      } else if (kind === 'work-orders') {
+        out.workOrder = await this.storage.workOrderService.resolve(ref.id);
       } else {
         out.derived = (await this.componentDerived([doc as StoredComponent]))[ref.id];
       }
-      out.links = await this.storage.linkService.forDoc(kind, doc);
+      if (kind !== 'audits' && kind !== 'work-orders') out.links = await this.storage.linkService.forDoc(kind as 'specs', doc);
     }
     return out;
   }
@@ -310,11 +329,26 @@ export class DocReadService {
   componentSectionGet(inp: { ref?: string; doc?: string; section?: string; at?: string }) {
     return this.sectionGet('components', inp);
   }
+  auditDocGet(inp: { ref: string; at?: string; metadataOnly?: boolean; sections?: string[] }) {
+    return this.docGet('audits', { ...inp, metadataOnly: inp.metadataOnly ?? false });
+  }
+  auditSectionGet(inp: { ref?: string; doc?: string; section?: string; at?: string }) {
+    return this.sectionGet('audits', inp);
+  }
+  /** One section of a work order (plan, reconciliation, outcome or a wo-section), at HEAD or a version. */
+  workOrderSectionGet(inp: { ref?: string; doc?: string; section?: string; at?: string }) {
+    return this.sectionGet('work-orders', inp);
+  }
   /** The owning component of a code path (most specific `owns` glob wins; archived components own nothing), or null. */
   async codeOwner(inp: { repo?: string; path: string }) {
     const o = ownerOf(inp.repo, inp.path.replace(/^\.?\//, ''), await this.storage.components.list());
     const c = o?.component;
-    return { repo: inp.repo ?? null, path: inp.path, owner: c ? { uri: buildRef({ kind: 'components', id: c.id }), id: c.id, title: c.title, kind: c.kind, status: c.status, glob: o.glob } : null };
+    // Work orders that changed this file (their touched list), newest first.
+    const p = inp.path.replace(/^\.?\//, '');
+    const workOrders = (await this.storage.workOrderService.list())
+      .flatMap((w) => (w.touched ?? []).filter((t) => (!inp.repo || t.repo === inp.repo) && (t.path === p || t.from === p)).map((t) => ({ uri: buildRef({ kind: 'work-orders', id: w.id }), id: w.id, title: w.title ?? w.id, status: w.status, kind: w.kind, repo: t.repo, change: t.change, ...(t.lines ? { lines: t.lines } : {}), updatedAt: w.updatedAt })))
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    return { repo: inp.repo ?? null, path: inp.path, owner: c ? { uri: buildRef({ kind: 'components', id: c.id }), id: c.id, title: c.title, kind: c.kind, status: c.status, glob: o.glob } : null, workOrders };
   }
 
   /* ---------------------------------------------------------------- work orders, feedback, verifications */
@@ -420,20 +454,24 @@ export class DocReadService {
         if (!entries.length) throw new NotFoundError(`${ref.kind}/${ref.id} has no history`);
         break;
       }
-      case 'components': {
-        entries = await this.storage.history.log(this.storage.components.pathOf(ref.id));
-        if (!entries.length) throw new NotFoundError(`components/${ref.id} has no history`);
+      case 'components':
+      case 'audits': {
+        entries = await this.storage.history.log(this.repo(ref.kind).pathOf(ref.id));
+        if (!entries.length) throw new NotFoundError(`${ref.kind}/${ref.id} has no history`);
         break;
       }
       case 'work-orders':
         await this.storage.workOrderService.get(ref.id);
-        entries = await this.storage.workOrderService.historyOf(ref.id);
+        // Commits mentioning the id (the jsonl era and the document); a section: the document's own commits.
+        entries = ref.sectionId ? await this.storage.history.log(this.repo('work-orders').pathOf(ref.id)) : await this.storage.workOrderService.historyOf(ref.id);
         break;
       case 'feedback':
         await this.storage.feedbackService.get(ref.id);
         entries = await this.storage.feedbackService.historyOf(ref.id);
         break;
     }
+    // Server mode: only the commits a given user triggered (local mode records no user, so nothing matches).
+    if (inp.user) entries = entries.filter((e) => e.user === inp.user);
     if (ref.sectionId) return this.sectionHistory(ref.kind as DocKind, ref.id, ref.sectionId, entries, inp.limit);
     return { uri: buildRef({ kind: ref.kind, id: ref.id }), total: entries.length, entries: entries.slice(0, inp.limit) };
   }

@@ -537,9 +537,9 @@ describe('git backend config', () => {
     const home = await tempDir();
     const cfg = loadConfig({ HOME: home, INIT_CWD: home });
     expect(cfg.git).toEqual({ backend: 'embedded', cliPath: 'git', cliEnv: {} });
-    const file = JSON.parse(readFileSync(cfg.configPath, 'utf8'));
-    expect(file.git).toMatchObject({ backend: 'embedded', cliPath: 'git', cliEnv: {} });
-    file.git = { ...file.git, backend: 'cli', cliPath: '/usr/bin/git', cliEnv: { HTTPS_PROXY: 'http://proxy:3128' } };
+    // config.json is user-owned (never created by the server): write one.
+    mkdirSync(path.dirname(cfg.configPath), { recursive: true });
+    const file: { git: Record<string, unknown> } = { git: { backend: 'cli', cliPath: '/usr/bin/git', cliEnv: { HTTPS_PROXY: 'http://proxy:3128' } } };
     writeFileSync(cfg.configPath, JSON.stringify(file));
     expect(loadConfig({ HOME: home, INIT_CWD: home }).git).toEqual({ backend: 'cli', cliPath: '/usr/bin/git', cliEnv: { HTTPS_PROXY: 'http://proxy:3128' } });
     expect(loadConfig({ HOME: home, INIT_CWD: home, MANDATE_GIT_BACKEND: 'embedded' }).git.backend).toBe('embedded');

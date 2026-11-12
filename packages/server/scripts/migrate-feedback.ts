@@ -28,7 +28,7 @@ if (lines.some((l) => l.includes('"source":'))) {
     return JSON.stringify({ ...rest, status: rest.status === 'accepted' ? 'accepted' : 'open', relatedTo: [] });
   });
   await writeFile(file, `${out.join('\n')}\n`, 'utf8');
-  await git.commit(['feedback.jsonl'], 'feedback: migrate to open/accepted/closed, drop source\n\nAgent: claude-code@matteo-mbp\n');
+  await git.commit(['feedback.jsonl'], 'feedback: migrate to open/accepted/closed, drop source\n\nAgent: claude-code@matteo-mbp\nMandate-Migration: yes\n');
   console.log('converted feedback.jsonl');
 }
 

@@ -159,7 +159,7 @@ export function CanvasViewer({ title, icon, source, sourceLang, render, viewport
   const copySource = (
     <Menu position="bottom-end" withinPortal width={200}>
       <Menu.Target>
-        <ActionIcon size={28} variant="subtle" color="gray" aria-label="Copy options">
+        <ActionIcon size={24} variant="subtle" color="gray" aria-label="Copy options">
           <IconChevronDown size={14} />
         </ActionIcon>
       </Menu.Target>

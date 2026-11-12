@@ -40,7 +40,7 @@ describe('verification', () => {
     expect(verificationRecordSchema.safeParse({ criterion: 'nope' }).success).toBe(false);
     const r = await rec('mandate://specs/login/sections/ac-rotate', 'pass');
     expect(r).toMatchObject({ appliedTo: 'mandate://specs/login', result: 'pass' });
-    expect(r.id).toMatch(/^vr-[0-9a-z]{26}$/); // ULIDs: no counter to race on (I7)
+    expect(r.id).toMatch(/^vr-\d{4}$/); // sequenced inside the write lock
     expect(r.specCommit).toMatch(/^[0-9a-f]{40}$/); // full sha (C4)
     await expect(rec('mandate://specs/login/sections/flow', 'pass')).rejects.toThrow(/not an acceptance section/);
     await expect(rec('mandate://standards/sec/sections/ac-no-secrets', 'pass')).rejects.toThrow(/appliedTo/);

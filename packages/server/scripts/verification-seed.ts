@@ -76,6 +76,40 @@ const asSection = (c: Crit): SectionInput => sectionSchema.parse({ id: c.id, tit
 const asRule = (c: Crit): SectionInput =>
   sectionSchema.parse({ id: c.id, title: c.title, type: 'rule', level: 'must', rationale: 'Part of the baseline every user of this standard must meet.', method: c.method, body: c.body });
 
+/**
+ * The ready gate: a spec's acceptance criteria are written before it becomes ready (login-sso: its markdown checklist
+ * split into acceptance sections). Sections still without a criterion (no acceptance in verifiedBy)
+ * are verified by the spec's criteria.
+ */
+export function withCriteria(specId: string, sections: SectionInput[]): SectionInput[] {
+  let out = sections;
+  if (specId === 'login-sso' && out.some((s) => s.id === 'acceptance' && (s.type ?? 'markdown') === 'markdown')) {
+    out = out.flatMap((s) => (s.id === 'acceptance' ? LOGIN_CRITERIA.map(asSection) : [{ ...s, ...(s.id === 'callback' ? { verifiedBy: ['ac-unverified-rejected', 'ac-callback-logging'] } : {}) }]));
+  } else if (!out.some((s) => s.type === 'acceptance') && SPEC_CRITERIA[specId]) out = [...out, ...SPEC_CRITERIA[specId]!.map(asSection)];
+  const crits = out.filter((s) => s.type === 'acceptance' && !s.archived).map((s) => s.id);
+  if (!crits.length) return out;
+  return out.map((s) => {
+    if (s.type === 'acceptance' || s.archived) return s;
+    const covered = (s.verifiedBy ?? []).some((v) => crits.includes(v));
+    return covered ? s : { ...s, verifiedBy: [...(s.verifiedBy ?? []), crits[0]!] };
+  });
+}
+
+/** Before a spec is marked done, the implementing agent verifies every criterion the done gate requires (pass). */
+export async function verifyForDone(storage: Storage, specId: string, meta: { date?: Date; agent?: string; branch?: string }): Promise<void> {
+  const spec = await storage.specs.get(specId);
+  const v = await storage.verificationService.forSpec(spec);
+  const open = [...v.own, ...v.inherited.flatMap((g) => g.criteria)].filter((c) => c.state !== 'verified' && (c.level ?? 'must') === 'must' && !c.upcoming);
+  let i = 0;
+  for (const c of open) {
+    const at = new Date((meta.date ?? new Date()).getTime() + i++ * 1000);
+    await storage.verificationService.record(
+      { criterion: c.uri, appliedTo: `mandate://specs/${specId}`, result: 'pass', method: 'test', code: { repo: spec.repo ?? 'app', commit: Math.floor(at.getTime() / 1000).toString(16).slice(-7), branch: meta.branch ?? 'main' }, by: meta.agent ?? 'claude-code@matteo-mbp' },
+      { date: at, author: { name: 'Mandate', email: 'mandate@localhost' }, agent: meta.agent ?? 'claude-code@matteo-mbp' },
+    );
+  }
+}
+
 export async function seedVerification(storage: Storage, at: (minutesFromStart: number) => Date): Promise<void> {
   let t = 0;
   const next = () => at((t += 3));
@@ -111,10 +145,16 @@ export async function seedVerification(storage: Storage, at: (minutesFromStart: 
   }
 
   // 3. Results.
-  if ((await storage.verificationService.list()).length) return;
+  // (Passes recorded before done by verifyForDone do not count: the demo results are recorded once.)
+  if ((await storage.verificationService.list()).some((r) => r.criterion.endsWith('/ac-google-signin'))) return;
   const v = storage.verificationService;
   const own = (spec: string, sid: string) => `mandate://specs/${spec}/sections/${sid}`;
   const std = (id: string, sid: string) => `mandate://standards/${id}/sections/${sid}`;
+  // The verified code lives in the spec's repository (verification_record checks it).
+  const repoOf = async (uri: string) => {
+    const m = /^mandate:\/\/specs\/([a-z0-9-]+)/.exec(uri);
+    return (m ? (await storage.specs.get(m[1]!).catch(() => null))?.repo : undefined) ?? 'app';
+  };
   const rec = async (
     criterion: string,
     result: 'pass' | 'fail',
@@ -127,7 +167,7 @@ export async function seedVerification(storage: Storage, at: (minutesFromStart: 
         appliedTo: o.appliedTo,
         result,
         method: o.method ?? 'test',
-        code: { repo: o.repo ?? 'app', commit: Math.floor(when.getTime() / 1000).toString(16).slice(-7), branch: 'main' },
+        code: { repo: o.repo ?? (await repoOf(o.appliedTo ?? criterion)), commit: Math.floor(when.getTime() / 1000).toString(16).slice(-7), branch: 'main' },
         evidence: { ...(o.test ? { test: o.test } : {}), ci: `https://ci.example.com/runs/${Math.floor(when.getTime() / 60000) % 100000}`, ...(o.note ? { note: o.note } : {}) },
         by: o.agent ?? 'claude-code@matteo-mbp',
       },
@@ -139,7 +179,7 @@ export async function seedVerification(storage: Storage, at: (minutesFromStart: 
   // Done specs: everything verified (own + inherited security baseline).
   for (const id of ['user-sessions', 'audit-log']) {
     for (const c of SPEC_CRITERIA[id]!) await rec(own(id, c.id), 'pass', { test: `tests/${id}/${c.id}.spec.ts`, repo: id === 'audit-log' ? 'api' : 'app' });
-    for (const c of STANDARD_CRITERIA['security-baseline']!) await rec(std('security-baseline', c.id), 'pass', { ...spec(id), method: 'review', note: 'Checked in code review.' });
+    for (const c of STANDARD_CRITERIA['security-baseline']!) await rec(std('security-baseline', c.id), 'pass', { ...spec(id), repo: id === 'audit-log' ? 'api' : 'app', method: 'review', note: 'Checked in code review.' });
   }
   await rec(own('plans-and-pricing', 'ac-prices-match'), 'pass', { method: 'review', note: 'Compared checkout amounts with the pricing page.' });
 

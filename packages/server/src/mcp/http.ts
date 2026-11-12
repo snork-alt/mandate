@@ -11,13 +11,17 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { CallToolRequestSchema, isInitializeRequest, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { QUESTION_ANSWERED_NOTIFICATION } from './tools/questions.js';
 import { ACTIVITY_NOTIFICATION, MCP_SERVER_NAME, type ActivityEvent } from '@mandate/shared';
 import { z } from 'zod';
 import { matchesFilter } from '../events/bus.js';
-import { authenticate, LOOPBACK_HOSTS, hostName, rpcError, type AuthOptions, type Principal } from '../auth/http.js';
+import { authenticate, LOOPBACK_HOSTS, hostName, originOk, rpcError, type AuthOptions, type Principal } from '../auth/http.js';
+import type { Access, RepoPermissions } from '../auth/github-perms.js';
+import { resourceMetadataUrl } from '../auth/mcp-oauth.js';
 import { maskKey } from '../auth/keys.js';
 import type { ProjectRegistry, ProjectRuntime } from '../projects/registry.js';
 import { callTool, defineTool, describeTool, type SessionState, type ToolContext } from './define.js';
+import { registerUploadRoutes, UploadService } from './uploads.js';
 import { createMcpServer, MCP_VERSION } from './server.js';
 
 export type { ActivityEvent };
@@ -37,6 +41,10 @@ interface Session {
   /** null = the unscoped endpoint. */
   project: string | null;
   principal: Principal;
+  /** Current access (updated on every request). */
+  access: Access;
+  /** UI sessions: the signed-in user's own repo access (uiAllowed decision tools); updated on every request. */
+  uiAccess: Access;
 }
 
 export interface McpRouteOptions {
@@ -44,9 +52,21 @@ export interface McpRouteOptions {
   auth: AuthOptions;
   /** Extra hostnames accepted in the Host header (DNS-rebinding protection; local hosts are always allowed). */
   allowedHosts?: string[];
+  /** Server mode: per-project access from GitHub repo permissions (users without access get 404). */
+  perms?: RepoPermissions;
+  /** Server mode: the public URL (401s point agents at the OAuth protected-resource metadata). */
+  publicUrl?: string;
+  /** Base URL agents reach this server at (upload URLs, UI links); default: from the request's Host. */
+  baseUrl?: string;
+  /** One-time section upload URLs (server secret, server-state db); default: a per-process key, in-memory use tracking. */
+  uploads?: UploadService;
 }
 
-const samePrincipal = (a: Principal, b: Principal) => (a.kind === 'ui' ? b.kind === 'ui' : b.kind === 'key' && a.keyId === b.keyId);
+export const samePrincipal = (a: Principal, b: Principal) =>
+  a.kind === 'ui' ? b.kind === 'ui' && b.user.login === a.user.login : a.kind === 'key' ? b.kind === 'key' && a.keyId === b.keyId : b.kind === 'user' && a.login === b.login && a.via === b.via && a.tokenId === b.tokenId;
+
+/** The GitHub login a principal acts as (null for shared project keys). */
+export const loginOf = (p: Principal): string | null => (p.kind === 'ui' ? p.user.login : p.kind === 'user' ? p.login : null);
 
 export function registerMcp(app: FastifyInstance, opts: McpRouteOptions): McpHub {
   const { projects } = opts;
@@ -59,32 +79,56 @@ export function registerMcp(app: FastifyInstance, opts: McpRouteOptions): McpHub
     return typeof id === 'string' ? sessions.get(id) : undefined;
   };
 
-  /** Host check, project lookup, authentication. Returns null after replying with the error. */
-  const gate = (req: FastifyRequest, reply: FastifyReply, project: string | null): Principal | null => {
+  /** Host check, project lookup, authentication, GitHub permission. Returns null after replying with the error. */
+  const gate = async (req: FastifyRequest, reply: FastifyReply, project: string | null): Promise<{ principal: Principal; access: Access; uiAccess: Access } | null> => {
     if (!hostOk(req)) {
       rpcError(reply, 403, -32000, 'forbidden host');
       return null;
     }
-    if (project !== null && !projects.config(project)) {
+    const cfg = project !== null ? projects.config(project) : undefined;
+    if (project !== null && !cfg) {
       rpcError(reply, 404, -32004, `unknown project '${project}'`);
       return null;
     }
-    const auth = authenticate(req, project, opts.auth);
+    const auth = await authenticate(req, project, opts.auth);
     if (!auth.ok) {
-      rpcError(reply, auth.status, auth.status === 401 ? -32001 : -32000, auth.message);
+      const meta = opts.publicUrl && project && opts.auth.oauth ? `Bearer resource_metadata="${resourceMetadataUrl(opts.publicUrl, project)}"` : undefined;
+      rpcError(reply, auth.status, auth.status === 401 ? -32001 : -32000, auth.message, meta);
       return null;
     }
-    return auth.principal;
+    const p = auth.principal;
+    let access: Access = p.kind === 'ui' ? 'read' : 'write';
+    // Local mode (no GitHub permissions): the signed-in local user may record decisions.
+    let uiAccess: Access = p.kind === 'ui' ? 'write' : 'none';
+    const login = loginOf(p);
+    if (project !== null && login && opts.perms) {
+      access = await opts.perms.access(login, cfg);
+      // No access: indistinguishable from an unknown project.
+      if (access === 'none') {
+        rpcError(reply, 404, -32004, `unknown project '${project}'`);
+        return null;
+      }
+      if (p.kind === 'ui') {
+        uiAccess = access;
+        access = 'read';
+      }
+    }
+    return { principal: p, access, uiAccess };
   };
 
-  const newSession = async (project: string | null, principal: Principal): Promise<Session> => {
-    const state: SessionState = { subscription: null };
+  const uploads = opts.uploads ?? new UploadService();
+  const newSession = async (project: string | null, principal: Principal, access: Access, baseUrl: string): Promise<Session> => {
+    const state: SessionState = { subscription: null, asked: new Set() };
     let server: McpServer;
     if (project === null) {
-      server = createProjectListServer(projects, principal);
+      server = createProjectListServer(projects, principal, opts.perms);
     } else {
       const rt = await projects.open(project);
-      server = createMcpServer({ ...rt.ctx, principal }, state);
+      // The access level is re-evaluated on every request (cached GitHub permissions), so read it live.
+      const base = { ...rt.ctx, principal, uploads, baseUrl } as ToolContext;
+      Object.defineProperty(base, 'access', { enumerable: true, get: () => session.access });
+      Object.defineProperty(base, 'uiAccess', { enumerable: true, get: () => (session.principal.kind === 'ui' && session.uiAccess === 'write' ? 'write' : 'read') });
+      server = createMcpServer(base, state);
     }
     const transport: StreamableHTTPServerTransport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
@@ -92,7 +136,7 @@ export function registerMcp(app: FastifyInstance, opts: McpRouteOptions): McpHub
         sessions.set(id, session);
       },
     });
-    const session: Session = { transport, server, state, project, principal };
+    const session: Session = { transport, server, state, project, principal, access, uiAccess: 'none' };
     transport.onclose = () => {
       if (transport.sessionId) sessions.delete(transport.sessionId);
     };
@@ -102,8 +146,9 @@ export function registerMcp(app: FastifyInstance, opts: McpRouteOptions): McpHub
 
   const post = (projectOf: (req: FastifyRequest) => string | null) => async (req: FastifyRequest, reply: FastifyReply) => {
     const project = projectOf(req);
-    const principal = gate(req, reply, project);
-    if (!principal) return reply;
+    const g = await gate(req, reply, project);
+    if (!g) return reply;
+    const { principal, access, uiAccess } = g;
     let session = sessionOf(req);
     if (session && (session.project !== project || !samePrincipal(session.principal, principal))) {
       return rpcError(reply, 404, -32001, 'session not found; reinitialize');
@@ -112,20 +157,23 @@ export function registerMcp(app: FastifyInstance, opts: McpRouteOptions): McpHub
       if (req.headers['mcp-session-id']) return rpcError(reply, 404, -32001, 'session not found; reinitialize');
       if (!isInitializeRequest(req.body)) return rpcError(reply, 400, -32000, 'no session: send an initialize request first');
       try {
-        session = await newSession(project, principal);
+        session = await newSession(project, principal, access, opts.baseUrl ?? `${req.protocol}://${req.headers.host}`);
       } catch (e) {
         req.log.error(`mcp: ${(e as Error).message}`);
         return rpcError(reply, 503, -32000, `project '${project}' is unavailable: ${(e as Error).message}`);
       }
     }
+    session.access = access;
+    session.uiAccess = uiAccess;
     reply.hijack();
     await session.transport.handleRequest(req.raw, reply.raw, req.body);
   };
 
   const streamOrDelete = (projectOf: (req: FastifyRequest) => string | null) => async (req: FastifyRequest, reply: FastifyReply) => {
     const project = projectOf(req);
-    const principal = gate(req, reply, project);
-    if (!principal) return reply;
+    const g = await gate(req, reply, project);
+    if (!g) return reply;
+    const { principal } = g;
     const session = sessionOf(req);
     if (!session || session.project !== project || !samePrincipal(session.principal, principal)) {
       return rpcError(reply, req.headers['mcp-session-id'] ? 404 : 400, -32001, 'unknown or missing mcp-session-id');
@@ -144,10 +192,27 @@ export function registerMcp(app: FastifyInstance, opts: McpRouteOptions): McpHub
   app.delete('/mcp', streamOrDelete(unscoped));
 
   registerUiRoutes(app, opts, hostOk);
+  // Section uploads (curl): PUT /p/<id>/sections/... (bearer) and PUT /p/<id>/uploads/<token> (one-time URL).
+  registerUploadRoutes(app, { projects, auth: opts.auth, ...(opts.perms ? { perms: opts.perms } : {}), uploads, hostOk, ...(opts.baseUrl ? { baseUrl: opts.baseUrl } : {}), samePrincipal });
 
   const hub: McpHub = {
     sessions: () => [...sessions.keys()],
     async broadcastActivity(event, project) {
+      // The session that asked a question hears about its answer, whatever its activity filter.
+      if (event.type === 'question.answered') {
+        const id = event.refs[0]?.split('/').pop() ?? '';
+        await Promise.all(
+          [...sessions.values()]
+            .filter((s) => s.project === project && s.state.asked?.has(id))
+            .map((s) => {
+              s.state.asked!.delete(id);
+              return (s.server.server.notification as (n: { method: string; params: Record<string, unknown> }) => Promise<void>)({
+                method: QUESTION_ANSWERED_NOTIFICATION,
+                params: { id, ref: event.refs[0]!, summary: event.summary, answers: (event.details as Record<string, unknown> | undefined)?.answers ?? {}, hint: 'question_get for the full answer; cite it as cause of the writes it decides' },
+              }).catch(() => undefined);
+            }),
+        );
+      }
       await Promise.all(
         [...sessions.values()]
           .filter((s) => s.project !== null && (project === undefined || s.project === project))
@@ -211,7 +276,7 @@ export async function projectSummary(rt: ProjectRuntime | null, info: NonNullabl
   };
 }
 
-function createProjectListServer(projects: ProjectRegistry, principal: Principal): McpServer {
+function createProjectListServer(projects: ProjectRegistry, principal: Principal, perms?: RepoPermissions): McpServer {
   const mcp = new McpServer(
     { name: MCP_SERVER_NAME, title: 'Mandate (projects)', version: MCP_VERSION },
     { capabilities: { tools: { listChanged: false } }, instructions: 'Mandate projects. Each project has its own MCP endpoint at /p/<id>/mcp; connect there with that project\'s key.' },
@@ -219,9 +284,14 @@ function createProjectListServer(projects: ProjectRegistry, principal: Principal
   const def = {
     ...PROJECT_LIST_TOOL,
     run: async () => {
-      const ids = projects.list().map((p) => p.id).filter((id) => principal.kind === 'ui' || principal.project === id);
+      const login = loginOf(principal);
+      const candidates = projects.list().map((p) => p.id).filter((id) => principal.kind === 'ui' || principal.project === id);
+      // Server mode: only projects the user can read (GitHub repo permissions); each item says read / write.
+      const accessById = new Map<string, Access>();
+      for (const id of candidates) accessById.set(id, login && perms ? await perms.access(login, projects.config(id)) : 'write');
+      const ids = candidates.filter((id) => accessById.get(id) !== 'none');
       await projects.refreshTokens(ids.flatMap((id) => projects.config(id)?.github?.connectedBy ?? [])).catch(() => undefined);
-      const items = await Promise.all(ids.map(async (id) => projectSummary(await projects.open(id).catch(() => null), projects.info(id)!)));
+      const items = await Promise.all(ids.map(async (id) => ({ ...(await projectSummary(await projects.open(id).catch(() => null), projects.info(id)!)), access: accessById.get(id) })));
       return { defaultProject: projects.defaultProject, items };
     },
   };
@@ -238,7 +308,7 @@ function createProjectListServer(projects: ProjectRegistry, principal: Principal
 /* ------------------------------------------------------------------ web UI routes */
 
 /** UI-only GETs: a signed-in session (never a bearer key) plus `X-Mandate-UI: 1` (a cross-origin page would need a CORS preflight, never granted). */
-export function uiGate(req: FastifyRequest, reply: FastifyReply, opts: { auth: AuthOptions }, hostOk: (req: FastifyRequest) => boolean): Principal | null {
+export async function uiGate(req: FastifyRequest, reply: FastifyReply, opts: { auth: AuthOptions }, hostOk: (req: FastifyRequest) => boolean): Promise<Principal | null> {
   if (!hostOk(req)) {
     rpcError(reply, 403, -32000, 'forbidden host');
     return null;
@@ -256,7 +326,7 @@ export function uiGate(req: FastifyRequest, reply: FastifyReply, opts: { auth: A
     rpcError(reply, 403, -32000, 'forbidden: cross-site request');
     return null;
   }
-  const auth = authenticate(req, null, opts.auth);
+  const auth = await authenticate(req, null, opts.auth);
   if (!auth.ok) {
     rpcError(reply, auth.status, -32001, auth.message);
     return null;
@@ -269,24 +339,72 @@ export function uiGate(req: FastifyRequest, reply: FastifyReply, opts: { auth: A
 }
 
 function registerUiRoutes(app: FastifyInstance, opts: McpRouteOptions, hostOk: (req: FastifyRequest) => boolean) {
-  // The "Connect agent" popup: the project's MCP path and its first key, for signed-in users only.
+  // The "Connect agent" popup, for signed-in users who can read the project (others: 404).
+  const readable = async (req: FastifyRequest, reply: FastifyReply, project: string) => {
+    const p = await uiGate(req, reply, opts, hostOk);
+    if (!p || p.kind !== 'ui') return null;
+    const cfg = opts.projects.config(project);
+    const access: Access = !cfg ? 'none' : opts.perms ? await opts.perms.access(p.user.login, cfg) : 'write';
+    if (access === 'none') {
+      rpcError(reply, 404, -32004, `unknown project '${project}'`);
+      return null;
+    }
+    return { user: p.user, access, cfg: cfg! };
+  };
+
   app.get('/ui/p/:projectId/connect', async (req, reply) => {
     const project = (req.params as { projectId: string }).projectId;
-    if (!uiGate(req, reply, opts, hostOk)) return reply;
-    const info = opts.projects.info(project);
-    if (!info) return rpcError(reply, 404, -32004, `unknown project '${project}'`);
-    const k = opts.auth.keys.list().find((x) => x.project === project) ?? null;
+    const r = await readable(req, reply, project);
+    if (!r) return reply;
+    const info = opts.projects.info(project)!;
     reply.header('Cache-Control', 'no-store');
+    const perUser = !!opts.auth.agentTokens;
+    const k = perUser ? null : (opts.auth.keys.list().find((x) => x.project === project) ?? null);
     return {
       project: { id: info.id, name: info.name },
       mcpPath: info.mcpPath,
+      ...(opts.publicUrl ? { mcpUrl: `${opts.publicUrl}${info.mcpPath}` } : {}),
+      /** 'oauth': agents sign in with GitHub (MCP OAuth) or use a personal token; 'key': the shared project key. */
+      auth: perUser ? 'oauth' : 'key',
+      access: r.access,
       key: k ? { id: k.id, name: k.name, value: k.key, masked: maskKey(k.key), createdAt: k.createdAt } : null,
-      keysFile: opts.auth.keys.file,
-      cli: {
-        create: `npm run mandate -- key create ${project} --name <name>`,
-        list: 'npm run mandate -- key list',
-        revoke: 'npm run mandate -- key revoke <key-id>',
-      },
+      keysFile: perUser ? null : opts.auth.keys.file,
+      cli: perUser
+        ? { create: 'Connect dialog → Personal tokens', list: 'Connect dialog → Personal tokens', revoke: 'Connect dialog → Personal tokens' }
+        : { create: `npm run mandate -- key create ${project} --name <name>`, list: 'npm run mandate -- key list', revoke: 'npm run mandate -- key revoke <key-id>' },
     };
   });
+
+  // Server mode: the signed-in user's personal agent tokens for a project (shown once at creation; hashed at rest).
+  if (opts.auth.agentTokens) {
+    const tokens = opts.auth.agentTokens;
+    app.get('/ui/p/:projectId/tokens', async (req, reply) => {
+      const project = (req.params as { projectId: string }).projectId;
+      const r = await readable(req, reply, project);
+      if (!r) return reply;
+      reply.header('Cache-Control', 'no-store');
+      return { items: await tokens.list(r.user.login, project) };
+    });
+    app.post('/ui/p/:projectId/tokens', async (req, reply) => {
+      const project = (req.params as { projectId: string }).projectId;
+      if (!originOk(req, opts.auth.uiOrigins)) return rpcError(reply, 403, -32000, 'forbidden: Origin must be same-origin');
+      const r = await readable(req, reply, project);
+      if (!r) return reply;
+      const name = String((req.body as { name?: unknown } | undefined)?.name ?? '').trim();
+      try {
+        const t = await tokens.create(r.user.login, project, name || 'agent');
+        reply.header('Cache-Control', 'no-store');
+        return reply.code(201).send({ token: t.token, record: t.record, access: r.access });
+      } catch (e) {
+        return reply.code(400).send({ error: { code: 'invalid_input', message: (e as Error).message, path: 'name' } });
+      }
+    });
+    app.delete('/ui/p/:projectId/tokens/:tokenId', async (req, reply) => {
+      const { projectId, tokenId } = req.params as { projectId: string; tokenId: string };
+      if (!originOk(req, opts.auth.uiOrigins)) return rpcError(reply, 403, -32000, 'forbidden: Origin must be same-origin');
+      const r = await readable(req, reply, projectId);
+      if (!r) return reply;
+      return (await tokens.revoke(r.user.login, tokenId)) ? reply.code(204).send() : reply.code(404).send({ error: { code: 'not_found', message: 'no such token' } });
+    });
+  }
 }

@@ -1,22 +1,31 @@
+import { primeContributors } from './lib/people';
 import { buildRef, type RefKind } from '@mandate/shared/refs';
 import { callTool, McpToolError } from './mcp/client';
-import type { AutoPushStatus, ArchitectureGraph, GitCommitInfo, DocFeedback, EntityKind, Feedback, FileVersion, ResolvedFeedback, ResolvedWorkOrder, SectionImplementation, StandardUsage, GitStatus, GitSyncResult, HistoryEntry, WorkOrder, SectionTypeInfo, Spec, Standard } from '@mandate/shared';
+import type { CommentCounts, CommentThread, StoredWorkOrderDoc, AutoPushStatus, ArchitectureGraph, GitCommitInfo, DocFeedback, EntityKind, Feedback, FileVersion, ResolvedFeedback, ResolvedWorkOrder, SectionImplementation, StandardUsage, GitStatus, GitSyncResult, HistoryEntry, WorkOrder, SectionTypeInfo, Spec, Standard } from '@mandate/shared';
 
 /** Any stored entity; work orders carry extra fields. */
 export type Entity = Spec | Standard | WorkOrder | Feedback;
 
-type DocKind = 'specs' | 'standards' | 'components';
+type DocKind = 'specs' | 'standards' | 'components' | 'audits' | 'work-orders';
 
 /** Drop undefined / empty values: tool inputs are strict. */
 const compact = (o: Record<string, unknown>) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== '' && v !== false && v !== null));
 const call = <T>(tool: string, args: Record<string, unknown> = {}) => callTool<T>(tool, args);
+/** Get results carry `contributors`: hand them to the people stacks (no second call). */
+const primed =
+  (kind: string, id: string) =>
+  <T>(r: T): T => {
+    const list = (r as { contributors?: unknown } | null)?.contributors;
+    if (list) primeContributors(buildRef({ kind: kind as RefKind, id }), list);
+    return r;
+  };
 const historyOf = (kind: RefKind, id: string) => call<{ entries: HistoryEntry[] }>('history_get', { ref: buildRef({ kind, id }), limit: 500 }).then((r) => r.entries);
 
 /** Read-only client over MCP tools (the web UI never writes; agents write through MCP). */
 export const api = {
   list: (kind: EntityKind) => call<{ items: Entity[] }>('doc_list', { kind }).then((r) => r.items),
   get: (kind: EntityKind, id: string): Promise<Entity> =>
-    kind === 'work-orders' ? call('work_order_get', { ref: id }) : kind === 'feedback' ? call('feedback_get', { ref: id }) : call('doc_get', { kind, id }),
+    (kind === 'work-orders' ? call<Entity>('work_order_get', { ref: id }) : kind === 'feedback' ? call<Entity>('feedback_get', { ref: id }) : call<Entity>('doc_get', { kind, id })).then(primed(kind, id)),
   history: (kind: DocKind, id: string) => historyOf(kind, id),
   version: (kind: DocKind, id: string, commit: string, against: 'parent' | 'head' = 'parent', base?: string) =>
     call<FileVersion>('version_get', compact({ kind, id, commit, against: against === 'head' ? 'head' : undefined, base })),
@@ -30,10 +39,14 @@ export const api = {
       throw e;
     }
   },
-  workOrder: (id: string, at?: string) => call<ResolvedWorkOrder>('work_order_get', compact({ ref: id, at })),
+  workOrder: (id: string, at?: string) => call<ResolvedWorkOrder>('work_order_get', compact({ ref: id, at })).then(at ? (r) => r : primed('work-orders', id)),
   workOrderHistory: (id: string) => historyOf('work-orders', id),
+  /** The work-order document (`doc_get`): stored doc + git meta + `workOrder` (the resolved view). */
+  workOrderDoc: (id: string) => call<StoredWorkOrderDoc & { workOrder: ResolvedWorkOrder; lastCommit?: string | null; versionCount?: number; updatedBy?: string | null }>('doc_get', { kind: 'work-orders', id }),
+  /** Comment threads on a target and its sections (`comments_list`). */
+  comments: (target: string, includeResolved = true) => call<{ target: string; counts: CommentCounts; threads: CommentThread[] }>('comments_list', { target, includeResolved }),
   implementation: (specId: string) => call<{ sections: SectionImplementation }>('spec_implementation', { id: specId }).then((r) => r.sections),
-  feedbackItem: (id: string) => call<ResolvedFeedback>('feedback_get', { ref: id }),
+  feedbackItem: (id: string) => call<ResolvedFeedback>('feedback_get', { ref: id }).then(primed('feedback', id)),
   feedbackHistory: (id: string) => historyOf('feedback', id),
   docFeedback: (kind: 'specs' | 'standards', id: string) => call<DocFeedback>('doc_feedback', { kind, id }),
   sectionTypes: () => call<{ items: SectionTypeInfo[] }>('section_types').then((r) => r.items),

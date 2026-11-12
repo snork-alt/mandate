@@ -2,7 +2,8 @@
  * Projects: each has its own git repo (data dir), SQLite index (FTS, embeddings cache, graph), activity feed, Ask
  * conversations, idempotency store and integrity state. Runtimes are opened lazily on first use and cached.
  */
-import type { AppConfig, ProjectConfig, RemoteConfig } from '../config.js';
+import type { ProjectSettings } from './settings.js';
+import { mandateHome, type AppConfig, type ProjectConfig, type RemoteConfig } from '../config.js';
 import { ConversationStore } from '../ask/agent.js';
 import type { AskModelOverride } from '../ask/model.js';
 import { ActivityBus } from '../events/index.js';
@@ -12,7 +13,13 @@ import { IndexService, watchCommits } from '../index/service.js';
 import type { EmbeddingProvider } from '../index/embed/index.js';
 import type { IdempotencyStore, ToolContext } from '../mcp/define.js';
 import { FileIdempotencyStore } from '../mcp/idempotency.js';
-import { createStorage, type Storage } from '../storage/index.js';
+import { DbIdempotencyStore } from '../db/idempotency.js';
+import type { ServerState } from '../db/state.js';
+import { projectWriteLock } from '../db/write-lock.js';
+import { indexDb } from '../db/pg-index/mirror.js';
+import type { PostgresDb } from '../db/postgres.js';
+import { createStorage, MemoryHeartbeats, migrateWorkOrders, SqliteHeartbeats, type HeartbeatStore, type Storage } from '../storage/index.js';
+import { wiringResolver } from '../storage/code-repos.js';
 import { DocReadService } from '../storage/read.js';
 import { DocViewService } from '../storage/views.js';
 
@@ -97,6 +104,38 @@ export class ProjectRegistry {
     this.byId.set(p.id, p);
   }
 
+  /**
+   * Apply a re-read registry (projects.json edited outside the server): new projects are added, removed ones closed
+   * (data untouched), changed ones reopen on next use.
+   */
+  async sync(next: ProjectConfig[]): Promise<{ added: string[]; removed: string[]; changed: string[] }> {
+    const out = { added: [] as string[], removed: [] as string[], changed: [] as string[] };
+    const ids = new Set(next.map((p) => p.id));
+    for (const id of [...this.byId.keys()]) {
+      if (!ids.has(id)) {
+        await this.remove(id);
+        out.removed.push(id);
+        // Deleted from the registry: derived per-project state (the Postgres index schema) goes too.
+        await this.onProjectRemoved?.(id).catch(() => undefined);
+      }
+    }
+    for (const p of next) {
+      const cur = this.byId.get(p.id);
+      if (!cur) {
+        this.byId.set(p.id, p);
+        out.added.push(p.id);
+      } else if (JSON.stringify({ ...cur, remote: undefined }) !== JSON.stringify({ ...p, remote: undefined })) {
+        await this.remove(p.id);
+        this.byId.set(p.id, p);
+        out.changed.push(p.id);
+      }
+    }
+    return out;
+  }
+
+  /** A project was deleted from the registry (not merely changed): drop derived state such as its Postgres index. */
+  onProjectRemoved?: (id: string) => Promise<void>;
+
   /** Unregister (closes its runtime; never deletes data). */
   async remove(id: string): Promise<void> {
     const rt = this.runtimes.get(id);
@@ -150,6 +189,8 @@ export interface OpenerOptions {
   provider?: EmbeddingProvider | null;
   /** Activity HEAD poll interval (default 3 s; 0 disables). */
   activityPollMs?: number;
+  /** Full integrity re-check interval (default 10 min, MANDATE_INTEGRITY_INTERVAL_MS; 0 disables the timer). */
+  integrityIntervalMs?: number;
   /** Start the index sync in the background after opening (default true). */
   startIndex?: boolean;
   /** Remote of a GitHub-backed project (HTTPS URL + token getter from the token store). */
@@ -160,6 +201,12 @@ export interface OpenerOptions {
   onPushAuthError?: (p: ProjectConfig) => void;
   /** Test overrides for the auto-push timers (ms). */
   autoPushTimers?: { debounceMs?: number; intervalMs?: number };
+  /** Per-project agent settings (projects.json `flow`). */
+  settings?: (p: ProjectConfig) => ProjectSettings;
+  /** Server-state database: durable idempotency results live there (else a JSON file next to the index). */
+  serverState?: ServerState;
+  /** Postgres: publish each project's index to its schema (`mandate_<id>`, or prefixed tables) and query it there. */
+  pgIndex?: { schemaPerProject: boolean | 'prefix' };
 }
 
 /** The standard opener: git store, storage, index, activity feed and tool context from the app config. */
@@ -174,10 +221,27 @@ export function projectOpener(app: Pick<AppConfig, 'embedding' | 'ask'>, o: Open
     } catch (e) {
       throw new Error(`project '${p.id}': cannot open the data repository ${p.dataDir} (git backend "${p.git.backend}"): ${(e as Error).message}`);
     }
-    const storage = createStorage(git);
+    // Claim heartbeats: runtime state next to the index (never committed); in memory with an in-memory index.
+    let heartbeats: HeartbeatStore = new MemoryHeartbeats();
+    if (p.index.path && p.index.path !== ':memory:') {
+      try {
+        heartbeats = new SqliteHeartbeats(`${p.index.path}.runtime.sqlite`);
+      } catch (e) {
+        o.log?.error(`project '${p.id}': runtime state (claim heartbeats) in memory: ${(e as Error).message}`);
+      }
+    }
+    // Shared database (Postgres): the write lock is an advisory lock, so instances sharing the data repo serialize.
+    const storage = createStorage(git, { heartbeats, lock: projectWriteLock(o.serverState?.db, p.id) });
+    // One-time, idempotent: work-orders.jsonl -> work-orders/<id>.md (one commit). A failure keeps the jsonl readable.
+    try {
+      await migrateWorkOrders({ git, lock: storage.lock, history: storage.history, heartbeats, log: (m) => o.log?.info(`project '${p.id}': ${m}`) });
+    } catch (e) {
+      o.log?.error(`project '${p.id}': work order migration failed (work orders stay read-only in work-orders.jsonl): ${(e as Error).message}`);
+    }
     let index: IndexService | null = null;
     try {
-      index = new IndexService({ git, storage, index: p.index, embedding: app.embedding, ...(o.provider !== undefined ? { provider: o.provider } : {}), ...(o.log ? { log: o.log as never } : {}) });
+      const pgDb = o.pgIndex && o.serverState?.db.driver === 'postgres' ? indexDb(o.serverState.db as PostgresDb, p.id, o.pgIndex.schemaPerProject) : null;
+      index = new IndexService({ git, storage, index: p.index, embedding: app.embedding, ...(pgDb ? { postgres: { db: pgDb, projectId: p.id } } : {}), ...(o.provider !== undefined ? { provider: o.provider } : {}), ...(o.log ? { log: o.log as never } : {}) });
       const idx = index;
       watchCommits(git, (why) => idx.schedule(why));
     } catch (e) {
@@ -197,7 +261,28 @@ export function projectOpener(app: Pick<AppConfig, 'embedding' | 'ask'>, o: Open
     });
     await activity.start();
     autoPush.start();
-    const idempotency: IdempotencyStore | undefined = p.idempotencyFile ? new FileIdempotencyStore(p.idempotencyFile) : undefined;
+    // Integrity, always checked: startup + periodic full re-checks; after outside commits / pulls / merges (HEAD moved
+    // past the report: incremental updates of our own writes keep it current); changes go out as integrity.changed.
+    const integrity = storage.integrity;
+    integrity.onChange((r, counts, delta) =>
+      activity.emit({
+        id: `${r.head ?? 'none'}:integrity:${Date.now()}`,
+        commit: r.head ?? '',
+        type: 'integrity.changed',
+        at: r.at,
+        refs: [...new Set([...delta.introduced, ...delta.resolved].map((i) => i.uri))].slice(0, 50),
+        summary: `Integrity: ${counts.errors} error${counts.errors === 1 ? '' : 's'}, ${counts.warnings} warning${counts.warnings === 1 ? '' : 's'} (+${delta.introduced.length} / -${delta.resolved.length})`,
+        details: { ...counts, introduced: delta.introduced.length, resolved: delta.resolved.length },
+      }),
+    );
+    watchCommits(git, () => integrity.scheduleSync());
+    // Outside commits (found by the activity HEAD poll) and pulls: re-check when HEAD moved past the report.
+    activity.subscribe((e) => {
+      if (e.type !== 'integrity.changed' && e.type !== 'git.pushed' && e.type !== 'git.push_failed') integrity.scheduleSync();
+    });
+    const envMs = Number(process.env.MANDATE_INTEGRITY_INTERVAL_MS);
+    integrity.start(o.integrityIntervalMs ?? (Number.isFinite(envMs) && process.env.MANDATE_INTEGRITY_INTERVAL_MS ? envMs : 10 * 60_000));
+    const idempotency: IdempotencyStore | undefined = !p.idempotencyFile ? undefined : o.serverState ? new DbIdempotencyStore(o.serverState, p.id, p.idempotencyFile) : new FileIdempotencyStore(p.idempotencyFile);
     const ctx: ToolContext = {
       project: { id: p.id, name: p.name },
       storage,
@@ -210,6 +295,9 @@ export function projectOpener(app: Pick<AppConfig, 'embedding' | 'ask'>, o: Open
       autoPush,
       ...(idempotency ? { idempotency } : {}),
       ...(o.askModel ? { askModel: o.askModel } : {}),
+      ...(o.settings ? { settings: o.settings(p) } : {}),
+      // Local mode only: code repos wired to this project with `mandate connect` (work_order_touch_from_commits).
+      ...(o.settings?.(p).mode !== 'server' ? { codeRepos: wiringResolver(mandateHome(), p.id) } : {}),
     };
     if (index && o.startIndex !== false) {
       o.log?.info(`project '${p.id}': data dir ${p.dataDir}; index ${p.index.path}`);
@@ -225,8 +313,10 @@ export function projectOpener(app: Pick<AppConfig, 'embedding' | 'ask'>, o: Open
       ctx,
       async close() {
         autoPush.stop();
+        storage.integrity.stop();
         activity.stop();
         index?.close();
+        heartbeats.close?.();
       },
     };
   };

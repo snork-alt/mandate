@@ -42,8 +42,6 @@ describe('refs', () => {
       'https://specs/a',
       'mandate://blueprints/a',
       'mandate://specs/Bad_Id',
-      'mandate://work-orders/a/sections/b',
-      'mandate://queue/a/sections/b',
       'mandate://feedback/a/sections/b',
       'mandate://specs/a@xyz',
       'mandate://specs/a/sections/b@abc1234', // version suffix belongs on the document id
@@ -54,7 +52,21 @@ describe('refs', () => {
     ]) {
       expect(parseRef(bad), bad).toBeNull();
     }
-    expect(() => buildRef({ kind: 'work-orders', id: 'a', sectionId: 'b' })).toThrow();
+    expect(() => buildRef({ kind: 'feedback', id: 'a', sectionId: 'b' })).toThrow();
+  });
+
+  it('work orders are documents with sections and versions; comments, PRs and code commits are graph keys', () => {
+    expect(parseRef('mandate://work-orders/a/sections/b')).toEqual({ kind: 'work-orders', id: 'a', sectionId: 'b' });
+    expect(parseRef('mandate://queue/a@abc1234/sections/b')).toEqual({ kind: 'work-orders', id: 'a', sectionId: 'b', commit: 'abc1234' });
+    expect(buildRef({ kind: 'work-orders', id: 'a', sectionId: 'b', commit: 'abc1234' })).toBe('mandate://work-orders/a@abc1234/sections/b');
+    expect(nodeKindOf(parseNodeUri('mandate://work-orders/a/sections/b')!)).toBe('section');
+    expect(nodeKindOf(parseNodeUri('mandate://work-orders/a@abc1234')!)).toBe('version');
+    expect(parseNodeUri('mandate://comments/c-01abc')).toEqual({ kind: 'comments', id: 'c-01abc' });
+    expect(buildNodeUri({ kind: 'prs', repo: 'acme.api', number: 42 })).toBe('mandate://prs/acme.api/42');
+    expect(parseNodeUri('mandate://prs/acme.api/42')).toEqual({ kind: 'prs', repo: 'acme.api', number: 42 });
+    expect(parseNodeUri('mandate://code-commits/app/3f2a9c1')).toEqual({ kind: 'code-commits', repo: 'app', sha: '3f2a9c1' });
+    expect(nodeKindOf({ kind: 'code-commits', repo: 'app', sha: '3f2a9c1' })).toBe('code_commit');
+    expect(parseNodeUri('mandate://prs/app/x')).toBeNull();
   });
 });
 
@@ -81,6 +93,14 @@ describe('graph node uris', () => {
 
   it('classifies node kinds', () => {
     expect(nodes.map(([r]) => nodeKindOf(r))).toEqual(['symbol', 'symbol', 'symbol', 'code_file', 'code_range', 'code_range', 'repo', 'commit', 'section', 'agent', 'branch', 'verification']);
+  });
+
+  it('agent ids are case-folded (old mixed-case refs parse to the same node); users are a node kind', () => {
+    expect(buildNodeUri(parseNodeUri('mandate://agents/Giulia')!)).toBe('mandate://agents/giulia');
+    expect(buildNodeUri({ kind: 'agents', name: ' Snork ' })).toBe('mandate://agents/snork');
+    expect(parseNodeUri('mandate://users/Snork-Alt')).toEqual({ kind: 'users', login: 'Snork-Alt' });
+    expect(buildNodeUri({ kind: 'users', login: 'Snork-Alt' })).toBe('mandate://users/snork-alt');
+    expect(nodeKindOf({ kind: 'users', login: 'x' })).toBe('user');
   });
 
   it('rejects invalid node uris', () => {

@@ -2,8 +2,11 @@ import { ActionIcon, Alert, Box, Button, Group, Skeleton, Text, Tooltip, useComp
 import { useDisclosure } from '@mantine/hooks';
 import { IconAlertTriangle, IconArrowRight, IconBrandGithub, IconFolder, IconGitBranch, IconMoon, IconPlus, IconSun } from '@tabler/icons-react';
 import { NewProjectModal } from '../connect/NewProjectModal';
+import { NewLocalProjectModal } from '../connect/NewLocalProjectModal';
+import { AccessBadge } from '../connect/AccessBadge';
+import { UserMenu } from '../connect/UserFooter';
 import { repoLabel } from '../connect/github';
-import { githubLoginUrl } from '../auth';
+import { githubLoginUrl, isLocalMode, useAuth } from '../auth';
 import { useEffect } from 'react';
 import { APP_NAME, Logo } from '../components/Logo';
 import { TimeAgo } from '../components/TimeAgo';
@@ -21,7 +24,7 @@ const COUNTS: { key: keyof ProjectSummary['counts']; label: string }[] = [
 const shortPath = (p: string) => p.replace(/^\/(Users|home)\/[^/]+/, '~');
 
 function ProjectCard({ p, isDefault, isLast }: { p: ProjectSummary; isDefault: boolean; isLast: boolean }) {
-  const href = `${projectBase(p.id)}/specs`;
+  const href = `${projectBase(p.id)}/`;
   return (
     <a
       className="project-card"
@@ -43,7 +46,8 @@ function ProjectCard({ p, isDefault, isLast }: { p: ProjectSummary; isDefault: b
               <Text fw={600} size="md" truncate>
                 {p.name}
               </Text>
-              {isDefault && <span className="pill project-pill">default</span>}
+              {isDefault && p.id !== 'default' && <span className="pill project-pill">default</span>}
+              <AccessBadge access={p.access} />
               {isLast && !isDefault && <span className="pill project-pill">recent</span>}
             </Group>
             <Text size="xs" c="var(--app-text-faint)" ff="monospace">
@@ -53,9 +57,11 @@ function ProjectCard({ p, isDefault, isLast }: { p: ProjectSummary; isDefault: b
         </Group>
         <IconArrowRight size={16} className="project-card-arrow" />
       </Group>
-      <Text size="sm" c="var(--app-text-muted)" mt={10} lineClamp={2} className="project-card-desc">
-        {p.description || 'No description.'}
-      </Text>
+      {p.description && (
+        <Text size="sm" c="var(--app-text-muted)" mt={10} lineClamp={2} className="project-card-desc">
+          {p.description}
+        </Text>
+      )}
       <div className="project-card-counts">
         {COUNTS.map((c) => (
           <span key={c.key}>
@@ -125,12 +131,16 @@ export function ProjectsPage() {
   const scheme = useComputedColorScheme('light');
   const last = lastProject();
   const [newOpened, newProject] = useDisclosure(false);
+  const auth = useAuth();
+  const local = isLocalMode(auth);
+  // Only admins create projects (server mode: auth.github.allowedUsers).
+  const canCreate = auth?.isAdmin !== false;
   useEffect(() => {
     document.title = `Projects · ${APP_NAME}`;
     // Back from a GitHub scope upgrade (`/?new=1`): reopen the New-project flow.
     const params = new URLSearchParams(window.location.search);
     if (params.get('new') === '1') {
-      newProject.open();
+      if (canCreate) newProject.open();
       history.replaceState(null, '', '/');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -145,11 +155,14 @@ export function ProjectsPage() {
             {APP_NAME}
           </Text>
         </Group>
+        <Group gap={6}>
+        <UserMenu />
         <Tooltip label={scheme === 'dark' ? 'Light theme' : 'Dark theme'}>
           <ActionIcon size="sm" onClick={() => setColorScheme(scheme === 'dark' ? 'light' : 'dark')} aria-label="Toggle color scheme">
             {scheme === 'dark' ? <IconSun size={15} /> : <IconMoon size={15} />}
           </ActionIcon>
         </Tooltip>
+        </Group>
       </header>
       <main className="projects-main">
         <Group justify="space-between" align="flex-end" mb="lg" gap="md">
@@ -158,12 +171,14 @@ export function ProjectsPage() {
               Projects
             </Text>
             <Text size="sm" c="var(--app-text-muted)" mt={4}>
-              Each project has its own GitHub repository (or folder), index, activity feed and MCP endpoint.
+              {local ? 'Each project is a git repository on this computer, with its own index, activity feed and MCP endpoint.' : 'Each project has its own git repository, index, activity feed and MCP endpoint.'}
             </Text>
           </div>
+          {canCreate && (
           <Button leftSection={<IconPlus size={15} />} onClick={newProject.open} data-testid="new-project">
             New project
           </Button>
+          )}
         </Group>
         {projects.isError && (
           <Alert color="red" icon={<IconAlertTriangle size={16} />} title="Cannot list projects">
@@ -176,11 +191,15 @@ export function ProjectsPage() {
             <div className="project-empty">
               <Text fw={600}>No projects yet</Text>
               <Text size="sm" c="var(--app-text-muted)" mt={4} mb="md">
-                Create one backed by a GitHub repository; coding agents then connect to its MCP endpoint.
+                {local ? 'Add a git repository you already have, or start a new one; coding agents then connect to its MCP endpoint.' : 'Create one backed by a GitHub repository; coding agents then connect to its MCP endpoint.'}
               </Text>
-              <Button size="xs" leftSection={<IconPlus size={14} />} onClick={newProject.open}>
-                New project
-              </Button>
+              {canCreate ? (
+                <Button size="xs" leftSection={<IconPlus size={14} />} onClick={newProject.open}>
+                  New project
+                </Button>
+              ) : (
+                <Text size="xs" c="var(--app-text-faint)">You see projects whose GitHub repository you can read. Ask an admin to add one.</Text>
+              )}
             </div>
           )}
           {projects.data?.items.map((p) => (
@@ -188,7 +207,7 @@ export function ProjectsPage() {
           ))}
         </div>
       </main>
-      <NewProjectModal opened={newOpened} onClose={newProject.close} />
+      {local ? <NewLocalProjectModal opened={newOpened} onClose={newProject.close} /> : <NewProjectModal opened={newOpened} onClose={newProject.close} />}
     </div>
   );
 }

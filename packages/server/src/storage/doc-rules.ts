@@ -2,6 +2,7 @@ import { feedbackTrailerIds } from './feedback.js';
 import {
   OPEN_WORK_ORDER_STATUSES,
   parseRef,
+  userOfTrailers,
   SPEC_TRANSITIONS,
   STANDARD_TRANSITIONS,
   COMPONENT_TRANSITIONS,
@@ -14,10 +15,10 @@ import {
 } from '@mandate/shared';
 import type { GitStore } from '../git/GitStore.js';
 import { componentCodec, specCodec, standardCodec } from './codecs.js';
-import { ConflictError, type WriteContext } from './GitBackedRepository.js';
-import type { LinkService } from './links.js';
+import { actorOf, ConflictError, type WriteContext } from './GitBackedRepository.js';
+import { WaiverSelfApprovedError, type LinkService } from './links.js';
 import type { MarkdownDirRepository } from './MarkdownDirRepository.js';
-import { sectionUri, type Doc, type Kind, type Model } from './model.js';
+import { samePrincipal, sectionsWithoutCriteria, sectionUri, waiverPolicy, type Doc, type Kind, type Model } from './model.js';
 import type { VerificationService } from './verification.js';
 
 class RuleError extends Error {
@@ -57,6 +58,8 @@ export class DocRules {
       workOrders: () => Promise<WorkOrder[]>;
       feedback: () => Promise<StoredFeedback[]>;
       verifications: () => Promise<VerificationRecord[]>;
+      /** Who accepted a feedback item (principal), for the "approved by someone else" rule. */
+      acceptorOf?: (id: string) => Promise<string | null>;
     },
   ) {}
 
@@ -65,7 +68,7 @@ export class DocRules {
   }
 
   /** Section ids of the document in every committed version (ids are never reused). */
-  private async everSectionIds(kind: Kind, id: string): Promise<Set<string>> {
+  async everSectionIds(kind: Kind, id: string): Promise<Set<string>> {
     const path = this.repo(kind).pathOf(id);
     const versions = (await this.deps.git.fileHistory(['specs', 'standards', 'components'])).get(path) ?? [];
     const out = new Set<string>();
@@ -100,12 +103,59 @@ export class DocRules {
     return out;
   }
 
+  /**
+   * MW-5 / MW-9: archived sections are kept exactly as they were (content, links; only their position may change) and
+   * are never un-archived; an archived component is frozen as a whole.
+   */
+  private frozen(kind: Kind, next: Doc, current: Doc): void {
+    if (kind === 'components' && (current as StoredComponent).status === 'archived') {
+      const strip = (d: Doc) => stable({ ...d, updatedAt: undefined, createdAt: undefined });
+      if (strip(next) !== strip(current)) throw new RuleError('validation', `${kind}/${current.id} is archived: archived components are frozen`, undefined, 409);
+    }
+    for (const s of current.sections) {
+      if (!s.archived) continue;
+      const n = next.sections.find((x) => x.id === s.id);
+      if (!n) continue; // removal is checked by the identity rule (section_referenced)
+      if (!n.archived) throw new RuleError('validation', `section '${s.id}' of ${kind}/${current.id} is archived; archived sections are never restored (insert a new section)`, undefined, 409);
+      if (stable(n) !== stable(s)) throw new RuleError('validation', `section '${s.id}' of ${kind}/${current.id} is archived; archived sections are kept as they were (links included)`, undefined, 409);
+    }
+  }
+
+  /**
+   * Accepted feedback named in the write's `Feedback:` trailers that approves a criteria removal: accepted (or applied)
+   * by someone other than the writer (server-mode user, else agent; case-insensitive). Throws `waiver_self_approved`
+   * when the only accepted items were accepted by the writer.
+   */
+  private async approvingFeedback(ctx: WriteContext): Promise<StoredFeedback[]> {
+    const ids = feedbackTrailerIds(ctx.message);
+    const accepted = (await this.deps.feedback()).filter((f) => ids.includes(f.id) && (f.status === 'accepted' || (f.status === 'closed' && f.resolution === 'applied')));
+    if (!waiverPolicy.acceptorMustDiffer) return accepted;
+    const writer = userOfTrailers(ctx.meta.trailers) ?? actorOf(ctx.meta);
+    const ok: StoredFeedback[] = [];
+    for (const f of accepted) {
+      if (f.approvalOverride) {
+        ok.push(f);
+        continue;
+      }
+      const by = (await this.deps.acceptorOf?.(f.id)) ?? null;
+      if (!by || !samePrincipal(by, writer)) ok.push(f);
+    }
+    if (accepted.length && !ok.length) throw new WaiverSelfApprovedError(accepted[0]!.id, writer, 'criteria removal');
+    return ok;
+  }
+
   async beforeWrite<D extends Doc>(kind: Kind, next: D, current: D | undefined, ctx: WriteContext): Promise<D> {
     const m = await this.deps.model();
     if (kind === 'specs') {
       const from = (current as StoredSpec | undefined)?.status;
       const to = (next as unknown as StoredSpec).status;
       if (from && from !== to && !SPEC_TRANSITIONS[from].includes(to)) throw new RuleError('invalid_transition', `${next.id}: ${from} -> ${to} is not allowed (allowed: ${SPEC_TRANSITIONS[from].join(', ') || 'none'})`, undefined, 409);
+      // Ready gate: a spec becomes ready only when every live section has a criterion (its own acceptance section,
+      // one it lists in verifiedBy, or an inherited rule it follows).
+      if (from && from !== to && to === 'ready') {
+        const missing = sectionsWithoutCriteria(next as unknown as StoredSpec, m);
+        if (missing.length) throw new RuleError('ready_gate', `${next.id} cannot be ready: sections without an acceptance criterion: ${missing.join(', ')}`, missing, 409);
+      }
     }
     if (kind === 'components') {
       const c = next as unknown as StoredComponent;
@@ -142,6 +192,7 @@ export class DocRules {
       const rules = next.sections.filter((s) => s.type === 'rule');
       if (rules.length) throw new RuleError('invalid_section_type', `rule sections belong to standards; specs use acceptance criteria (${rules.map((s) => s.id).join(', ')})`, undefined, 400);
     }
+    if (current) this.frozen(kind, next, current);
     // Identity (C3).
     if (!current) {
       const path = this.repo(kind).pathOf(next.id);
@@ -169,17 +220,31 @@ export class DocRules {
       if (cur.status === 'done' || claimed) {
         const removed = await this.deps.verification.shrunk(spec, cur, m);
         if (removed.length) {
-          const ids = feedbackTrailerIds(ctx.message);
-          const accepted = (await this.deps.feedback()).filter((f) => ids.includes(f.id) && (f.status === 'accepted' || (f.status === 'closed' && f.resolution === 'applied')));
+          const accepted = await this.approvingFeedback(ctx);
           if (!accepted.length) {
             throw new RuleError('criteria_shrink', `this change removes ${removed.length} criteria from ${spec.id} (${cur.status === 'done' ? 'done' : 'in progress'}): ${removed.map((u) => u.replace('mandate://', '')).join(', ')}; add a "Feedback: <id>" trailer of an accepted feedback item`, removed);
           }
         }
       }
     }
+    // MW-6: a standard write must not drop criteria from done or claimed specs without accepted feedback either.
+    if (kind === 'standards' && current) {
+      const after: Model = { ...m, standards: m.standards.map((x) => (x.id === next.id ? (out as unknown as StoredStandard) : x)) };
+      const claimedSpecs = new Set((await this.deps.workOrders()).filter((w) => w.claim && OPEN_WORK_ORDER_STATUSES.includes(w.status)).map((w) => w.spec));
+      const removed = m.specs.filter((sp) => sp.status === 'done' || claimedSpecs.has(sp.id)).flatMap((sp) => this.deps.verification.shrunkBy(sp, m, after).map((u) => `${sp.id}: ${u.replace('mandate://', '')}`));
+      if (removed.length) {
+        const accepted = await this.approvingFeedback(ctx);
+        if (!accepted.length) throw new RuleError('criteria_shrink', `this change removes ${removed.length} criteria from done or in-progress specs (${removed.join(', ')}); add a "Feedback: <id>" trailer of an accepted feedback item`, removed);
+      }
+    }
     if (kind === 'specs') out = (await this.deps.verification.gate(out as unknown as StoredSpec, current as unknown as StoredSpec | undefined, ctx)) as unknown as D;
     return out;
   }
+}
+
+/** Key-order independent JSON (frozen-content comparisons). */
+function stable(v: unknown): string {
+  return JSON.stringify(v, (_k, x) => (x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => a.localeCompare(b))) : x));
 }
 
 export { ConflictError };

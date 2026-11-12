@@ -20,6 +20,8 @@ const keySchema = z
     key: z.string().regex(/^mnd_[a-z0-9-]+_[A-Za-z0-9_-]{43,}$/),
     createdAt: z.string(),
     lastUsedAt: z.string().optional(),
+    /** Named service account (CI): accepted in server mode, writes attributed to `service:<name>`. */
+    service: z.boolean().optional(),
   })
   .strict();
 const fileSchema = z.object({ keys: z.array(keySchema) }).strict();
@@ -184,10 +186,10 @@ export class KeyStore {
   }
 
   /** Create a key for `project`; returns the full record (the caller shows the key once). */
-  create(project: string, name: string): AgentKey {
+  create(project: string, name: string, opts: { service?: boolean } = {}): AgentKey {
     if (!PROJECT_ID_RE.test(project)) throw new KeysFileError(this.file, `invalid project id '${project}'`);
     if (!KEY_NAME_RE.test(name)) throw new KeysFileError(this.file, 'key name: 1-60 chars of letters, digits, space . _ @ : - (starting with a letter or digit)');
-    const rec: AgentKey = { id: `key_${randomBytes(6).toString('hex')}`, project, name, key: generateKey(project), createdAt: new Date().toISOString() };
+    const rec: AgentKey = { id: `key_${randomBytes(6).toString('hex')}`, project, name, key: generateKey(project), createdAt: new Date().toISOString(), ...(opts.service ? { service: true } : {}) };
     this.mutate((keys) => keys.push(rec));
     return rec;
   }

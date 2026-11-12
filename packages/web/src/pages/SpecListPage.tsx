@@ -1,20 +1,27 @@
 import { useMemo, useState } from 'react';
 import { Button, Menu, Text, Tooltip } from '@mantine/core';
-import { IconCheck, IconChevronRight, IconFileText, IconFolder, IconLayoutList, IconSearch, IconX } from '@tabler/icons-react';
-import type { Priority, Spec, SpecStatus } from '@mandate/shared';
+import { IconAlertTriangle, IconCheck, IconChevronRight, IconFileText, IconFolder, IconLayoutList, IconSearch, IconX } from '@tabler/icons-react';
+import type { Priority, Spec } from '@mandate/shared';
 import { PriorityIcon, StatusIcon } from '../components/doc';
 import { FilterButton } from '../components/FilterButton';
 import { EmptyView, ErrorState, RowsSkeleton } from '../components/ListStates';
 import { SearchInput } from '../components/SearchInput';
-import { SpecRow } from '../components/SpecRow';
+import { SpecListHeader, SpecRow } from '../components/SpecRow';
 import { TopBar } from '../components/TopBar';
 import { SortMenu, sortItems } from '../components/SortMenu';
 import { useSpecs } from '../lib/queries';
 import { categoryLabel, isReopened, PRIORITY_META, PRIORITY_ORDER, priorityRank, SPEC_STATUS_META, SPEC_STATUS_ORDER, useNow } from '../lib/specs';
 import { matches } from '../lib/useSearchQuery';
 import { GROUP_BY, useSpecFilters, type GroupBy } from '../lib/useSpecFilters';
+import { matchesAuditFilter } from '../lib/audits';
+import { AuditDot } from '../components/audits/parts';
+import { MaturityMeter } from '../components/maturity/MaturityBadge';
+import { matchesMaturityFilter, maturityOptions } from '../lib/maturity';
+import { MATURITY_LABELS, MATURITY_STEPS, STEP_TONE } from '@mandate/shared';
 
-const GROUP_LABEL: Record<GroupBy, string> = { category: 'Category', status: 'Status', priority: 'Priority', none: 'No grouping' };
+const STEP_INDEX: Record<string, number> = Object.fromEntries(MATURITY_STEPS.map((s, i) => [s, i + 1]));
+
+const GROUP_LABEL: Record<GroupBy, string> = { category: 'Category', maturity: 'Maturity', priority: 'Priority', none: 'No grouping' };
 const NO_CATEGORY = '__none__';
 
 interface Group {
@@ -33,35 +40,56 @@ function countBy<T extends string>(specs: Spec[], key: (s: Spec) => T | T[] | un
   return m;
 }
 
-/** Thin stacked bar + clickable counts per status. */
-function StatusSummary({ specs, selected, onToggle }: { specs: Spec[]; selected: string[]; onToggle: (s: SpecStatus) => void }) {
-  const counts = countBy(specs, (s) => s.status);
-  const total = specs.length || 1;
+const STEP_COLOR: Record<string, string> = {
+  draft: 'var(--app-text-faint)',
+  specified: 'var(--app-text-muted)',
+  in_progress: 'var(--mantine-color-lilac-5, var(--mantine-primary-color-filled))',
+  implemented: 'var(--mantine-color-blue-5)',
+  verified: 'var(--mantine-color-teal-5)',
+  audited: 'var(--mantine-color-teal-7)',
+};
+
+/**
+ * Thin stacked bar + clickable counts per MATURITY step: the same ladder the rows show, so the summary and the
+ * badges always agree. "Needs attention" counts specs with an overlay (failing, drifted, blocked, stale).
+ */
+function MaturitySummary({ specs, selected, onToggle }: { specs: Spec[]; selected: string[]; onToggle: (v: string) => void }) {
+  const live = specs.filter((s) => !s.maturity?.overlays.some((o) => o.kind === 'archived'));
+  const counts = countBy(live, (s) => s.maturity?.step);
+  const attention = live.filter((s) => s.maturity?.overlays.some((o) => o.kind !== 'archived')).length;
+  const total = live.length || 1;
   return (
     <div className="status-summary">
       <div className="status-bar" aria-hidden="true">
-        {SPEC_STATUS_ORDER.map((s) =>
-          counts.get(s) ? (
-            <span key={s} style={{ flexGrow: counts.get(s), background: SPEC_STATUS_META[s].color, minWidth: 4 }} />
-          ) : null,
-        )}
+        {MATURITY_STEPS.map((st) => (counts.get(st) ? <span key={st} style={{ flexGrow: counts.get(st), background: STEP_COLOR[st], minWidth: 4 }} /> : null))}
       </div>
       <div className="status-counts">
-        {SPEC_STATUS_ORDER.map((s) => (
+        {MATURITY_STEPS.map((st) => (
           <button
-            key={s}
+            key={st}
             type="button"
             className="status-count"
-            data-active={selected.includes(s) || undefined}
-            data-empty={!counts.get(s) || undefined}
-            onClick={() => onToggle(s)}
+            data-active={selected.includes(st) || undefined}
+            data-empty={!counts.get(st) || undefined}
+            onClick={() => onToggle(st)}
           >
-            <StatusIcon status={s} size={13} />
-            <span>{SPEC_STATUS_META[s].label}</span>
-            <span className="status-count-n">{counts.get(s) ?? 0}</span>
-            <span className="status-count-pct">{Math.round(((counts.get(s) ?? 0) / total) * 100)}%</span>
+            <MaturityMeter stepIndex={STEP_INDEX[st]!} tone={STEP_TONE[st]} />
+            <span>{MATURITY_LABELS[st]}</span>
+            <span className="status-count-n">{counts.get(st) ?? 0}</span>
+            <span className="status-count-pct">{Math.round(((counts.get(st) ?? 0) / total) * 100)}%</span>
           </button>
         ))}
+        <button
+          type="button"
+          className="status-count status-count-attention"
+          data-active={['failing', 'drifted', 'blocked', 'stale'].every((k) => selected.includes(k)) || undefined}
+          data-empty={!attention || undefined}
+          onClick={() => onToggle('attention')}
+        >
+          <IconAlertTriangle size={13} />
+          <span>Needs attention</span>
+          <span className="status-count-n">{attention}</span>
+        </button>
       </div>
     </div>
   );
@@ -75,6 +103,7 @@ export function SpecListPage() {
 
   const all = query.data ?? [];
   const byId = useMemo(() => new Map(all.map((s) => [s.id, s])), [all]);
+  const wide = useMemo(() => all.some((s) => !!s.maturity), [all]);
 
   const options = useMemo(() => {
     const sorted = (m: Map<string, number>) => [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]));
@@ -95,6 +124,19 @@ export function SpecListPage() {
         label: v === NO_CATEGORY ? 'No category' : categoryLabel(v),
         count: n,
       })),
+      // One state filter (X1/L5): maturity stages, then flags (overlays), in two groups.
+      maturity: maturityOptions(all).map((o) => ({
+        value: o.value,
+        label: o.label,
+        count: o.count,
+        group: o.value in STEP_INDEX ? 'Stage' : 'Flags',
+        icon: <MaturityMeter stepIndex={o.value in STEP_INDEX ? STEP_INDEX[o.value]! : 6} tone={o.tone} />,
+      })),
+      audit: [
+        { value: 'never', label: 'Never audited', icon: <AuditDot tone="none" />, count: all.filter((s) => matchesAuditFilter(s, ['never'])).length },
+        { value: 'stale', label: 'Stale', icon: <AuditDot tone="stale" />, count: all.filter((s) => matchesAuditFilter(s, ['stale'])).length },
+        { value: 'open', label: 'Has open findings', icon: <AuditDot tone="fail" />, count: all.filter((s) => matchesAuditFilter(s, ['open'])).length },
+      ],
     };
   }, [all]);
 
@@ -107,9 +149,11 @@ export function SpecListPage() {
           (!filters.priority.length || filters.priority.includes(s.priority ?? 'none')) &&
           (!filters.repo.length || (s.repo && filters.repo.includes(s.repo))) &&
           (!filters.tag.length || s.tags.some((t) => filters.tag.includes(t))) &&
-          (!filters.category.length || filters.category.includes(s.category ?? NO_CATEGORY)),
+          (!filters.category.length || filters.category.includes(s.category ?? NO_CATEGORY)) &&
+          matchesAuditFilter(s, filters.audit) &&
+          matchesMaturityFilter(s, filters.maturity),
       ),
-    [all, filters.q, filters.priority.join(), filters.repo.join(), filters.tag.join(), filters.category.join()], // eslint-disable-line react-hooks/exhaustive-deps
+    [all, filters.q, filters.priority.join(), filters.repo.join(), filters.tag.join(), filters.category.join(), filters.audit.join(), filters.maturity.join()], // eslint-disable-line react-hooks/exhaustive-deps
   );
   const visible = useMemo(() => {
     const list = base.filter((s) => !filters.status.length || filters.status.includes(s.status));
@@ -132,14 +176,18 @@ export function SpecListPage() {
     switch (filters.group) {
       case 'none':
         return [{ key: 'all', label: 'All specs', specs: visible }];
-      case 'status': {
-        const m = by((s) => s.status);
-        return SPEC_STATUS_ORDER.filter((s) => m.has(s)).map((s) => ({
-          key: s,
-          label: SPEC_STATUS_META[s].label,
-          icon: <StatusIcon status={s} />,
-          specs: m.get(s)!,
-        }));
+      case 'maturity': {
+        // Stages in ladder order; archived specs last in their own group.
+        const keyOf = (s: Spec) => (s.maturity?.overlays.some((o) => o.kind === 'archived') ? 'archived' : (s.maturity?.step ?? 'unknown'));
+        const m = by(keyOf);
+        return [...MATURITY_STEPS, 'archived', 'unknown']
+          .filter((k) => m.has(k))
+          .map((k) => ({
+            key: k,
+            label: k === 'archived' ? 'Archived' : k === 'unknown' ? 'No maturity data' : MATURITY_LABELS[k as keyof typeof MATURITY_LABELS],
+            icon: k in STEP_INDEX ? <MaturityMeter stepIndex={STEP_INDEX[k]!} tone={STEP_TONE[k as keyof typeof STEP_TONE]} /> : undefined,
+            specs: m.get(k)!,
+          }));
       }
       case 'priority': {
         const m = by((s) => s.priority ?? 'none');
@@ -165,8 +213,6 @@ export function SpecListPage() {
   }, [visible, filters.group]);
 
   const reopened = all.filter((s) => isReopened(s)).length;
-  const toggleStatus = (s: SpecStatus) =>
-    update({ status: filters.status.includes(s) ? filters.status.filter((x) => x !== s) : [...filters.status, s] });
 
   return (
     <>
@@ -180,10 +226,15 @@ export function SpecListPage() {
       </TopBar>
 
       <div className="toolbar">
-        <FilterButton label="Status" options={options.status} selected={filters.status} onChange={(v) => update({ status: v })} />
+        <FilterButton label="Maturity" options={options.maturity} selected={filters.maturity} onChange={(v) => update({ maturity: v })} maxHeight={480} width={240} />
         <FilterButton label="Priority" options={options.priority} selected={filters.priority} onChange={(v) => update({ priority: v })} />
         <FilterButton label="Repo" options={options.repo} selected={filters.repo} onChange={(v) => update({ repo: v })} />
         <FilterButton label="Tag" options={options.tag} selected={filters.tag} onChange={(v) => update({ tag: v })} />
+        <FilterButton label="Audit" options={options.audit} selected={filters.audit} onChange={(v) => update({ audit: v })} />
+        {/* Legacy links (`?status=`): the author-set status stays filterable, as an advanced filter, only while in use. */}
+        {filters.status.length > 0 && (
+          <FilterButton label="Set by author" options={options.status} selected={filters.status} onChange={(v) => update({ status: v })} />
+        )}
         {filters.category.length > 0 && (
           <FilterButton label="Category" options={options.category} selected={filters.category} onChange={(v) => update({ category: v })} />
         )}
@@ -210,11 +261,21 @@ export function SpecListPage() {
             ))}
           </Menu.Dropdown>
         </Menu>
-        <SortMenu value={filters.sort} options={['priority', 'updated', 'created', 'versions', 'title']} onChange={(v) => update({ sort: v })} />
+        <SortMenu value={filters.sort} options={['priority', 'updated', 'created', 'versions', 'title', 'audited', 'maturity']} onChange={(v) => update({ sort: v })} />
         <SearchInput value={filters.q} onChange={(q) => update({ q })} placeholder="Search specs…" />
       </div>
 
-      {query.data && all.length > 0 && <StatusSummary specs={base} selected={filters.status} onToggle={toggleStatus} />}
+      {query.data && all.length > 0 && (
+        <MaturitySummary
+          specs={base}
+          selected={filters.maturity}
+          onToggle={(v) => {
+            const group = v === 'attention' ? ['failing', 'drifted', 'blocked', 'stale'] : [v];
+            const on = group.every((k) => filters.maturity.includes(k));
+            update({ maturity: on ? filters.maturity.filter((k) => !group.includes(k)) : [...new Set([...filters.maturity, ...group])] });
+          }}
+        />
+      )}
 
       {query.isPending && <RowsSkeleton rows={7} />}
       {query.isError && <ErrorState error={query.error} onRetry={() => void query.refetch()} />}
@@ -237,6 +298,8 @@ export function SpecListPage() {
           }
         />
       )}
+
+      {query.data && visible.length > 0 && <SpecListHeader wide={wide} />}
 
       {groups.map((g) => {
         const isCollapsed = !!collapsed[`${filters.group}:${g.key}`];
@@ -261,7 +324,7 @@ export function SpecListPage() {
                 </Text>
               </button>
             )}
-            {!isCollapsed && g.specs.map((s) => <SpecRow key={s.id} spec={s} byId={byId} now={now} />)}
+            {!isCollapsed && g.specs.map((s) => <SpecRow key={s.id} spec={s} byId={byId} now={now} wide={wide} />)}
           </section>
         );
       })}

@@ -1,10 +1,12 @@
 import { useMemo } from 'react';
+import { QuestionsPanel } from '../components/questions/QuestionsPanel';
 import { Skeleton, Text } from '@mantine/core';
 import { IconAlertTriangle, IconFileOff, IconPencil, IconTarget } from '@tabler/icons-react';
 import { Alert } from '@mantine/core';
 import { Link, useNavigate, useParams } from 'react-router';
 import { FeedbackBadge } from '../components/FeedbackBadge';
 import { VerificationMatrix } from '../components/VerificationMatrix';
+import { AuditsPanel, ComplianceView, LastAuditLine } from '../components/audits/panels';
 import { FeedbackList } from '../components/FeedbackParts';
 import { DocPage, Pill, TagPill } from '../components/doc';
 import { EmptyView, ErrorState } from '../components/ListStates';
@@ -15,6 +17,8 @@ import { DeviationsPanel, UsedByPanel } from '../components/UsedByPanel';
 import { useDocFeedback, useHistory, useStandard, useStandardUsage, useStandards } from '../lib/queries';
 import { deletedDoc, useNow, withFrontmatter } from '../lib/specs';
 import type { Standard } from '@mandate/shared';
+import { buildRef } from '@mandate/shared/refs';
+import { WhereUsedPanel } from '../components/lineage/WhereUsedPanel';
 import { TrackedList, TrackedValue, useTrackedChanges } from '../components/doc/tracked';
 
 /** "repo:app" -> link to the spec list filtered by that repo / tag / category. */
@@ -100,21 +104,22 @@ export function StandardDetailPage() {
             </Link>
           )}
         />
-        <span className="doc-updated">
-          Updated <TimeAgo iso={std.updatedAt} />
-          {std.updatedBy && <> by {std.updatedBy}</>}
-        </span>
       </div>
+      {std.lastAudit !== undefined && <LastAuditLine last={std.lastAudit} />}
     </>
   );
 
   const panels = (
     <>
       <UsedByPanel usage={usage.data} loading={usage.isPending} />
+      <PropGroup title="Where it's used">
+        <WhereUsedPanel refUri={buildRef({ kind: 'standards', id: std.id })} />
+      </PropGroup>
       <DeviationsPanel usage={usage.data} />
       <PropGroup title={`Feedback${feedback.data ? ` · ${feedback.data.items.filter((f) => f.status === 'open').length} open` : ''}`}>
         <FeedbackList items={feedback.data?.items ?? []} />
       </PropGroup>
+      <QuestionsPanel refUri={buildRef({ kind: 'standards', id: std.id })} />
       <PropGroup title="Properties">
         <Prop label="Owner">
           <TrackedValue field="owner" value={std.owner} render={(v) => v ?? <span className="faint">None</span>} />
@@ -152,6 +157,7 @@ export function StandardDetailPage() {
       <TopBar crumbs={crumbs} />
       <DocPage
         doc={{ kind: 'standards', id: std.id, title: std.title }}
+        attribution={std}
         header={header}
         banner={<LifecycleBanner std={std} />}
         sections={tracked.commit ? std.sections : ordered}
@@ -159,7 +165,13 @@ export function StandardDetailPage() {
         history={{ entries: history.data, loading: history.isPending, now }}
         tracked={tracked}
         panels={panels}
-        footer={<VerificationMatrix v={std.verification} />}
+        footer={
+          <>
+            <VerificationMatrix v={std.verification} />
+            <AuditsPanel audits={std.audits} kind="standard" />
+            <ComplianceView audits={std.audits} />
+          </>
+        }
         links={std.links}
         headCommit={std.lastCommit}
         sectionBadge={(section) => <FeedbackBadge data={feedback.data} sectionId={section.id} />}

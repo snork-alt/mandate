@@ -55,7 +55,13 @@ describe('askModelStatus', () => {
 
 describe('askStatus', () => {
   it('nothing configured', () => {
-    expect(askStatus(DEFAULT_ASK_CONFIG, {})).toEqual({ configured: false, default: null, models: [], missing: ['provider', 'model'] });
+    expect(askStatus(DEFAULT_ASK_CONFIG, {})).toMatchObject({ configured: false, default: null, models: [], missing: ['provider', 'model'] });
+  });
+
+  it('shows the caps: tool-result tokens (default 5000, per-tool overrides) and the token budget', () => {
+    const s = askStatus({ default: null, models: [], maxToolResultTokens: 3000, toolResultTokens: { graph_query: 6000 } }, {});
+    expect(s.limits).toMatchObject({ maxToolResultTokens: 3000, tokenBudget: 150_000, toolResultTokens: { spec_section_get: 8000, graph_query: 6000 } });
+    expect(askStatus(DEFAULT_ASK_CONFIG, {}).limits.maxToolResultTokens).toBe(5000);
   });
 
   it('lists every model with the default; configured when any model is', () => {
@@ -90,10 +96,9 @@ describe('ask config block', () => {
       writeFileSync(file, JSON.stringify(before, null, 2));
       const c = loadConfig({ MANDATE_CONFIG: file, HOME: dir });
       expect(c.ask).toEqual(DEFAULT_ASK_CONFIG);
-      const after = JSON.parse(readFileSync(file, 'utf8'));
-      // Also migrated: the legacy top-level dataDir becomes the project `default`.
-      const { dataDir: _legacy, ...rest } = before;
-      expect(after).toEqual({ ...rest, ask: { models: [] }, projects: [{ id: 'default', name: 'Default', dataDir: dir }] });
+      // config.json is user-owned: never rewritten (defaults apply in memory; projects go to projects.json).
+      expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual(before);
+      const after = { ...before, ask: { provider: null, model: null, baseUrl: null, apiKeyEnv: null } };
       // The key comes only from the named env var, held in memory.
       writeFileSync(file, JSON.stringify({ ...after, ask: { provider: 'anthropic', model: 'm', baseUrl: null, apiKeyEnv: 'MY_KEY' } }));
       const c2 = loadConfig({ MANDATE_CONFIG: file, HOME: dir, MY_KEY: 'sk-1' });

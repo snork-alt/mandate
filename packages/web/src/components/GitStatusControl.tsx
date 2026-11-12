@@ -1,13 +1,19 @@
-import { ActionIcon, Group, Stack, Text, Tooltip } from '@mantine/core';
+import { ActionIcon, Group, Stack, Text, Tooltip, UnstyledButton } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { IconCloudOff, IconCloudUpload, IconGitBranch, IconRefresh } from '@tabler/icons-react';
+import { IconAlertTriangle, IconChevronRight, IconCloudOff, IconCloudUpload, IconGitBranch, IconRefresh } from '@tabler/icons-react';
+import { useNavigate } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 import { pushSummary } from '../lib/push';
+import './integrity/integrity.css';
 
-/** Compact git status block for the sidebar footer: branch, head, clean/dirty and a pull/refresh button. */
-export function GitStatusControl() {
+/**
+ * Compact git status block for the sidebar footer: branch + head, one state word, the integrity issue count on its own
+ * line, and a pull/refresh button. The block is a button opening the Integrity view (/integrity).
+ */
+export function GitStatusControl({ onNavigate }: { onNavigate?: () => void } = {}) {
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const status = useQuery({ queryKey: ['git', 'status'], queryFn: api.gitStatus, refetchInterval: 15_000 });
   const push = useMutation({
     mutationFn: api.gitPush,
@@ -40,7 +46,7 @@ export function GitStatusControl() {
   const pushLine = pushSummary(ap);
   const tooltip = (
     <Stack gap={2}>
-      <Text size="xs">Remote: {s?.remote ?? 'none configured'}</Text>
+      <Text size="xs">Remote: {s?.remote ?? 'none (commits stay local)'}</Text>
       {s?.head && <Text size="xs">HEAD: {s.head.slice(0, 12)}</Text>}
       {ap && <Text size="xs">Auto-push: {ap.message}{ap.behind ? ` · ${ap.behind} behind` : ''}</Text>}
       {ap?.lastError && <Text size="xs" c="var(--mantine-color-red-4)">Last error: {ap.lastError}</Text>}
@@ -48,12 +54,23 @@ export function GitStatusControl() {
     </Stack>
   );
 
+  const issues = s?.integrity?.issues.length ?? 0;
+  const label = `Git ${s?.branch ?? ''} ${stateLabel}${issues ? `, ${issues} integrity ${issues === 1 ? 'issue' : 'issues'}` : ''}. Open integrity view`;
+
   return (
-    <Group gap={6} wrap="nowrap" px={8} py={6} style={{ borderRadius: 6, border: '1px solid var(--app-border)' }}>
+    <Group gap={6} wrap="nowrap" px={8} py={6} align="flex-start" style={{ borderRadius: 6, border: '1px solid var(--app-border)' }}>
       <Tooltip label={tooltip} multiline position="top-start">
-        <Group gap={8} wrap="nowrap" style={{ flex: 1, minWidth: 0, cursor: 'default' }}>
-          <IconGitBranch size={14} color="var(--app-text-muted)" style={{ flexShrink: 0 }} />
-          <Stack gap={0} style={{ minWidth: 0 }}>
+        <UnstyledButton
+          className="git-box"
+          aria-label={label}
+          data-testid="git-box"
+          onClick={() => {
+            onNavigate?.();
+            void navigate('/integrity');
+          }}
+        >
+          <IconGitBranch size={14} color="var(--app-text-muted)" style={{ flexShrink: 0, marginTop: 3 }} />
+          <Stack gap={0} style={{ minWidth: 0, flex: 1 }}>
             <Group gap={6} wrap="nowrap">
               <Text size="sm" fw={500} truncate>
                 {status.isError ? 'git' : (s?.branch ?? '…')}
@@ -69,27 +86,21 @@ export function GitStatusControl() {
               <Text size="xs" c="var(--app-text-muted)" truncate>
                 {stateLabel}
               </Text>
-              {pushLine && (
-                <Tooltip label={ap!.lastError ?? ap!.message} multiline maw={360}>
-                  <Text size="xs" c={pushLine.color} truncate>
-                    · {pushLine.text}
-                  </Text>
-                </Tooltip>
-              )}
-              {(s?.integrity?.issues.length ?? 0) > 0 && (
-                <Tooltip
-                  label={<div>{s!.integrity!.issues.slice(0, 8).map((i) => <div key={`${i.rule}-${i.uri}-${i.message}`}>{i.message}</div>)}</div>}
-                  multiline
-                  maw={360}
-                >
-                  <Text size="xs" c="var(--mantine-color-orange-7)" truncate>
-                    · {s!.integrity!.issues.length} integrity {s!.integrity!.issues.length === 1 ? 'issue' : 'issues'}
-                  </Text>
-                </Tooltip>
+              {pushLine && ap?.state !== 'no_remote' && (
+                <Text size="xs" c={pushLine.color} truncate>
+                  · {pushLine.text}
+                </Text>
               )}
             </Group>
+            {issues > 0 && (
+              <span className="git-box-integrity" data-testid="git-integrity-count">
+                <IconAlertTriangle size={12} style={{ flexShrink: 0 }} />
+                {issues} integrity {issues === 1 ? 'issue' : 'issues'}
+                <IconChevronRight size={12} style={{ flexShrink: 0 }} />
+              </span>
+            )}
           </Stack>
-        </Group>
+        </UnstyledButton>
       </Tooltip>
       {ap && (ap.state === 'error' || (ap.ahead ?? 0) > 0) && ap.state !== 'no_remote' && ap.state !== 'refused' && ap.state !== 'reconnect' && (
         <Tooltip label={ap.state === 'error' ? 'Retry push' : 'Push now'}>

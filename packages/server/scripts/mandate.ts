@@ -1,5 +1,8 @@
 /**
- * `npm run mandate -- key create <project> [--name <name>]` | `key list` | `key revoke <key-id>`
+ * `npm run mandate -- key create <project> [--name <name>] [--service <name>]` | `key list` | `key revoke <key-id>`
+ *   (`--service <name>`: a named service account for CI, the only kind of shared key server mode accepts; its writes
+ *   are attributed to `service:<name>`)
+ * `npm run mandate -- doctor [project]`: who wrote recently (user / agent / credential), unattributed and service writes.
  * `npm run mandate -- session create <github-login> [--ttl-minutes 60]`: a web UI session for headless checks (prints the
  * cookie once). Same power as signing in: it needs read access to ~/.mandate (the session secret) and the login must
  * be in auth.github.allowedUsers. The session is read-only like any UI session; `session revoke <cookie>` ends it.
@@ -10,19 +13,128 @@
 import { loadSecrets } from '../src/secrets.js';
 import { loadConfig } from '../src/config.js';
 import { KeyStore, maskKey } from '../src/auth/keys.js';
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { recentWriters } from '../src/storage/writers.js';
+import { projectIntegrity } from '../src/storage/doctor.js';
 import path from 'node:path';
 import { AuthStore, loadServerSecret, writeSecretJson } from '../src/auth/sessions.js';
 import { SESSION_COOKIE } from '../src/auth/http.js';
+import { LocalLoginTokens, SetupState } from '../src/setup/files.js';
+import { openConfiguredState, type ServerState } from '../src/db/state.js';
+import { DEFAULT_DATABASE_CONFIG, openServerDb, redactUrl, resolveDatabase, SqliteDb } from '../src/db/index.js';
+import { copyServerState } from '../src/db/copy.js';
 
 export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env, out = (s: string) => console.log(s)): Promise<number> {
+  // Sessions and login tokens live in the configured server-state database (opened on demand, closed on exit).
+  let state: ServerState | undefined;
+  const stateOf = async (config: ReturnType<typeof loadConfig>) => (state ??= await openConfiguredState(config.database, config.home));
+  try {
+    return await run(argv, env, out, stateOf);
+  } finally {
+    await state?.close();
+  }
+}
+
+async function run(argv: string[], env: NodeJS.ProcessEnv, out: (s: string) => void, stateOf: (config: ReturnType<typeof loadConfig>) => Promise<ServerState>): Promise<number> {
   const [group, cmd, ...rest] = argv;
   const flag = (n: string) => {
     const i = rest.indexOf(`--${n}`);
     return i >= 0 ? rest[i + 1] : undefined;
   };
   const positional = rest.filter((a, i) => !a.startsWith('--') && !(i > 0 && rest[i - 1]!.startsWith('--')));
-  const usage = 'usage: npm run mandate -- key create <project> [--name <name>] | key list | key revoke <key-id> | session create <github-login> [--ttl-minutes N] [--out <cookie.json>] | session revoke <cookie> | session revoke --file <cookie.json>';
+  const usage = 'usage: npm run mandate -- setup-url | open | key create <project> [--name <name>] [--service <name>] | key list | doctor [project] | key revoke <key-id> | session create <github-login> [--ttl-minutes N] [--out <cookie.json>] | session revoke <cookie> | session revoke --file <cookie.json>';
+  if (group === 'setup-url' || group === 'open') {
+    loadSecrets(env);
+    const config = loadConfig(env);
+    // The UI URL: server.publicUrl, or MANDATE_UI_URL (development: http://localhost:5173, the Vite proxy).
+    const ui = (env.MANDATE_UI_URL || config.publicUrl).replace(/\/+$/, '');
+    if (group === 'setup-url') {
+      const setup = new SetupState(config.home, () => config.legacyMode || (config.mode === 'server' && !!config.auth.github?.clientId));
+      const token = setup.token();
+      if (!token) {
+        out('Setup is already complete; change settings in the web UI (Settings).');
+        return 0;
+      }
+      out(`${ui}/auth/setup?token=${token}`);
+      out(config.mode === 'server' ? '# one-time setup link: open it over HTTPS, or through an SSH tunnel (ssh -L 4000:localhost:4000 <server>) until HTTPS works' : '# one-time setup link (works on this machine only)');
+      return 0;
+    }
+    if (config.mode !== 'local') {
+      out(`\`open\` signs you in in local mode only; this server uses GitHub sign-in: ${ui}`);
+      return 1;
+    }
+    out(`${ui}/auth/local?token=${await new LocalLoginTokens(config.home, await stateOf(config)).issue()}`);
+    out('# one-time sign-in link, valid 5 minutes, this machine only');
+    return 0;
+  }
+  if (group === 'doctor') {
+    loadSecrets(env);
+    const config = loadConfig(env);
+    const id = cmd ?? config.defaultProject;
+    const p = config.projects.find((x) => x.id === id);
+    if (!p) {
+      out(`unknown project '${id}' (projects: ${config.projects.map((x) => x.id).join(', ')})`);
+      return 1;
+    }
+    const log = async (limit: number) => {
+      const raw = execFileSync('git', ['-C', p.dataDir, 'log', `-n${limit}`, '--format=%H%x1f%an <%ae>%x1f%aI%x1f%B%x1e', '--', '.'], { encoding: 'utf8', maxBuffer: 64 << 20 });
+      return raw
+        .split('\x1e')
+        .map((r) => r.trim())
+        .filter(Boolean)
+        .map((r) => {
+          const [id, author, date, message] = r.split('\x1f');
+          return { id: id!, author: author!, date: date!, message: message ?? '' };
+        });
+    };
+    const w = await recentWriters({ log } as never, config.mode, 500);
+    out(`mode: ${config.mode}${config.legacyMode ? ' (legacy: shared project keys still accepted)' : ''}; project ${id}; last ${w.scanned} commits`);
+    if (config.mode === 'local') out('local mode: writes are attributed to the coding agent only (no user).');
+    if (config.legacyMode) out('legacy install (auth.github without server.mode): treated as server mode for agent auth; set "server": { "mode": "server" } in config.json to make it explicit.');
+    if (config.mode === 'server') {
+      // Agent configs on this machine that still send a shared project key (refused in server mode).
+      for (const f of sharedKeyConfigs(env)) out(`warning: ${f.file} uses a shared project key (${f.masked}); this server refuses it. Re-run \`mandate connect\` (MCP sign-in, or a personal token from the Connect dialog); CI: mandate key create <project> --service <name>`);
+    }
+    else out(`unattributed (no user): ${w.unattributed}; service accounts: ${w.service}`);
+    for (const r of w.writers.slice(0, 30)) out(`${(r.user ?? (config.mode === 'server' ? '(no user)' : '-')).padEnd(24)} via ${(r.agent ?? '?').padEnd(28)} ${(r.source ?? '').padEnd(22)} ${String(r.commits).padStart(5)} commits  last ${r.last}`);
+    const report = await projectIntegrity({ dataDir: p.dataDir, branch: p.branch, git: p.git, github: p.github }).catch((e: Error) => (out(`integrity: cannot lint (${e.message})`), null));
+    if (report) {
+      const warnings = report.issues.filter((i) => i.severity === 'warning').length;
+      out(`integrity: ${report.issues.length} issue(s), ${warnings} of them warnings`);
+      for (const i of report.issues) out(`  ${i.severity ?? 'issue'} ${i.rule} ${i.uri}: ${i.message}${i.hint ? `\n    fix: ${i.hint}` : ''}`);
+    }
+    return 0;
+  }
+  if (group === 'db') {
+    if (cmd !== 'copy') {
+      out('usage: npm run mandate -- db copy [--from <state.sqlite>] [--replace]   (SQLite server state -> the configured Postgres)');
+      return 2;
+    }
+    loadSecrets(env);
+    const config = loadConfig(env);
+    if (config.database.driver !== 'postgres') {
+      out('db copy: set database.driver to "postgres" (and its URL in secrets.env) first; the SQLite state is the source');
+      return 1;
+    }
+    const def = resolveDatabase(DEFAULT_DATABASE_CONFIG, env, config.home);
+    const fromFile = path.resolve(flag('from') ?? (def.driver === 'sqlite' ? def.path : path.join(config.home, 'state.sqlite')));
+    const src = SqliteDb.open(fromFile);
+    let dst: Awaited<ReturnType<typeof openServerDb>> | undefined;
+    try {
+      dst = await openServerDb(config.database);
+      const r = await copyServerState(src, dst, { replace: rest.includes('--replace') });
+      for (const [t, n] of Object.entries(r)) out(`${t}: ${n.written} of ${n.read} row(s) copied`);
+      out(`server state copied from ${fromFile} to ${redactUrl(config.database.url)} (schema mandate_server); the search index is rebuilt from git by the server`);
+      return 0;
+    } catch (e) {
+      out(`db copy failed: ${(e as Error).message}`);
+      return 1;
+    } finally {
+      await src.close();
+      await dst?.close();
+    }
+  }
   if ((group !== 'key' && group !== 'session') || !cmd) {
     out(usage);
     return group === 'help' || group === '--help' ? 0 : 2;
@@ -30,7 +142,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
   loadSecrets(env);
   const config = loadConfig(env);
   if (group === 'session') {
-    const store = new AuthStore(config.home, loadServerSecret(config.home, env), 3600_000);
+    const store = new AuthStore(config.home, loadServerSecret(config.home, env), 3600_000, Date.now, await stateOf(config));
     if (cmd === 'revoke') {
       const file = flag('file');
       let v = positional[0]?.replace(new RegExp(`^${SESSION_COOKIE}=`), '');
@@ -45,7 +157,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
         out('usage: session revoke <cookie> | session revoke --file <cookie.json>');
         return 2;
       }
-      store.deleteSession(v);
+      await store.deleteSession(v);
       out('session revoked');
       return 0;
     }
@@ -65,8 +177,8 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
       return 2;
     }
     const outFile = flag('out');
-    const cookie = store.createSession({ login, avatarUrl: `https://github.com/${login}.png` }, minutes * 60_000);
-    const stored = path.join(config.home, 'sessions.json');
+    const cookie = await store.createSession({ login, avatarUrl: `https://github.com/${login}.png` }, minutes * 60_000);
+    const stored = config.database.driver === 'sqlite' ? config.database.path : 'the Postgres server state (mandate_server.sessions)';
     if (outFile) {
       // Playwright-ready cookie list, written 0600; the value is never printed.
       const expires = Math.floor(Date.now() / 1000) + minutes * 60;
@@ -88,8 +200,9 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
         out(`unknown project '${project ?? ''}' (projects: ${config.projects.map((p) => p.id).join(', ')})`);
         return 1;
       }
-      const k = keys.create(project, flag('name') ?? `key-${new Date().toISOString().slice(0, 10)}`);
-      out(`created ${k.id} "${k.name}" for ${project}:\n${k.key}\nSend it as: Authorization: Bearer <key>  (MCP endpoint /p/${project}/mcp). Stored in ${keys.file}.`);
+      const service = flag('service');
+      const k = keys.create(project, service ?? flag('name') ?? `key-${new Date().toISOString().slice(0, 10)}`, { service: !!service });
+      out(`created ${service ? 'service account ' : ''}${k.id} "${k.name}" for ${project}${service ? ` (writes attributed to service:${k.name})` : ''}:\n${k.key}\nSend it as: Authorization: Bearer <key>  (MCP endpoint /p/${project}/mcp). Stored in ${keys.file}.`);
       return 0;
     }
     case 'list': {
@@ -97,7 +210,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
       const problem = keys.status();
       if (problem) out(`warning: ${problem}`);
       if (!all.length) out('no keys');
-      for (const k of all) out(`${k.id}  ${k.project.padEnd(20)} ${k.name.padEnd(24)} ${maskKey(k.key)}  created ${k.createdAt}${k.lastUsedAt ? `  last used ${k.lastUsedAt}` : ''}`);
+      for (const k of all) out(`${k.id}  ${k.project.padEnd(20)} ${k.name.padEnd(24)} ${maskKey(k.key)}${k.service ? '  [service]' : ''}  created ${k.createdAt}${k.lastUsedAt ? `  last used ${k.lastUsedAt}` : ''}`);
       return 0;
     }
     case 'revoke': {
@@ -127,4 +240,31 @@ if (process.argv[1] && /mandate\.ts$/.test(process.argv[1])) {
       process.exit(1);
     },
   );
+}
+
+/** MCP config files of coding agents on this machine that contain a shared project key (masked; never printed). */
+export function sharedKeyConfigs(env: NodeJS.ProcessEnv = process.env): { file: string; masked: string }[] {
+  const home = env.HOME ?? '';
+  const files = [
+    path.join(home, '.claude.json'),
+    path.join(home, '.cursor', 'mcp.json'),
+    path.join(home, '.codex', 'config.toml'),
+    path.join(home, '.gemini', 'settings.json'),
+    path.join(home, '.config', 'opencode', 'opencode.json'),
+    path.join(home, 'Library', 'Application Support', 'Code', 'User', 'mcp.json'),
+    path.join(home, '.config', 'Code', 'User', 'mcp.json'),
+    path.join(process.cwd(), '.mcp.json'),
+  ];
+  const out: { file: string; masked: string }[] = [];
+  for (const file of files) {
+    let text: string;
+    try {
+      text = readFileSync(file, 'utf8');
+    } catch {
+      continue;
+    }
+    const m = /mnd_[a-z0-9-]+_[A-Za-z0-9_-]{43,}/.exec(text);
+    if (m) out.push({ file, masked: maskKey(m[0]) });
+  }
+  return out;
 }

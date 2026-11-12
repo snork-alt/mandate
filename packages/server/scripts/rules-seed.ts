@@ -26,6 +26,7 @@ type Rule = Omit<SectionInput, 'type'> & {
 const F = '```';
 const doDont = (prose: string, lang: string, good: string, bad: string) => `${prose}\n\n**Do**\n\n${F}${lang}\n${good}\n${F}\n\n**Don't**\n\n${F}${lang}\n${bad}\n${F}`;
 const TS = { languages: ['typescript'] };
+void TS; // kept for rules added later (scoping an existing rule shrinks done specs)
 const API_TS = { paths: ['src/api/**', 'src/routes/**', 'src/http/**', 'src/billing/**'], languages: ['typescript'] };
 const TESTS = { paths: ['**/*.test.ts', '**/*.spec.ts', 'e2e/**'] };
 
@@ -42,7 +43,7 @@ export const CONVERTED: Record<string, Record<string, Omit<Rule, 'id' | 'title' 
     'ac-no-secrets-in-logs': {
       level: 'must',
       rationale: 'Logs are shipped to third-party tools and kept for months; a leaked token is a live credential.',
-      scope: TS,
+      // No path scope: scoping it now would drop it from done specs (a criteria shrink needs accepted feedback).
       check: { kind: 'lint', command: 'npm run lint -- --rule no-secret-log', ruleId: 'no-secret-log' },
       examples: ['mandate://code/app/src/log/redact.ts#L1-L24'],
     },

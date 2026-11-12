@@ -1,4 +1,4 @@
-import { ActionIcon, Autocomplete, Avatar, Button, Loader, Modal, Select, Skeleton, Switch, Text, TextInput, Textarea, UnstyledButton } from '@mantine/core';
+import { ActionIcon, Autocomplete, Avatar, Button, Loader, Modal, Select, Skeleton, Switch, Text, TextInput, Textarea, Tooltip, UnstyledButton } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import {
   IconAlertTriangle,
@@ -26,8 +26,10 @@ import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 're
 import { SearchField } from '../components/SearchField';
 import { relativeTime } from '../lib/time';
 import { goTo, projectBase } from '../project';
-import { CREATE_STEPS, githubApi, normalizeSubpath, projectIdError, slugify, UiApiError, type CreateStep, type GithubOwner, type GithubRepo, type NewProjectInput, type RepoList } from './github';
+import { CREATE_STEPS, githubApi, normalizeSubpath, slugify, UiApiError, type CreateStep, type GithubOwner, type GithubRepo, type NewProjectInput, type RepoList } from './github';
 import { devApiPort } from './snippets';
+import { Field, Notice, StepBar, SummaryRow } from './parts';
+import { PostCreateConnect } from './PostCreateConnect';
 
 interface Draft {
   name: string;
@@ -81,33 +83,7 @@ function apiHost(): string {
 
 /* ---------------------------------------------------------------- pieces */
 
-function StepBar({ step }: { step: number }) {
-  return (
-    <div className="np-steps" aria-label={`Step ${step + 1} of ${STEPS.length}`}>
-      {STEPS.map((s, i) => (
-        <div key={s.label} className="np-step" data-state={i < step ? 'done' : i === step ? 'current' : 'todo'}>
-          <span className="np-step-bar" />
-          <span className="np-step-label">
-            {i < step && <IconCheck size={11} stroke={2.4} />}
-            {s.label}
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-}
 
-function Field({ label, hint, error, children, htmlFor }: { label: string; hint?: ReactNode; error?: string | null; children: ReactNode; htmlFor?: string }) {
-  return (
-    <div className="np-field">
-      <label className="np-label" htmlFor={htmlFor}>
-        {label}
-      </label>
-      {children}
-      {error ? <div className="np-error">{error}</div> : hint ? <div className="np-hint">{hint}</div> : null}
-    </div>
-  );
-}
 
 const ownerLabel = (o: GithubOwner) => o.name || o.login;
 
@@ -126,21 +102,21 @@ function OwnerSwitcher({ owners, value, onChange }: { owners: GithubOwner[]; val
         All
       </button>
       {owners.map((o) => (
-        <button
-          key={o.login}
-          type="button"
-          role="tab"
-          className="np-owner"
-          aria-selected={value === o.login}
-          data-restricted={o.restricted || undefined}
-          onClick={() => onChange(o.login)}
-          data-testid={`owner-${o.login}`}
-          title={o.restricted ? `${ownerLabel(o)}: access not granted` : o.type === 'user' ? 'Your repositories' : ownerLabel(o)}
-        >
-          <OwnerAvatar url={o.avatarUrl} login={o.login} size={16} />
-          <span>{o.type === 'user' ? o.login : ownerLabel(o)}</span>
-          {o.restricted && <IconLock size={11} className="np-owner-lock" />}
-        </button>
+        <Tooltip key={o.login} label={o.restricted ? `${ownerLabel(o)}: access not granted` : o.type === 'user' ? 'Your repositories' : ownerLabel(o)} openDelay={300}>
+          <button
+            type="button"
+            role="tab"
+            className="np-owner"
+            aria-selected={value === o.login}
+            data-restricted={o.restricted || undefined}
+            onClick={() => onChange(o.login)}
+            data-testid={`owner-${o.login}`}
+          >
+            <OwnerAvatar url={o.avatarUrl} login={o.login} size={16} />
+            <span>{o.type === 'user' ? o.login : ownerLabel(o)}</span>
+            {o.restricted && <IconLock size={11} className="np-owner-lock" />}
+          </button>
+        </Tooltip>
       ))}
     </div>
   );
@@ -168,18 +144,6 @@ function RepoRow({ r, selected, onPick }: { r: GithubRepo; selected: boolean; on
   );
 }
 
-function Notice({ icon, title, children, actions, tone = 'neutral', testId }: { icon: ReactNode; title: string; children: ReactNode; actions?: ReactNode; tone?: 'neutral' | 'warn' | 'danger'; testId?: string }) {
-  return (
-    <div className="np-notice" data-tone={tone} data-testid={testId}>
-      <div className="np-notice-icon">{icon}</div>
-      <div style={{ minWidth: 0 }}>
-        <div className="np-notice-title">{title}</div>
-        <div className="np-notice-body">{children}</div>
-        {actions && <div className="np-notice-actions">{actions}</div>}
-      </div>
-    </div>
-  );
-}
 
 /* ---------------------------------------------------------------- repository step */
 
@@ -377,6 +341,7 @@ export function NewProjectModal({ opened, onClose }: { opened: boolean; onClose:
   const [draft, setDraft] = useState<Draft>(EMPTY);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [progress, setProgress] = useState<Progress>({});
+  const [created, setCreated] = useState<{ id: string; name: string } | null>(null);
   useEffect(() => {
     if (!opened) return;
     const d = loadDraft();
@@ -384,20 +349,20 @@ export function NewProjectModal({ opened, onClose }: { opened: boolean; onClose:
     setStep(d.repo ? 2 : d.name ? 1 : 0);
     setFieldErrors({});
     setProgress({});
+    setCreated(null);
     saveDraft(null);
   }, [opened]);
 
   const set = (patch: Partial<Draft>) => setDraft((d) => ({ ...d, ...patch }));
-  const idErr = draft.id ? projectIdError(draft.id) : null;
+  const idErr = null;
   const subpath = normalizeSubpath(draft.path);
-  const canNext = [!!draft.name.trim() && !projectIdError(draft.id), !!draft.repo, !!draft.branch.trim() && subpath !== null, true][step]!;
+  const canNext = [!!draft.name.trim(), !!draft.repo, !!draft.branch.trim() && subpath !== null, true][step]!;
   const mcpUrl = `${apiHost()}/p/${draft.id || '…'}/mcp`;
 
   const create = useMutation({
     mutationFn: () => {
       setProgress({});
       const body: NewProjectInput = {
-        id: draft.id,
         name: draft.name.trim(),
         ...(draft.description.trim() ? { description: draft.description.trim() } : {}),
         repo: draft.repo!.fullName,
@@ -408,11 +373,8 @@ export function NewProjectModal({ opened, onClose }: { opened: boolean; onClose:
     },
     onSuccess: ({ project }) => {
       void qc.invalidateQueries({ queryKey: ['projects'] });
-      // A beat on the finished checklist, then open the project.
-      setTimeout(() => {
-        onClose();
-        goTo(`${projectBase(project.id)}/specs`);
-      }, 600);
+      // A beat on the finished checklist, then the "connect your coding agent" step.
+      setTimeout(() => setCreated({ id: project.id, name: project.name }), 600);
     },
     onError: (e) => {
       if (e instanceof UiApiError && e.path && e.path in STEP_OF) {
@@ -421,7 +383,7 @@ export function NewProjectModal({ opened, onClose }: { opened: boolean; onClose:
       }
     },
   });
-  const busy = create.isPending || create.isSuccess;
+  const busy = create.isPending || (create.isSuccess && !created);
 
   const pick = (r: GithubRepo) => {
     set({ repo: r, branch: r.defaultBranch ?? 'main' });
@@ -447,7 +409,7 @@ export function NewProjectModal({ opened, onClose }: { opened: boolean; onClose:
       withCloseButton={false}
       padding={0}
       radius={14}
-      size={640}
+      size={created ? 760 : 640}
       centered
       overlayProps={{ backgroundOpacity: 0.28, blur: 3 }}
       classNames={{ content: 'np-modal', body: 'np-modal-body' }}
@@ -455,6 +417,15 @@ export function NewProjectModal({ opened, onClose }: { opened: boolean; onClose:
       closeOnEscape={!busy}
       aria-label="Create a project"
     >
+      {created ? (
+        <PostCreateConnect
+          project={created}
+          onOpen={() => {
+            onClose();
+            goTo(`${projectBase(created.id)}/`);
+          }}
+        />
+      ) : (
       <form onSubmit={onSubmit} data-testid="new-project-modal">
         <header className="np-head">
           <div className="np-tile">
@@ -472,7 +443,7 @@ export function NewProjectModal({ opened, onClose }: { opened: boolean; onClose:
             <IconX size={16} />
           </ActionIcon>
         </header>
-        <StepBar step={step} />
+        <StepBar steps={STEPS.map((x) => x.label)} step={step} />
 
         <div className="np-body">
           {step === 0 && (
@@ -486,24 +457,14 @@ export function NewProjectModal({ opened, onClose }: { opened: boolean; onClose:
                   data-autofocus
                   onChange={(e) => {
                     const name = e.currentTarget.value;
-                    set({ name, ...(draft.idTouched ? {} : { id: slugify(name) }) });
+                    set({ name, id: slugify(name).slice(0, 36).replace(/-+$/, '') });
                   }}
                 />
               </Field>
-              <Field label="Id" htmlFor="np-id" error={fieldErrors.id || idErr} hint="Lowercase letters, digits and dashes. Filled in from the name; you can edit it.">
+              <Field label="Id" htmlFor="np-id" error={fieldErrors.id || idErr} hint="Assigned by Mandate from the name (with a -2 suffix if it is taken); shown here as a preview.">
                 <div className="np-slug" data-invalid={!!(fieldErrors.id || idErr) || undefined}>
                   <span className="np-slug-fix">{apiHost()}/p/</span>
-                  <input
-                    id="np-id"
-                    className="np-slug-input"
-                    value={draft.id}
-                    maxLength={40}
-                    placeholder="billing-platform"
-                    spellCheck={false}
-                    autoComplete="off"
-                    onChange={(e) => set({ id: e.currentTarget.value, idTouched: true })}
-                    style={{ width: `calc(${Math.max(draft.id.length || 16, 4)}ch + 4px)` }}
-                  />
+                  <span id="np-id" className="np-slug-input" data-testid="np-id-preview" aria-readonly="true" style={{ opacity: 0.8 }}>{draft.id || 'billing-platform'}</span>
                   <span className="np-slug-fix">/mcp</span>
                 </div>
               </Field>
@@ -623,18 +584,8 @@ export function NewProjectModal({ opened, onClose }: { opened: boolean; onClose:
           </Button>
         </footer>
       </form>
+      )}
     </Modal>
   );
 }
 
-function SummaryRow({ icon, label, value, mono }: { icon: ReactNode; label: string; value: ReactNode; mono?: boolean }) {
-  return (
-    <div className="np-summary-row">
-      <span className="np-summary-label">
-        {icon}
-        {label}
-      </span>
-      <span className={mono ? 'np-summary-value np-mono' : 'np-summary-value'}>{value}</span>
-    </div>
-  );
-}

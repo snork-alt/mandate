@@ -1,7 +1,9 @@
 import { useMemo } from 'react';
+import { QuestionsPanel } from '../components/questions/QuestionsPanel';
+import { buildRef } from '@mandate/shared/refs';
 import { RailDetails } from '../components/rail/RailDetails';
 import { ActionIcon, CopyButton, Skeleton, Text, Tooltip } from '@mantine/core';
-import { IconAlertTriangle, IconCircleCheckFilled, IconBrandGit, IconCheck, IconCopy, IconFileOff, IconFolder, IconLock, IconRotateClockwise2, IconUnlink, IconUser } from '@tabler/icons-react';
+import { IconAlertTriangle, IconCircleCheckFilled, IconBrandGit, IconCheck, IconCopy, IconFileOff, IconFolder, IconGitBranch, IconLock, IconRotateClockwise2, IconUnlink, IconUser } from '@tabler/icons-react';
 import type { WorkOrder, Spec } from '@mandate/shared';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api';
@@ -12,7 +14,7 @@ import { DriftPanel } from '../components/DriftPanel';
 import { CommitHash } from '../components/copy';
 import { FeedbackList } from '../components/FeedbackParts';
 import {
-  ClaimCard,
+  ClaimAvatar,
   DocPage,
   Pill,
   PriorityIcon,
@@ -29,15 +31,18 @@ import { TimeAgo } from '../components/TimeAgo';
 import { TopBar } from '../components/TopBar';
 import { useDocFeedback, useHistory, useWorkOrders, useSpec, useSpecs, useStandards } from '../lib/queries';
 import { TrackedList, TrackedValue, useTrackedChanges } from '../components/doc/tracked';
-import { deletedDoc, withFrontmatter, blockingDeps, categoryLabel, isReopened, PRIORITY_META, SPEC_STATUS_META, useNow } from '../lib/specs';
+import { deletedDoc, withFrontmatter, blockingDeps, categoryLabel, isReopened, isStale, PRIORITY_META, SPEC_STATUS_META, useNow } from '../lib/specs';
+import { relativeTime } from '../lib/time';
 import { KIND_LABEL } from '../lib/specs';
+import { AuditsPanel, LastAuditLine } from '../components/audits/panels';
+import { MaturityBadge, MaturityDot } from '../components/maturity/MaturityBadge';
 
 function SpecLink({ id, spec }: { id: string; spec?: Spec }) {
   return (
     <Link to={`/specs/${id}`} className="linked-item" data-missing={spec ? undefined : true}>
-      {spec ? <StatusIcon status={spec.status} reopened={isReopened(spec)} withTooltip /> : <IconFileOff size={14} />}
+      {spec?.maturity ? <MaturityDot m={spec.maturity} details={false} /> : spec ? <StatusIcon status={spec.status} reopened={isReopened(spec)} withTooltip /> : <IconFileOff size={14} />}
       <span className="linked-title">{spec?.title ?? id}</span>
-      {spec && <span className="linked-meta">{SPEC_STATUS_META[spec.status].label}</span>}
+      {spec && <span className="linked-meta">{spec.maturity?.label ?? SPEC_STATUS_META[spec.status].label}</span>}
     </Link>
   );
 }
@@ -51,21 +56,23 @@ function ImplementationBadge({ state, openItems }: { state?: { implementedCommit
           Not implemented
         </span>
       ) : state.outdated ? (
-        <Tooltip label={`Changed since it was implemented at ${state.implementedCommit}`}>
+        <Tooltip label={`Changed since it was implemented at ${state.implementedCommit?.slice(0, 7) ?? ''}`}>
           <span className="impl-badge" data-state="outdated">
             <IconAlertTriangle size={12} /> Outdated
           </span>
         </Tooltip>
       ) : (
         <span className="impl-badge" data-state="done">
-          <IconCircleCheckFilled size={12} /> Implemented <span className="mono">@{state.implementedCommit}</span>
+          <IconCircleCheckFilled size={12} /> Implemented {state.implementedCommit && <CommitHash sha={state.implementedCommit} className="impl-commit" />}
         </span>
       )}
       {openItems.map((q) => (
-        <Link key={q.id} to={`/work-orders/${q.id}`} className="impl-badge impl-work-order" title={`${KIND_LABEL[q.kind]} · ${q.status.replace('_', ' ')}`}>
-          <WorkOrderStatusIcon status={q.status} size={12} />
-          <span className="mono">{q.id}</span>
-        </Link>
+        <Tooltip key={q.id} label={`${KIND_LABEL[q.kind]} · ${q.status.replace('_', ' ')}`} openDelay={300}>
+          <Link to={`/work-orders/${q.id}`} className="impl-badge impl-work-order">
+            <WorkOrderStatusIcon status={q.status} size={12} />
+            <span className="mono">{q.id}</span>
+          </Link>
+        </Tooltip>
       ))}
     </span>
   );
@@ -172,10 +179,14 @@ export function SpecDetailPage() {
         </p>
       )}
       <div className="doc-pills">
-        <TrackedValue field="status" value={spec.status} render={(v) => <StatusPill status={v} reopened={reopened} />} />
+        {spec.maturity && !tracked.commit ? (
+          <MaturityBadge m={spec.maturity} />
+        ) : (
+          <TrackedValue field="status" value={spec.status} render={(v) => <StatusPill status={v} reopened={reopened} />} />
+        )}
         <TrackedValue field="priority" value={spec.priority} render={(v) => <PriorityPill priority={v} />} />
         {reopened && (
-          <Tooltip label={`Was done at ${spec.implementedCommit}; reopened since`}>
+          <Tooltip label={`Was done at ${spec.implementedCommit?.slice(0, 7)}; reopened since`}>
             <span>
               <Pill tone="warn" icon={<IconRotateClockwise2 size={13} />}>
                 Reopened
@@ -183,7 +194,7 @@ export function SpecDetailPage() {
             </span>
           </Tooltip>
         )}
-        {blocking.length > 0 && spec.status !== 'done' && (
+        {blocking.length > 0 && spec.status !== 'done' && !(spec.maturity && !tracked.commit) && (
           <Tooltip label={`Waiting for: ${blocking.map((d) => byId.get(d)?.title ?? d).join(', ')}`}>
             <span>
               <Pill tone="danger" icon={<IconLock size={13} />}>
@@ -192,7 +203,7 @@ export function SpecDetailPage() {
             </span>
           </Tooltip>
         )}
-        {(spec.drift ?? []).length > 0 && (
+        {(spec.drift ?? []).length > 0 && !(spec.maturity && !tracked.commit) && (
           <Tooltip label={<div>{spec.drift!.map((d) => <div key={d}>{d}</div>)}</div>} multiline maw={360}>
             <span>
               <Pill tone="warn" icon={<IconAlertTriangle size={13} />}>
@@ -210,11 +221,8 @@ export function SpecDetailPage() {
             </span>
           </Tooltip>
         )}
-        <span className="doc-updated">
-          Updated <TimeAgo iso={spec.updatedAt} />
-          {spec.updatedBy && <> by {spec.updatedBy}</>}
-        </span>
       </div>
+      {spec.lastAudit !== undefined && <LastAuditLine last={spec.lastAudit} />}
     </>
   );
 
@@ -222,18 +230,32 @@ export function SpecDetailPage() {
     <>
 
       <PropGroup title="Properties">
-        <Prop label="Status" to={`/specs?status=${spec.status}`}>
-          <TrackedValue
-            field="status"
-            value={spec.status}
-            render={(v) => (
-              <span className="inline-icon">
-                <StatusIcon status={v} reopened={reopened} />
-                {SPEC_STATUS_META[v].label}
+        {spec.maturity && !tracked.commit ? (
+          <>
+            {/* Maturity is the one state (X1); the author-set status is a secondary detail below it. */}
+            <Prop label="Maturity">
+              <MaturityBadge m={spec.maturity} size="sm" />
+            </Prop>
+            <Prop label="Set by author" to={`/specs?status=${spec.status}`}>
+              <span className="faint" data-testid="prop-stored-status">
+                {SPEC_STATUS_META[spec.status].label}
               </span>
-            )}
-          />
-        </Prop>
+            </Prop>
+          </>
+        ) : (
+          <Prop label="Status" to={`/specs?status=${spec.status}`}>
+            <TrackedValue
+              field="status"
+              value={spec.status}
+              render={(v) => (
+                <span className="inline-icon">
+                  <StatusIcon status={v} reopened={reopened} />
+                  {SPEC_STATUS_META[v].label}
+                </span>
+              )}
+            />
+          </Prop>
+        )}
         <Prop label="Priority" to={`/specs?priority=${spec.priority ?? 'none'}`}>
           <TrackedValue
             field="priority"
@@ -334,9 +356,11 @@ export function SpecDetailPage() {
           <span className="faint small">No section depends on another spec</span>
         )}
         {(spec.brokenSections ?? []).length > 0 && (
-          <span className="link-badge" data-tone="danger" title="A depends_on target is archived or missing">
-            Broken dependency: {spec.brokenSections!.join(', ')}
-          </span>
+          <Tooltip label="A depends_on target is archived or missing" openDelay={300}>
+            <span className="link-badge" data-tone="danger">
+              Broken dependency: {spec.brokenSections!.join(', ')}
+            </span>
+          </Tooltip>
         )}
         {dependents.length > 0 && (
           <>
@@ -408,6 +432,7 @@ export function SpecDetailPage() {
       <PropGroup title={`Feedback${feedback.data ? ` · ${feedback.data.items.filter((f) => f.status === 'open').length} open` : ''}`}>
         <FeedbackList items={feedback.data?.items ?? []} />
       </PropGroup>
+      <QuestionsPanel refUri={buildRef({ kind: 'specs', id: spec.id })} />
 
       {specWorkOrders.length > 0 && (
         <PropGroup title="Work orders">
@@ -431,6 +456,7 @@ export function SpecDetailPage() {
       <TopBar crumbs={crumbs} />
       <DocPage
         doc={{ kind: 'specs', id: spec.id, title: spec.title }}
+        attribution={spec}
         header={header}
         sections={spec.sections}
         standardTitles={standardTitles}
@@ -452,21 +478,40 @@ export function SpecDetailPage() {
                   </PropGroup>
                 ))}
               {(spec.claims ?? []).length > 0 && (
-                <PropGroup title={`Claims · ${spec.claims!.length}`}>
-                  {spec.claims!.map((c) => (
-                    <ClaimCard
-                      key={c.workOrder}
-                      claim={c.claim}
-                      now={now}
-                      via={
-                        <Link to={`/work-orders/${c.workOrder}`} className="claim-row claim-row-link">
-                          <span className="claim-label">Work order</span>
-                          <span className="mono small">{c.workOrder}</span>
-                          <span className="claim-sections">{c.sections.map((sid) => spec.sections.find((x) => x.id === sid)?.title ?? sid).join(', ')}</span>
-                        </Link>
-                      }
-                    />
-                  ))}
+                <PropGroup title={`In progress · ${spec.claims!.length} work order${spec.claims!.length > 1 ? 's' : ''}`}>
+                  <div className="wo-active-list">
+                    {spec.claims!.map((c) => {
+                      const stale = isStale(c.claim, now);
+                      const titles = c.sections.map((sid) => spec.sections.find((x) => x.id === sid)?.title ?? sid);
+                      return (
+                        <Tooltip
+                          key={c.workOrder}
+                          multiline
+                          maw={320}
+                          label={
+                            <div>
+                              <div>{c.claim.agent} · {stale ? 'stale' : 'live'} · heartbeat {relativeTime(c.claim.heartbeatAt, now)}</div>
+                              {c.claim.worktree && <div className="mono">{c.claim.worktree}</div>}
+                              <div>Sections: {titles.join(', ')}</div>
+                            </div>
+                          }
+                        >
+                          <Link to={`/work-orders/${c.workOrder}`} className="wo-active" data-stale={stale || undefined}>
+                            <ClaimAvatar claim={c.claim} now={now} workOrder={c.workOrder} />
+                            <span className="mono wo-active-id">{c.workOrder}</span>
+                            <span className="wo-active-kind">{c.kind}</span>
+                            {c.claim.branch && (
+                              <span className="wo-active-branch mono">
+                                <IconGitBranch size={12} />
+                                {c.claim.branch}
+                              </span>
+                            )}
+                            <span className="wo-active-sections">{titles.length === 1 ? titles[0] : `${titles.length} sections`}</span>
+                          </Link>
+                        </Tooltip>
+                      );
+                    })}
+                  </div>
                 </PropGroup>
               )}
             </>
@@ -478,6 +523,7 @@ export function SpecDetailPage() {
         criteria={criteria}
         links={spec.links}
         headCommit={spec.lastCommit}
+        footer={<AuditsPanel audits={spec.audits} />}
         sectionBadge={(section) => (
           <>
             <FeedbackBadge data={feedback.data} sectionId={section.id} />

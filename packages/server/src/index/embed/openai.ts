@@ -5,6 +5,8 @@ export interface OpenAICompatibleOptions {
   model: string;
   dimensions: number;
   apiKey?: string;
+  /** Shortened vector size (`dimensions` request parameter, e.g. OpenAI text-embedding-3-*); omitted when unset. */
+  requestDimensions?: number | null;
   modelId: string;
   retries?: number;
   timeoutMs?: number;
@@ -12,6 +14,11 @@ export interface OpenAICompatibleOptions {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** JSON body of `POST /embeddings`: `dimensions` only when a shortened size is requested. */
+export function embeddingRequestBody(model: string, input: string[], requestDimensions?: number | null): string {
+  return JSON.stringify({ model, input, ...(requestDimensions ? { dimensions: requestDimensions } : {}) });
+}
 
 /** `POST {baseUrl}/embeddings` (OpenAI, Ollama, LM Studio, vLLM, ...), with retries and exponential backoff. */
 export class OpenAICompatibleProvider implements EmbeddingProvider {
@@ -35,7 +42,7 @@ export class OpenAICompatibleProvider implements EmbeddingProvider {
         const res = await doFetch(`${baseUrl.replace(/\/+$/, '')}/embeddings`, {
           method: 'POST',
           headers: { 'content-type': 'application/json', ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}) },
-          body: JSON.stringify({ model, input: texts }),
+          body: embeddingRequestBody(model, texts, this.opts.requestDimensions),
           signal: AbortSignal.timeout(timeoutMs),
         });
         if (!res.ok) {

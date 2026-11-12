@@ -92,6 +92,26 @@ export function ruleEdges(m: Model): EdgeRow[] {
   return out;
 }
 
+/** A code file / range node of the graph (props of `code_file` / `code_range` nodes). */
+export interface CodeNodeRef {
+  repo: string;
+  path: string;
+  start?: number | null;
+  end?: number | null;
+}
+
+/** Code file / range nodes as `componentEdges` extras (from node rows: kind + props). */
+export function codeNodeRefs(rows: { kind: string; props: unknown }[]): CodeNodeRef[] {
+  const out: CodeNodeRef[] = [];
+  for (const r of rows) {
+    if (r.kind !== 'code_file' && r.kind !== 'code_range') continue;
+    const p = (typeof r.props === 'string' ? parseJson<Record<string, unknown>>(r.props, {}) : (r.props as Record<string, unknown>)) ?? {};
+    if (typeof p.repo !== 'string' || typeof p.path !== 'string') continue;
+    out.push({ repo: p.repo, path: p.path, ...(r.kind === 'code_range' && typeof p.lineStart === 'number' ? { start: p.lineStart, end: typeof p.lineEnd === 'number' ? p.lineEnd : p.lineStart } : {}) });
+  }
+  return out;
+}
+
 /** Code ranges known to the graph (refs with lines, rule examples with lines). */
 function knownRanges(m: Pick<Model, 'specs' | 'standards' | 'components'>): (CodeFile & { start: number; end: number })[] {
   const out = new Map<string, CodeFile & { start: number; end: number }>();
@@ -117,7 +137,7 @@ function knownRanges(m: Pick<Model, 'specs' | 'standards' | 'components'>): (Cod
  * Component edges of a whole-repository state: `contains` (parent -> child component), `owns` (component -> every known file one of its globs matches) and
  * `owned_by` (known file / code range -> the owning component: the most specific glob wins, as `ownerOf` in storage).
  */
-export function componentEdges(m: Model): EdgeRow[] {
+export function componentEdges(m: Model, extra: CodeNodeRef[] = []): EdgeRow[] {
   const out: EdgeRow[] = [];
   // Containment: parent -> child (`contains`; reverse `contained_in`), archived ones included (they stay resolvable).
   const all = m.components ?? [];
@@ -125,7 +145,15 @@ export function componentEdges(m: Model): EdgeRow[] {
   // Archived components own nothing (their owns globs no longer claim code).
   const comps = all.filter((c) => c.status !== 'archived');
   if (!comps.length) return out;
-  for (const f of knownFiles(m)) {
+  // G-6: every code node of the graph is owned, whatever introduced it (refs, examples, touches, findings, feedback).
+  const files = new Map(knownFiles(m).map((f) => [`${f.repo}\u0000${f.path}`, f]));
+  const ranges = new Map(knownRanges(m).map((r) => [`${r.repo}\u0000${r.path}#${r.start}-${r.end}`, r]));
+  for (const x of extra) {
+    const f = { repo: x.repo, path: norm(x.path) };
+    files.set(`${f.repo}\u0000${f.path}`, f);
+    if (x.start != null) ranges.set(`${f.repo}\u0000${f.path}#${x.start}-${x.end ?? x.start}`, { ...f, start: x.start, end: x.end ?? x.start });
+  }
+  for (const f of files.values()) {
     const file = buildNodeUri({ kind: 'code', repo: f.repo, path: f.path });
     for (const c of comps) {
       const globs = c.owns.filter((o) => o.repo === f.repo).flatMap((o) => o.paths).filter((g) => globMatch(g, f.path));
@@ -134,7 +162,7 @@ export function componentEdges(m: Model): EdgeRow[] {
     const owner = ownerOf(f.repo, f.path, comps);
     if (owner) out.push({ from: file, to: buildRef({ kind: 'components', id: owner.component.id }), kind: 'owned_by', props: { glob: owner.glob } });
   }
-  for (const r of knownRanges(m)) {
+  for (const r of ranges.values()) {
     const owner = ownerOf(r.repo, r.path, comps);
     if (!owner) continue;
     out.push({ from: buildNodeUri({ kind: 'code', repo: r.repo, path: r.path, lines: { start: r.start, end: r.end } }), to: buildRef({ kind: 'components', id: owner.component.id }), kind: 'owned_by', props: { glob: owner.glob } });
@@ -238,6 +266,9 @@ export function graphRulesForCode(db: DB, input: RulesForCodeInput): GraphRuleHi
     const doc = section.replace(/\/sections\/.*$/, '');
     for (const from of [section, doc]) {
       for (const e of inherited.all(from) as { to_uri: string; props: string }[]) {
+        // G-8: the rule's own scope narrows it for this file (as `rulesForCode`).
+        const sc = parseJson<{ scope?: RuleLike['scope'] }>((ruleNode.get(e.to_uri) as { props: string } | undefined)?.props, {}).scope;
+        if (sc && (sc.paths?.length || sc.languages?.length) && !inScope(sc, p)) continue;
         add(e.to_uri, parseJson<{ level?: GraphRuleHit['level'] }>(e.props, {}).level ?? levelOfUri(e.to_uri), 'section', section);
       }
     }

@@ -1,0 +1,32 @@
+{
+  "name": "getmandate",
+  "version": "0.1.0",
+  "description": "Mandate: a local specification system for coding agents. Run `npx getmandate install`.",
+  "type": "module",
+  "license": "UNLICENSED",
+  "bin": {
+    "mandate": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "es-git": "^0.7.0",
+    "sqlite-vec": "^0.1.9"
+  },
+  "devDependencies": {
+    "@mandate/server": "0.1.0",
+    "esbuild": "^0.28.2"
+  }
+}

@@ -1,4 +1,4 @@
-import { IconFileText, IconClipboardList, IconMessageReport, IconRuler2, IconTopologyStar3 } from '@tabler/icons-react';
+import { IconFileText, IconListCheck, IconClipboardList, IconMessageReport, IconRuler2, IconTopologyStar3 } from '@tabler/icons-react';
 import type { EntityKind } from '@mandate/shared';
 
 export interface SectionDef {
@@ -34,6 +34,13 @@ export const SECTIONS: SectionDef[] = [
     singular: 'component',
     description: 'The architecture: services, modules and datastores, what they own and depend on.',
     icon: IconTopologyStar3,
+  },
+  {
+    kind: 'audits',
+    label: 'Audits',
+    singular: 'audit',
+    description: 'Audit reports: a coding agent checks the code against a spec or standard.',
+    icon: IconListCheck,
   },
   {
     kind: 'work-orders',

@@ -3,6 +3,7 @@ import {
   buildRef,
   FEEDBACK_TRANSITIONS,
   feedbackSchema,
+  isAuditTarget,
   isVerificationTarget,
   parseNodeUri,
   parseRef,
@@ -17,10 +18,10 @@ import {
   type StoredSpec,
   type StoredStandard,
   type UpdateFeedbackInput,
+  userOfTrailers,
 } from '@mandate/shared';
 import type { GitStore } from '../git/GitStore.js';
 import { actorOf, ConflictError, NotFoundError, type CommitMeta } from './GitBackedRepository.js';
-import { newId } from './ids.js';
 import type { HistoryService } from './history.js';
 import type { JsonlFileRepository } from './JsonlFileRepository.js';
 import type { MarkdownDirRepository } from './MarkdownDirRepository.js';
@@ -28,6 +29,15 @@ import type { MarkdownDirRepository } from './MarkdownDirRepository.js';
 class ValidationError extends Error {
   readonly statusCode = 400;
 }
+/** DF-12: closing as applied needs a linked change (409 `applied_without_changes`). */
+export class AppliedWithoutChangesError extends Error {
+  readonly statusCode = 409;
+  readonly code = 'applied_without_changes';
+  constructor(id: string) {
+    super(`applied_without_changes: no change is linked to ${id}: no commit carries "Feedback: ${id}" (addresses) or "Caused-By: mandate://feedback/${id}" (cause), and relatedTo names no commit`);
+  }
+}
+
 /** Closed feedback is immutable (409 `feedback_closed`). */
 export class FeedbackClosedError extends Error {
   readonly statusCode = 409;
@@ -46,7 +56,9 @@ const FEEDBACK_FILE = 'feedback.jsonl';
 /** `Feedback: fb-1, fb-2` trailer lines anywhere in a commit message. */
 export function feedbackTrailerIds(message: string): string[] {
   const ids: string[] = [];
-  for (const m of message.matchAll(/^Feedback:[ \t]*(.+)$/gim)) ids.push(...m[1]!.split(/[\s,]+/).filter(Boolean));
+  // Trailers only: never the subject line (`feedback: create fb-0012` is not a trailer).
+  const body = message.split('\n').slice(1).join('\n');
+  for (const m of body.matchAll(/^Feedback:[ \t]*(.+)$/gim)) ids.push(...m[1]!.split(/[\s,]+/).filter(Boolean));
   return ids;
 }
 
@@ -68,6 +80,10 @@ export class FeedbackService {
   private authors?: { head: string | null; map: Map<string, string | null> };
   /** Verification records (for `mandate://verifications/<id>` targets; wired by createStorage). */
   verifications?: () => Promise<VerificationRecord[]>;
+  /** Audit reports (audit item / finding targets, DF-10; wired by createStorage). */
+  audit?: (id: string) => Promise<{ id: string; title: string; sections: { id: string; title: string; type: string; findings?: { id: string; title: string }[] }[] } | null>;
+  /** Resolves (throws when missing) an element reference in `relatedTo` (wired by createStorage). */
+  resolveRef?: (uri: string) => Promise<unknown>;
 
   constructor(
     private readonly repo: JsonlFileRepository<StoredFeedback>,
@@ -84,7 +100,9 @@ export class FeedbackService {
     const items = await this.repo.list();
     for (const id of ids) {
       const item = items.find((f) => f.id === id);
-      if (item?.status === 'closed') throw new FeedbackClosedError(id, 'referenced by new changes');
+      // MW-17: a `Feedback:` trailer names an existing item.
+      if (!item) throw new NotFoundError(`feedback '${id}' (Feedback trailer / addresses) not found`);
+      if (item.status === 'closed') throw new FeedbackClosedError(id, 'referenced by new changes');
     }
   }
 
@@ -244,10 +262,45 @@ export class FeedbackService {
     return this.authors.map.get(id) ?? null;
   }
 
-  /** Authors of all items (for waiver approval checks). */
+  /**
+   * Who accepted an item: the principal (server-mode user, else agent, else commit author) of the first commit in which
+   * the item is `accepted` (or closed as applied without having been accepted). Derived from history; cached once known.
+   */
+  async acceptorOf(id: string): Promise<string | null> {
+    const stored = (await this.repo.get(id).catch(() => null))?.acceptedBy;
+    if (stored) return stored;
+    if (this.acceptors.has(id)) return this.acceptors.get(id)!;
+    const commits = (await this.history.mentioning(id)).filter((h) => h.trailers['Feedback-Item'] === id).reverse();
+    for (const h of commits) {
+      const raw = await this.git.readFileAt(h.commit, 'feedback.jsonl').catch(() => null);
+      const line = raw?.split('\n').find((l) => l.includes(`"id":"${id}"`));
+      let item: { status?: string; resolution?: string } | null = null;
+      try {
+        item = line ? JSON.parse(line) : null;
+      } catch {
+        item = null;
+      }
+      if (item?.status === 'accepted' || (item?.status === 'closed' && item.resolution === 'applied')) {
+        const who = h.user ?? h.agent ?? h.author ?? null;
+        this.acceptors.set(id, who);
+        return who;
+      }
+    }
+    return null;
+  }
+  private readonly acceptors = new Map<string, string | null>();
+
+  /** Acceptors of the accepted (or applied) items, as principals (waiver approval checks). */
+  async acceptors_(): Promise<Map<string, string | null>> {
+    const out = new Map<string, string | null>();
+    for (const f of await this.repo.list()) if (f.status === 'accepted' || (f.status === 'closed' && f.resolution === 'applied')) out.set(f.id, await this.acceptorOf(f.id));
+    return out;
+  }
+
+  /** Authors of all items as principals (waiver approval checks): the server-set user when known, else the agent / author. */
   async authors_(): Promise<Map<string, string | null>> {
     const out = new Map<string, string | null>();
-    for (const f of await this.repo.list()) out.set(f.id, await this.authorOf(f.id));
+    for (const f of await this.repo.list()) out.set(f.id, f.createdByUser ?? (await this.authorOf(f.id)));
     return out;
   }
 
@@ -262,6 +315,7 @@ export class FeedbackService {
     const rel = current ? next.relatedTo.filter((r) => !current.relatedTo.includes(r)) : next.relatedTo;
     const dup = next.duplicateOf && next.duplicateOf !== current?.duplicateOf ? next.duplicateOf : undefined;
     await this.validate({ targets, duplicateOf: dup, relatedTo: rel }, next.id);
+    if (next.status === 'closed' && next.resolution === 'applied' && !(await this.hasLinkedChange(next))) throw new AppliedWithoutChangesError(next.id);
   }
 
   private async validate(f: Pick<StoredFeedback, 'targets' | 'duplicateOf' | 'relatedTo'>, selfId?: string) {
@@ -269,6 +323,11 @@ export class FeedbackService {
       if (isVerificationTarget(t)) {
         const vid = (parseNodeUri(t) as { id: string }).id;
         if (!(await this.verifications?.())?.some((r) => r.id === vid)) throw new ValidationError(`target ${t}: verification '${vid}' does not exist`);
+        continue;
+      }
+      if (isAuditTarget(t)) {
+        // DF-10: audit items and findings are graph keys: feedback may target them.
+        if (!(await this.auditTarget(t))) throw new ValidationError(`target ${t}: audit item / finding does not exist`);
         continue;
       }
       const ref = parseRef(t);
@@ -281,24 +340,49 @@ export class FeedbackService {
     }
     const ids = new Set((await this.repo.list()).map((x) => x.id));
     for (const other of [...(f.duplicateOf ? [f.duplicateOf] : []), ...(f.relatedTo ?? [])]) {
+      // DF-7: relatedTo may name any element by reference; it must resolve.
+      if (other.startsWith('mandate://')) {
+        if (other === `mandate://feedback/${selfId}`) throw new ValidationError(`feedback cannot reference itself`);
+        if (this.resolveRef) await this.resolveRef(other).catch((e: Error) => { throw new ValidationError(`relatedTo ${other}: ${e.message}`); });
+        continue;
+      }
       if (other === selfId) throw new ValidationError(`feedback cannot reference itself`);
       if (!ids.has(other)) throw new ValidationError(`feedback '${other}' does not exist`);
     }
   }
 
-  /** New items get `fb-<ulid>` ids and `createdBy` from the commit (agent, else author); validation runs inside the lock. */
+  /** New items get sequenced `fb-NNNN` ids and `createdBy` from the commit (agent, else author); validation runs inside the lock. */
   async create(input: CreateFeedbackInput, meta: CommitMeta = {}): Promise<Feedback> {
-    const id = input.id ?? newId('fb');
-    const item = feedbackSchema.parse({ ...input, id, createdBy: input.createdBy ?? actorOf(meta), createdAt: '', updatedAt: '' });
+    // Sequenced ids (`fb-0001`, ...) are allocated by the repository inside the write lock.
+    const id = input.id ?? 'fb-pending';
+    // The user is server-set from the commit's trailers (the authenticated principal), never from input.
+    const { createdByUser: _spoof, acceptedBy: _a, approvalOverride: _o, ...rest } = input as CreateFeedbackInput & { createdByUser?: string; acceptedBy?: string; approvalOverride?: unknown };
+    const user = userOfTrailers(meta.trailers);
+    const item = feedbackSchema.parse({ ...rest, id, createdBy: input.createdBy ?? actorOf(meta), ...(user ? { createdByUser: user } : {}), createdAt: '', updatedAt: '' });
     const { createdAt: _c, updatedAt: _u, ...stored } = item;
-    await this.repo.create(stored as never, meta);
-    return this.get(id);
+    const created = await this.repo.create((input.id ? stored : { ...stored, id: undefined }) as never, meta);
+    return this.get(created.id);
   }
 
-  async update(id: string, patch: UpdateFeedbackInput, meta: CommitMeta = {}): Promise<Feedback> {
+  /**
+   * Update an item. Accepting stamps `acceptedBy` (the principal: server-mode user, else agent). `override` (feedback_accept
+   * with override: eligibility checked by the caller) records `approvalOverride` and an `Approval-Override:` trailer.
+   */
+  async update(id: string, patch: UpdateFeedbackInput, meta: CommitMeta = {}, opts: { override?: string; acceptedBy?: string } = {}): Promise<Feedback> {
     const current = await this.repo.get(id);
     if (current.status === 'closed') throw new FeedbackClosedError(id, 'modified');
-    await this.repo.update(id, patch as never, meta);
+    // An answered approval question: the answering user approved it.
+    const who = (opts.acceptedBy ?? userOfTrailers(meta.trailers) ?? actorOf(meta)).trim();
+    const at = (meta.date ?? new Date()).toISOString();
+    const accepting = patch.status === 'accepted' && current.status !== 'accepted';
+    const stamped = {
+      ...patch,
+      ...(accepting ? { acceptedBy: who } : {}),
+      ...(opts.override ? { approvalOverride: { by: who, reason: opts.override, at } } : {}),
+    };
+    const m = opts.override ? { ...meta, trailers: { ...meta.trailers, 'Approval-Override': opts.override.replace(/[\r\n]+/g, ' ') } } : meta;
+    await this.repo.update(id, stamped as never, m);
+    if (accepting) this.acceptors.set(id, who);
     return this.get(id);
   }
 
@@ -308,6 +392,31 @@ export class FeedbackService {
     return this.repo.delete(id, meta);
   }
 
+  /**
+   * DF-12: a change linked to an item: a commit with a `Feedback: <id>` trailer (addresses) or `Caused-By:` naming it
+   * (cause), other than the item's own commits; or an explicit commit link in `relatedTo` (mandate://commits/<sha>).
+   */
+  async hasLinkedChange(f: Pick<StoredFeedback, 'id' | 'relatedTo'>): Promise<boolean> {
+    if ((f.relatedTo ?? []).some((r) => parseNodeUri(r)?.kind === 'commits')) return true;
+    const uri = buildRef({ kind: 'feedback', id: f.id });
+    return (await this.history.mentioning(f.id)).some((h) => h.trailers['Feedback-Item'] !== f.id && ((h.trailers['Feedback'] ?? '').split(/[\s,]+/).includes(f.id) || (h.causes ?? []).includes(uri)));
+  }
+
+  /** An audit item or finding target: its kind, id and title, or null when missing. */
+  private async auditTarget(t: string): Promise<{ kind: 'audits' | 'findings'; id: string; title: string } | null> {
+    const n = parseNodeUri(t);
+    const r = parseRef(t);
+    const auditId = n?.kind === 'findings' ? n.audit : r?.id;
+    const a = auditId ? await this.audit?.(auditId).catch(() => null) : null;
+    if (!a) return null;
+    if (n?.kind === 'findings') {
+      const f = a.sections.flatMap((s) => s.findings ?? []).find((x) => x.id === n.id);
+      return f ? { kind: 'findings', id: n.id, title: f.title } : null;
+    }
+    const s = a.sections.find((x) => x.id === r?.sectionId && x.type === 'audit-item');
+    return s ? { kind: 'audits', id: a.id, title: `${a.title}: ${s.title}` } : null;
+  }
+
   /** Targets resolved at HEAD, or for closed (immutable) items at their closing commit (C3.6). */
   async resolve(id: string): Promise<ResolvedFeedback> {
     const feedback = await this.get(id);
@@ -315,6 +424,11 @@ export class FeedbackService {
     const at = feedback.status === 'closed' ? (await this.derive(items)).get(id)?.closingCommit : undefined;
     const targets: ResolvedFeedback['targets'] = [];
     for (const t of feedback.targets) {
+      if (isAuditTarget(t)) {
+        const hit = await this.auditTarget(t);
+        targets.push({ ref: t, kind: hit?.kind ?? 'audits', id: hit?.id ?? t, title: hit?.title ?? null });
+        continue;
+      }
       if (isVerificationTarget(t)) {
         const vid = (parseNodeUri(t) as { id: string }).id;
         const record = (await this.verifications?.())?.find((r) => r.id === vid) ?? null;

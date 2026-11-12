@@ -1,0 +1,21 @@
+/* Activity feed: sentence titles, grouped runs, loading state. Existing tokens and type scale only. */
+.activity .activity-head { align-items: flex-start; font-size: var(--mantine-font-size-sm); margin-bottom: 2px; }
+.activity-icon { display: inline-flex; flex: none; margin-top: 2px; color: var(--app-text-muted); }
+.activity-title { flex: 1; min-width: 0; line-height: 1.4; color: var(--mantine-color-text); overflow-wrap: anywhere; }
+.activity .activity-time { flex: none; margin-left: 6px; font-size: var(--mantine-font-size-xs); white-space: nowrap; }
+.activity-meta { display: flex; align-items: center; gap: 6px; margin: 0 0 4px 20px; font-size: var(--mantine-font-size-xs); min-width: 0; }
+.activity .activity-body { margin-left: 20px; }
+.activity .activity-body:empty { display: none; }
+.activity-hash { font-size: var(--mantine-font-size-xs); color: var(--app-text-muted); padding: 0 5px; border: 1px solid var(--app-border); border-radius: 4px; }
+.activity-reason { margin-top: 4px; color: var(--app-text-muted); font-size: var(--mantine-font-size-xs); line-height: 1.4; }
+.activity-expand { display: inline-flex; align-items: center; gap: 4px; margin-top: 4px; padding: 0; border: 0; background: none; color: var(--app-text-muted); font: inherit; font-size: var(--mantine-font-size-xs); cursor: pointer; }
+.activity-expand:hover { color: var(--mantine-color-text); }
+.activity-expand:focus-visible { outline: 2px solid var(--mantine-primary-color-filled); outline-offset: 2px; border-radius: 4px; }
+.activity-expand-chevron { transition: transform 120ms ease; }
+.activity-expand[aria-expanded='true'] .activity-expand-chevron { transform: rotate(90deg); }
+.activity-sublist { list-style: none; margin: 6px 0 0; padding: 0 0 0 10px; border-left: 1px solid var(--app-border); display: flex; flex-direction: column; gap: 4px; }
+.activity-subitem { display: flex; gap: 6px; font-size: var(--mantine-font-size-xs); line-height: 1.4; }
+.activity-subtitle { flex: 1; min-width: 0; color: var(--app-text-muted); overflow-wrap: anywhere; }
+.activity-skeleton { display: flex; flex-direction: column; gap: 14px; padding: 6px 0; }
+.activity-skeleton-row { padding-bottom: 12px; border-bottom: 1px solid var(--app-border); }
+.activity-conn[data-state='connecting'] { background: var(--mantine-color-yellow-6); }

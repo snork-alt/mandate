@@ -5,12 +5,13 @@
  * Scopes: sign-in asks only for what the allow-list needs (`read:org` when `allowedOrgs` is set, else none);
  * "New project" upgrades to `repo` (private repos) or `public_repo` incrementally.
  */
+import { userDirectory } from './users.js';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { statSync } from 'node:fs';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { authConfigSchema, readRawConfig, type AuthConfig } from '../config.js';
 import { refreshSecrets } from '../secrets.js';
-import { cookieOf, originOk, SESSION_COOKIE, type AuthOptions } from './http.js';
+import { cookieOf, originOk, sessionForMode, SESSION_COOKIE, type AuthOptions } from './http.js';
 import type { SessionUser } from './sessions.js';
 
 export const DEFAULT_CALLBACK_URL = 'http://localhost:5173/auth/github/callback';
@@ -45,6 +46,10 @@ export class AuthConfigSource {
     initial: AuthConfig,
     private readonly env: NodeJS.ProcessEnv = process.env,
     private readonly log?: { warn(m: string): void },
+    /** `<publicUrl>/auth/github/callback` (server mode); the dev default otherwise. */
+    private readonly defaultCallbackUrl: string = DEFAULT_CALLBACK_URL,
+    /** false with repo-based permissions: anyone may sign in and sees only the projects whose repo they can read. */
+    readonly allowListRequired = true,
   ) {
     this.cfg = initial;
   }
@@ -65,18 +70,24 @@ export class AuthConfigSource {
     }
   }
 
+  /** `auth.github.allowedUsers` (re-read on change), e.g. for admin rights. */
+  allowedUsers(): string[] {
+    this.reload();
+    return this.cfg.github?.allowedUsers ?? [];
+  }
+
   current(): AuthState {
     this.reload();
     if (this.env === process.env) refreshSecrets();
     const g = this.cfg.github;
-    const callbackUrl = g?.callbackUrl ?? DEFAULT_CALLBACK_URL;
+    const callbackUrl = g?.callbackUrl ?? this.defaultCallbackUrl;
     const missing: string[] = [];
     if (!g) missing.push('auth.github');
     if (!g?.clientId) missing.push('auth.github.clientId');
     const secretEnv = g?.clientSecretEnv ?? 'MANDATE_GITHUB_CLIENT_SECRET';
     const secret = this.env[secretEnv];
     if (!secret) missing.push(`env ${secretEnv} (auth.github.clientSecretEnv) is not set`);
-    if (!g?.allowedUsers.length && !g?.allowedOrgs.length) missing.push('auth.github.allowedUsers or auth.github.allowedOrgs (at least one)');
+    if (this.allowListRequired && !g?.allowedUsers.length && !g?.allowedOrgs.length) missing.push('auth.github.allowedUsers or auth.github.allowedOrgs (at least one)');
     const configured = missing.length === 0;
     return {
       configured,
@@ -180,9 +191,9 @@ export class GithubClient {
   }
 
   async user(token: string): Promise<SessionUser> {
-    const r = await this.api<{ login: string; name?: string | null; avatar_url: string }>(token, '/user');
+    const r = await this.api<{ login: string; name?: string | null; avatar_url: string; id?: number }>(token, '/user');
     if (r.status !== 200) this.fail(r.status, 'user', r.body);
-    return { login: r.body.login, ...(r.body.name ? { name: r.body.name } : {}), avatarUrl: r.body.avatar_url };
+    return { login: r.body.login, ...(r.body.name ? { name: r.body.name } : {}), avatarUrl: r.body.avatar_url, ...(typeof r.body.id === 'number' ? { githubId: r.body.id } : {}) };
   }
 
   /** Active member of `org` (needs read:org for private memberships). */
@@ -265,6 +276,12 @@ export class GithubClient {
     }
   }
 
+  /** `permissions` of a repo for the token's user (covers org / team grants); status 404/403 = no access. */
+  async repoPermissions(token: string, fullName: string): Promise<{ status: number; permissions?: { pull?: boolean; triage?: boolean; push?: boolean; maintain?: boolean; admin?: boolean } }> {
+    const r = await this.api<{ permissions?: { pull?: boolean; triage?: boolean; push?: boolean; maintain?: boolean; admin?: boolean } }>(token, `/repos/${fullName.split('/').map(encodeURIComponent).join('/')}`);
+    return { status: r.status, ...(r.status === 200 ? { permissions: r.body?.permissions } : {}) };
+  }
+
   async repo(token: string, fullName: string): Promise<GithubRepo & { canPush: boolean }> {
     const r = await this.api<RawRepo & { permissions?: { push?: boolean } }>(token, `/repos/${fullName.split('/').map(encodeURIComponent).join('/')}`);
     if (r.status !== 200) this.fail(r.status, `repo ${fullName}`, r.body);
@@ -301,6 +318,12 @@ export interface AuthRouteOptions {
   source: AuthConfigSource;
   github?: GithubClient;
   log?: { warn(m: string): void; info(m: string): void };
+  /** GitHub sign-in routes exist only in server mode (default: always). */
+  githubEnabled?: boolean;
+  /** After a successful sign-in (e.g. forget cached repo permissions). */
+  onSignIn?: (login: string) => void;
+  /** Extra fields for /auth/status (setup state, mode, ...); they override the defaults. */
+  statusExtra?: (req: FastifyRequest, user: SessionUser | null) => Record<string, unknown>;
 }
 
 const b64 = (b: Buffer) => b.toString('base64url');
@@ -340,7 +363,7 @@ export function registerAuthRoutes(app: FastifyInstance, o: AuthRouteOptions): v
 
   app.get('/auth/status', async (req, reply) => {
     const st = o.source.current();
-    const user = store.session(cookieOf(req, SESSION_COOKIE));
+    const user = sessionForMode(await store.session(cookieOf(req, SESSION_COOKIE)), o.auth.mode);
     reply.header('Cache-Control', 'no-store');
     return {
       authenticated: !!user,
@@ -349,9 +372,15 @@ export function registerAuthRoutes(app: FastifyInstance, o: AuthRouteOptions): v
       missing: st.missing,
       callbackUrl: st.callbackUrl,
       loginUrl: '/auth/github/login',
-      ...(user ? { scopes: store.scopes(user.login) } : {}),
+      ...(user && user.kind !== 'local' ? { scopes: await store.scopes(user.login) } : {}),
+      ...(o.statusExtra?.(req, user) ?? {}),
     };
   });
+
+  if (o.githubEnabled === false) {
+    registerLogout(app, o);
+    return;
+  }
 
   app.get('/auth/github/login', async (req, reply) => {
     const st = o.source.current();
@@ -393,7 +422,9 @@ export function registerAuthRoutes(app: FastifyInstance, o: AuthRouteOptions): v
     try {
       const { token, scopes } = await gh.exchangeCode(st.github, q.code, saved.verifier);
       const user = await gh.user(token);
+      const listed = st.github.allowedUsers.length > 0 || st.github.allowedOrgs.length > 0;
       const allowed =
+        (!listed && !o.source.allowListRequired) ||
         st.github.allowedUsers.some((u) => u.toLowerCase() === user.login.toLowerCase()) ||
         (await (async () => {
           for (const org of st.github!.allowedOrgs) if (await gh.isOrgMember(token, org)) return true;
@@ -403,9 +434,12 @@ export function registerAuthRoutes(app: FastifyInstance, o: AuthRouteOptions): v
         o.log?.warn(`sign-in refused for GitHub user ${user.login} (not in allowedUsers / allowedOrgs)`);
         return fail('not_allowed');
       }
-      store.saveToken(user.login, token, scopes);
+      await store.saveToken(user.login, token, scopes);
+      // User directory (avatars, names, noreply co-author addresses).
+      userDirectory()?.record({ login: user.login, name: user.name ?? null, avatarUrl: user.avatarUrl, ...(user.githubId ? { id: user.githubId } : {}) });
+      o.onSignIn?.(user.login);
       const sessionTtlMs = st.sessionTtlHours * 3600_000;
-      const cookie = store.createSession(user, sessionTtlMs);
+      const cookie = await store.createSession(user, sessionTtlMs);
       o.log?.info(`GitHub sign-in: ${user.login}`);
       reply.header('Set-Cookie', [
         `${OAUTH_COOKIE}=; HttpOnly; SameSite=Lax; Path=/auth/github; Max-Age=0`,
@@ -418,9 +452,13 @@ export function registerAuthRoutes(app: FastifyInstance, o: AuthRouteOptions): v
     }
   });
 
+  registerLogout(app, o);
+}
+
+function registerLogout(app: FastifyInstance, o: AuthRouteOptions) {
   app.post('/auth/logout', async (req: FastifyRequest, reply: FastifyReply) => {
     if (!originOk(req, o.auth.uiOrigins)) return reply.code(403).send({ error: { code: 'forbidden', message: 'Origin must be same-origin' } });
-    store.deleteSession(cookieOf(req, SESSION_COOKIE));
+    await o.auth.store.deleteSession(cookieOf(req, SESSION_COOKIE));
     reply.header('Set-Cookie', `${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`);
     return reply.code(204).send();
   });

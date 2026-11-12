@@ -1,0 +1,114 @@
+/* Integrity view (/integrity) and the sidebar git box. */
+.integ-repo {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--app-border);
+  font-size: 13px;
+  color: var(--app-text-muted);
+  overflow-wrap: anywhere;
+}
+.integ-repo b {
+  color: var(--mantine-color-text);
+  font-weight: 500;
+}
+.integ-group {
+  padding: 12px 20px 4px;
+}
+.integ-group-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.integ-sev[data-sev='error'] {
+  color: var(--mantine-color-red-6);
+  flex-shrink: 0;
+}
+.integ-sev[data-sev='warning'] {
+  color: var(--mantine-color-orange-6);
+  flex-shrink: 0;
+}
+.integ-rule {
+  margin: 0 0 16px;
+}
+.integ-rule-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.integ-rule-count {
+  margin-left: 4px;
+  font-weight: 400;
+  color: var(--app-text-muted);
+}
+.integ-rule-what {
+  margin: 2px 0 6px;
+  font-size: 12px;
+  color: var(--app-text-muted);
+}
+.integ-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+}
+.integ-issue {
+  padding: 8px 12px;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.integ-issue + .integ-issue {
+  border-top: 1px solid var(--app-border);
+}
+.integ-target {
+  font-family: var(--mantine-font-family-monospace);
+  font-size: 12px;
+  color: var(--mantine-color-anchor);
+  text-decoration: none;
+}
+.integ-target:hover {
+  text-decoration: underline;
+}
+.integ-target-plain {
+  color: var(--app-text-muted);
+}
+.integ-message {
+  margin-top: 2px;
+}
+.integ-hint {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--app-text-muted);
+}
+
+/* Sidebar git box: a button opening /integrity. */
+.git-box {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  padding: 2px;
+  border-radius: 4px;
+  text-align: left;
+}
+.git-box:hover {
+  background: var(--app-hover);
+}
+.git-box:focus-visible {
+  outline: 2px solid var(--mantine-primary-color-filled);
+  outline-offset: 1px;
+}
+.git-box-integrity {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--mantine-color-orange-7);
+  white-space: nowrap;
+}

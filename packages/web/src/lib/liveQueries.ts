@@ -5,14 +5,16 @@ import { onNotification, onConnectionChange } from '../mcp/client';
 import { ACTIVITY_METHOD, toActivityEvent, type ActivityEvent } from '../components/activity/types';
 
 const DEBOUNCE_MS = 150;
-/** Cache keys that are not scoped to a document (git state, architecture view, section types never change). */
-const GLOBAL_KEYS = new Set(['git', 'git-log', 'architecture']);
+/** Cache keys that are not scoped to a document (git state, architecture view, the Overview aggregate; section types never change). */
+const GLOBAL_KEYS = new Set(['git', 'git-log', 'architecture', 'overview']);
 
 /** Which cached queries does a batch of events make stale? `git.pulled` (or reconnect) invalidates everything. */
 export function matchesEvents(key: QueryKey, events: Pick<ActivityEvent, 'type' | 'refs'>[]): boolean {
   if (events.some((e) => e.type === 'git.pulled')) return true;
   const head = key[0];
   if (typeof head !== 'string') return false;
+  // Integrity changed (counts, gaps): the git status (sidebar count) and the spec / component lists and pages.
+  if (events.some((e) => e.type === 'integrity.changed') && (head === 'specs' || head === 'components')) return true;
   if (GLOBAL_KEYS.has(head)) return true;
   if (head === 'section-types') return false;
   if (head === 'mcp') return true; // search, graph and node results derive from any document

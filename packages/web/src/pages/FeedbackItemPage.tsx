@@ -1,8 +1,11 @@
+import { buildRef } from '@mandate/shared/refs';
+import { DecisionDialogs, ItemMenu, feedbackActions } from '../components/decisions/DecisionActions';
+import { decisionPrompt } from '../lib/prompts';
 import { useMemo } from 'react';
 import { Skeleton, Text } from '@mantine/core';
 import { IconFileOff, IconGitCommit } from '@tabler/icons-react';
 import { useQuery } from '@tanstack/react-query';
-import type { FeedbackChange, ResolvedFeedbackTarget, Section } from '@mandate/shared';
+import type { Attribution, FeedbackChange, ResolvedFeedbackTarget, Section } from '@mandate/shared';
 import { Link, useNavigate, useParams } from 'react-router';
 import { api } from '../api';
 import { parseRef, refLabel } from '@mandate/shared/refs';
@@ -20,6 +23,7 @@ import { TopBar } from '../components/TopBar';
 import { FEEDBACK_KIND_META, firstLine } from '../lib/feedback';
 import { useStandards } from '../lib/queries';
 import { sectionTarget } from '../lib/refs';
+import { refHref } from '../components/refs/kinds';
 import { useNow, shortSubject } from '../lib/specs';
 
 /** A target section rendered inline (current content; the quote is highlighted by DocPage). */
@@ -36,6 +40,10 @@ function TargetBlock({ t, standardTitles }: { t: ResolvedFeedbackTarget; standar
           {t.verification
             ? `Verification ${t.verification.result} of ${refLabel(t.verification.criterion)} by ${t.verification.by} (${t.verification.method}, code ${t.verification.code.repo}@${String(t.verification.code.commit).slice(0, 7)})`
             : 'This verification result does not exist.'}
+        </Text>
+      ) : t.kind === 'audits' || t.kind === 'findings' ? (
+        <Text size="sm" c="var(--app-text-muted)">
+          {t.title ? `Audit ${t.kind === 'findings' ? 'finding' : 'item'}: ${t.title}` : 'This audit item or finding does not exist.'}
         </Text>
       ) : t.section ? (
         <SectionBlock section={t.section} standardTitles={standardTitles} target={sectionTarget(t.kind, t.id, t.section, t.at)} />
@@ -139,6 +147,12 @@ export function FeedbackItemPage() {
           Filed <TimeAgo iso={f.createdAt} />
         </span>
       </div>
+      {f.status !== 'closed' && (
+        <div className="fb-decide" data-testid="fb-decide">
+          <span className="faint small">{f.status === 'open' ? 'Needs triage:' : 'Accepted; a coding agent acts on it.'}</span>
+          <ItemMenu label={f.id} prompt={decisionPrompt({ ref: buildRef({ kind: 'feedback', id: f.id }), question: f.status === 'open' ? `Accept, reject or mark as duplicate: "${firstLine(f.body)}"?` : `Act on accepted feedback ${f.id}: create a work order, or apply it and close it as applied?`, options: [], suggested: undefined })} actions={feedbackActions(buildRef({ kind: 'feedback', id: f.id }), f.id, { status: f.status === 'open' ? 'open' : 'accepted' })} />
+        </div>
+      )}
     </>
   );
 
@@ -179,8 +193,8 @@ export function FeedbackItemPage() {
         <div className="fb-related">
           Related:{' '}
           {f.relatedTo.map((x) => (
-            <Link key={x} to={`/feedback/${x}`} className="mono">
-              {x}
+            <Link key={x} to={parseRef(x) ? (refHref(x) ?? '#') : `/feedback/${x}`} className="mono">
+              {parseRef(x)?.id ?? x}
             </Link>
           ))}
         </div>
@@ -231,10 +245,11 @@ export function FeedbackItemPage() {
   );
 
   return (
-    <>
+    <DecisionDialogs>
       <TopBar crumbs={crumbs} />
       <DocPage
         doc={{ kind: 'feedback' as never, id: f.id, title: firstLine(f.body) }}
+        attribution={feedbackAttribution(f, history.data)}
         header={header}
         sections={sections}
         content={content}
@@ -243,6 +258,22 @@ export function FeedbackItemPage() {
         history={{ entries: history.data, loading: history.isPending, now }}
         panels={panels}
       />
-    </>
+    </DecisionDialogs>
   );
+}
+
+/**
+ * Who filed and last changed a feedback item: `createdBy` is the coding agent, `createdByUser` the user (server mode
+ * only, server-set); the last edit comes from the newest history entry (its user / agent trailers).
+ */
+export function feedbackAttribution(
+  f: { createdAt: string; createdBy?: string; createdByUser?: string },
+  history?: { date: string; commit: string; agent?: string; author: string; user?: string }[],
+): { createdAt: string; createdBy?: Attribution; lastEditedBy?: Attribution } {
+  const last = history?.[0];
+  return {
+    createdAt: f.createdAt,
+    ...(f.createdBy || f.createdByUser ? { createdBy: { ...(f.createdByUser ? { user: f.createdByUser } : {}), ...(f.createdBy ? { agent: f.createdBy } : {}), at: f.createdAt } } : {}),
+    ...(last && (history?.length ?? 0) > 1 ? { lastEditedBy: { ...(last.user ? { user: last.user } : {}), agent: last.agent ?? last.author, at: last.date, commit: last.commit } } : {}),
+  };
 }

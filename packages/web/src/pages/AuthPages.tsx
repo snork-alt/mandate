@@ -3,7 +3,7 @@ import { IconAlertTriangle, IconBrandGithub, IconCopy, IconLoader2 } from '@tabl
 import { useEffect, type ReactNode } from 'react';
 import { APP_NAME, Logo } from '../components/Logo';
 import { copyText } from '../lib/copy';
-import { AUTH_CONFIG_EXAMPLE, DEFAULT_CALLBACK_URL, githubLoginUrl, loginErrorMessage, safeReturnTo, type AuthStatus } from '../auth';
+import { cli, AUTH_CONFIG_EXAMPLE, DEFAULT_CALLBACK_URL, githubLoginUrl, loginErrorMessage, safeReturnTo, type AuthStatus } from '../auth';
 
 function AuthShell({ children, wide }: { children: ReactNode; wide?: boolean }) {
   return (
@@ -35,13 +35,23 @@ export function LoginPage({ status }: { status: AuthStatus }) {
         Sign in to {APP_NAME}
       </Text>
       <Text size="sm" c="var(--app-text-muted)" mt={6} mb="lg">
-        The web UI is read-only. Coding agents connect with per-project keys instead.
+        {APP_NAME} keeps the specifications your coding agents work from.{' '}
+        {status.mode === 'local' ? 'It runs on this computer.' : "Sign in with a GitHub account on this server's allow-list."}
       </Text>
       {error && (
         <Alert color="red" variant="light" icon={<IconAlertTriangle size={16} />} mb="md" data-testid="login-error">
           {error}
         </Alert>
       )}
+      {status.mode === 'local' ? (
+        <div className="np-stack" data-testid="local-login">
+          <Text size="sm">Mandate runs on this computer. Open it from a terminal; the command opens your browser signed in with a one-time link:</Text>
+          <CopyLine value={cli('open').npx} label="command" />
+          <Text size="xs" c="var(--app-text-faint)">
+            In a development checkout: <Code>{cli('open').dev}</Code>
+          </Text>
+        </div>
+      ) : (
       <Button
         fullWidth
         size="md"
@@ -52,6 +62,7 @@ export function LoginPage({ status }: { status: AuthStatus }) {
       >
         Continue with GitHub
       </Button>
+      )}
     </AuthShell>
   );
 }

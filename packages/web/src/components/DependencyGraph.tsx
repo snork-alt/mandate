@@ -23,21 +23,50 @@ import { useNavigate } from 'react-router';
 import { copyText } from '../lib/copy';
 import type { CopyTarget } from '../lib/refs';
 import { KIND_LABEL, useNow } from '../lib/specs';
+import { maturityText, SpecMaturityDot, useSpecMaturities } from './maturity/SpecMaturity';
 import { copyTargetProps } from './copy/copyTargets';
 import { CanvasViewer, ClaimAvatar } from './doc';
 import { WORK_ORDER_STATUS_META, WorkOrderStatusIcon } from './WorkOrderStatusIcon';
 
 const OPEN_KEY = 'mandate.work-order-deps.open';
 const NODE_W = 236;
-const NODE_H = 74;
+const NODE_H = 80;
 const CENTER_W = 252;
-const CENTER_H = 74;
+const CENTER_H = 80;
+const FOOT_ROW = 22;
 
-const readOpen = () => {
+/** Rough width (px) of the footer chips at 11px, so the card can grow a row instead of cutting them off. */
+function footerRows(n: DependencyNode, width: number): number {
+  const text = (t: string, pad = 0) => t.length * 6.3 + pad;
+  const items: number[] = [];
+  if (n.type === 'work_order') items.push(text(`${WORK_ORDER_STATUS_META[n.workOrders[0]!.status].label}${n.blocked ? '' : ' · not blocked'}`));
+  if (n.blocker) items.push(text('Blocks this', 12));
+  if (n.blocked) items.push(text('Blocked', 12));
+  if (n.broken) items.push(text('Broken dependency', 12));
+  if (n.upstreamChanged) items.push(text('Upstream changed', 12));
+  for (const c of (n.components ?? []).slice(0, 2)) items.push(text(c, 26));
+  if (n.type !== 'work_order') for (const w of n.workOrders.slice(0, 2)) items.push(text(w.id.length > 10 ? w.id.slice(0, 10) : w.id, 28));
+  if (n.workOrders.length > 2 && n.type !== 'work_order') items.push(text('+9'));
+  const avail = width - 20;
+  let rows = 1;
+  let x = 0;
+  for (const w of items) {
+    const need = Math.min(w, avail);
+    if (x > 0 && x + 5 + need > avail) {
+      rows++;
+      x = need;
+    } else x += (x > 0 ? 5 : 0) + need;
+  }
+  return Math.min(rows, 3);
+}
+
+/** The remembered choice: true / false, or null when the user never toggled the panel. */
+const readOpen = (): boolean | null => {
   try {
-    return localStorage.getItem(OPEN_KEY) !== '0';
+    const v = localStorage.getItem(OPEN_KEY);
+    return v === '1' ? true : v === '0' ? false : null;
   } catch {
-    return true;
+    return null;
   }
 };
 const writeOpen = (open: boolean) => {
@@ -133,6 +162,8 @@ function Badges({ n }: { n: DependencyNode }) {
 }
 
 function HoverSummary({ n }: { n: DependencyNode }) {
+  // The spec's maturity (the one state, X1), not its stored status.
+  const specM = useSpecMaturities(n.docKind === 'specs').get(n.docId);
   return (
     <div className="dep-hover">
       <div className="dep-hover-title">
@@ -142,7 +173,7 @@ function HoverSummary({ n }: { n: DependencyNode }) {
       {n.summary && <div className="dep-hover-summary">{n.summary}</div>}
       <div className="dep-hover-meta">
         {n.type === 'work_order' ? WORK_ORDER_STATUS_META[n.workOrders[0]!.status].label : STATE_LABEL[n.state]}
-        {n.specStatus && n.type !== 'work_order' && ` · spec ${n.specStatus.replace('_', ' ')}`}
+        {n.type !== 'work_order' && specM && ` · spec ${maturityText(specM)}`}
         {n.claim && ` · claimed by ${n.claim.agent}`}
         {n.truncated && ' · more beyond the depth limit'}
       </div>
@@ -196,6 +227,7 @@ function NodeCard({ n, commit, style, now }: { n: DependencyNode; commit: string
                   <KindIcon n={n} />
                 </span>
                 <span className="dep-node-doc">{n.type === 'work_order' ? `${KIND_LABEL[n.workOrders[0]!.kind]} · ${n.docTitle ?? n.docId}` : (n.docTitle ?? n.docId)}</span>
+                {n.type !== 'work_order' && n.docKind === 'specs' && <SpecMaturityDot id={n.docId} details={n.type === 'spec'} />}
                 {n.claim && <ClaimAvatar claim={n.claim} now={now} size={16} />}
               </div>
               <div className="dep-node-title">
@@ -212,17 +244,21 @@ function NodeCard({ n, commit, style, now }: { n: DependencyNode; commit: string
                 )}
                 <Badges n={n} />
                 {(n.components ?? []).slice(0, 2).map((c) => (
-                  <span key={c} className="dep-node-comp" title={`Component ${c}`}>
-                    <IconTopologyStar3 size={10} />
-                    {c}
-                  </span>
+                  <Tooltip key={c} label={`Component ${c}`} openDelay={300}>
+                    <span className="dep-node-comp">
+                      <IconTopologyStar3 size={10} />
+                      {c}
+                    </span>
+                  </Tooltip>
                 ))}
                 {n.type !== 'work_order' &&
                   n.workOrders.slice(0, 2).map((w) => (
-                    <span key={w.id} className="dep-node-wo" title={`${KIND_LABEL[w.kind]} · ${WORK_ORDER_STATUS_META[w.status].label}`}>
-                      <WorkOrderStatusIcon status={w.status} size={11} />
-                      <span className="mono">{w.id.length > 10 ? `${w.id.slice(0, 9)}…` : w.id}</span>
-                    </span>
+                    <Tooltip key={w.id} label={`${KIND_LABEL[w.kind]} · ${WORK_ORDER_STATUS_META[w.status].label}`} openDelay={300}>
+                      <span className="dep-node-wo">
+                        <WorkOrderStatusIcon status={w.status} size={11} />
+                        <span className="mono">{w.id.length > 10 ? `${w.id.slice(0, 9)}…` : w.id}</span>
+                      </span>
+                    </Tooltip>
                   ))}
                 {n.workOrders.length > 2 && n.type !== 'work_order' && <span className="faint small">+{n.workOrders.length - 2}</span>}
               </div>
@@ -262,7 +298,11 @@ interface Layout {
 async function layoutGraph(tree: DependencyTree): Promise<Layout> {
   const { default: ELK } = await import('elkjs/lib/elk.bundled.js');
   const elk = new ELK();
-  const size = (n: DependencyNode) => (n.type === 'work_order' ? { width: CENTER_W, height: CENTER_H } : { width: NODE_W, height: NODE_H });
+  // Every card the same size: the widest card width and the tallest footer among all nodes.
+  const width = Math.max(CENTER_W, NODE_W);
+  const rows = Math.max(1, ...tree.nodes.map((n) => footerRows(n, width)));
+  const uniform = { width, height: Math.max(CENTER_H, NODE_H) + (rows - 1) * FOOT_ROW };
+  const size = (_n: DependencyNode) => uniform;
   const graph: ElkNode = {
     id: 'root',
     layoutOptions: {
@@ -412,10 +452,13 @@ export function summaryLine(tree: DependencyTree): string {
   return parts.join(' · ');
 }
 
-/** Collapsible upstream / downstream dependency strip of a work order (open state remembered per browser). */
+/**
+ * Collapsible upstream / downstream dependency panel of a work order: a one-line summary, expanded on demand. Without a
+ * remembered choice it starts collapsed, and expanded only when the work order is blocked (the graph explains why).
+ */
 export function DependencyGraph({ tree }: { tree: DependencyTree }) {
   const now = useNow();
-  const [open, setOpen] = useState(readOpen);
+  const [open, setOpen] = useState(() => readOpen() ?? tree.summary.blockedBySections > 0);
   const narrow = useMediaQuery('(max-width: 760px)');
   const [layout, setLayout] = useState<Layout | null>(null);
   const empty = tree.nodes.length <= 1;

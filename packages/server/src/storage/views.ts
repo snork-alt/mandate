@@ -4,6 +4,7 @@
  * git log. (These were the REST responses; MCP is now the only interface.) Inputs are validated by the schemas in
  * `@mandate/shared` (`docListInputSchema`, ...).
  */
+import { maturities } from './maturity.js';
 import {
   docFeedbackInputSchema,
   docGetInputSchema,
@@ -33,13 +34,13 @@ import {
 import { deriveComponents, deriveSpecs, model, sectionTypes, type Storage } from './index.js';
 import { ReadError } from './read.js';
 
-type FileKind = 'specs' | 'standards' | 'components';
+type FileKind = 'specs' | 'standards' | 'components' | 'audits' | 'work-orders';
 
 export class DocViewService {
   constructor(private readonly storage: Storage) {}
 
   private repo(kind: FileKind) {
-    return kind === 'specs' ? this.storage.specs : kind === 'standards' ? this.storage.standards : this.storage.components;
+    return kind === 'specs' ? this.storage.specs : kind === 'standards' ? this.storage.standards : kind === 'audits' ? this.storage.audits : kind === 'work-orders' ? this.storage.workOrderDocs : this.storage.components;
   }
 
   private meta(kind: FileKind, id: string): Promise<FileMeta> {
@@ -54,12 +55,17 @@ export class DocViewService {
     if (kind === 'feedback') return { items: (await s.feedbackService.list()) as unknown as Record<string, unknown>[] };
     const raw = (await this.repo(kind).list()) as (StoredSpec | StoredStandard | StoredComponent)[];
     let extra: Record<string, Record<string, unknown>> = {};
-    if (kind === 'specs') {
+    if (kind === 'audits') {
+      const views = await s.auditService.views();
+      extra = Object.fromEntries(views.map((a) => [a.id, { audit: s.auditService.summaryOf(a) }]));
+    } else if (kind === 'specs') {
       const specs = raw as StoredSpec[];
       const rollups = await s.verificationService.rollups(specs);
       const blocked = await s.linkService.blockedSections(specs);
       const derived = await deriveSpecs(specs, await s.model(), s.verificationService);
-      extra = Object.fromEntries(specs.map((x) => [x.id, { ...derived[x.id], verification: rollups[x.id], blockedSections: blocked[x.id] ?? [] }]));
+      const audits = await s.auditService.lastAudits(specs.map((x) => x.id));
+      const mat = await maturities(s, specs);
+      extra = Object.fromEntries(specs.map((x) => [x.id, { ...derived[x.id], verification: rollups[x.id], blockedSections: blocked[x.id] ?? [], lastAudit: audits[x.id] ?? null, maturity: mat[x.id] }]));
     } else if (kind === 'standards') {
       const specs = (await s.specs.list()).filter((x) => x.status !== 'archived');
       // usedBy counts approved exemptions only (unapproved ones do not exempt).
@@ -68,8 +74,9 @@ export class DocViewService {
         for (const sec of std.sections) if (sec.type === 'rule' && !sec.archived) c[(sec.level as 'must' | 'should' | 'may' | undefined) ?? 'should']++;
         return c;
       };
+      const audits = await s.auditService.lastAudits((raw as StoredStandard[]).map((x) => x.id), undefined, 'standards');
       extra = Object.fromEntries(
-        (raw as StoredStandard[]).map((std) => [std.id, { usedBy: std.status === 'draft' ? 0 : standardUsage(std, specs).length, ruleCounts: counts(std), inForce: model.standardInForce(std) }]),
+        (raw as StoredStandard[]).map((std) => [std.id, { usedBy: std.status === 'draft' ? 0 : standardUsage(std, specs).length, ruleCounts: counts(std), inForce: model.standardInForce(std), lastAudit: audits[std.id] ?? null }]),
       );
     } else {
       extra = (await deriveComponents(raw as StoredComponent[], await s.model(), { verification: s.verificationService })) as unknown as Record<string, Record<string, unknown>>;
@@ -83,18 +90,31 @@ export class DocViewService {
   async get(input: DocGetInput): Promise<Record<string, unknown>> {
     const { kind, id } = docGetInputSchema.parse(input);
     const s = this.storage;
+    if (kind === 'work-orders') {
+      // The stored document (frontmatter + plan / wo-sections / reconciliation / outcome) plus the resolved work order.
+      const doc = await s.workOrderService.doc(id);
+      const resolved = await s.workOrderService.resolve(id);
+      return { ...doc, ...(await this.meta(kind, id)), workOrder: resolved, claimHeartbeatAt: resolved.item.claim?.heartbeatAt ?? null };
+    }
     const entity = await this.repo(kind).get(id);
     let detail: Record<string, unknown> = {};
     if (kind === 'specs') {
       const spec = entity as StoredSpec;
+      const { lastAudit, ...audits } = await s.auditService.specAudits(spec.id);
       detail = {
         ...(await deriveSpecs([spec], await s.model(), s.verificationService))[spec.id],
         verification: await s.verificationService.forSpec(spec),
         links: await s.linkService.forDoc('specs', spec),
+        audits,
+        lastAudit,
+        maturity: (await maturities(s, [spec]))[spec.id],
       };
     } else if (kind === 'standards') {
       const std = entity as StoredStandard;
-      detail = { verification: await s.verificationService.forStandard(std), links: await s.linkService.forDoc('standards', std) };
+      const { lastAudit, ...audits } = await s.auditService.standardAudits(std);
+      detail = { verification: await s.verificationService.forStandard(std), links: await s.linkService.forDoc('standards', std), audits, lastAudit };
+    } else if (kind === 'audits') {
+      detail = { audit: (await s.auditService.get(id)).audit };
     } else {
       const c = entity as StoredComponent;
       detail = {
@@ -135,6 +155,7 @@ export class DocViewService {
   async docFeedback(input: DocFeedbackInput) {
     const { kind, id } = docFeedbackInputSchema.parse(input);
     await this.repo(kind).get(id);
+    if (kind === 'audits' || kind === 'work-orders') return { items: [], openBySection: {} };
     return this.storage.feedbackService.forDoc(kind as never, id);
   }
 

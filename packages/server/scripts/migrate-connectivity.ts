@@ -23,7 +23,8 @@ const git = createGitStore(config);
 await git.openOrCreate();
 const storage = createStorage(git);
 const author = { name: 'Matteo', email: 'matteo@example.com' };
-const meta = (message: string) => ({ date: new Date(), author, message });
+// Migration commits record no causes (lineage L-1): `Mandate-Migration: yes`.
+const meta = (message: string) => ({ date: new Date(), author, message, trailers: { 'Mandate-Migration': 'yes' } });
 const full = async (c?: string) => (c && !isFullSha(c) ? ((await git.resolveCommit(c)) ?? c) : c);
 
 /** Former spec-level dependsOn, mapped to the section that actually depends (by content). */
@@ -112,7 +113,7 @@ for (const w of await storage.workOrders.list()) {
   const takeClaim = claim && open && !w.claim && w.kind !== 'review' && w.kind !== 'verify';
   if (specCommit === w.specCommit && !takeClaim) continue;
   const notes = [specCommit !== w.specCommit ? 'specCommit -> full sha' : '', takeClaim ? `claim by ${claim!.agent} moved here from spec ${w.spec}` : ''].filter(Boolean);
-  await storage.workOrders.update(w.id, { specCommit, ...(takeClaim ? { claim, status: 'in_progress' } : {}) } as never, meta(`work order: migrate ${w.id}\n\n${notes.map((n) => `- ${n}`).join('\n')}`));
+  await storage.workOrderService.update(w.id, { specCommit, ...(takeClaim ? { claim, status: 'in_progress' } : {}) } as never, meta(`work order: migrate ${w.id}\n\n${notes.map((n) => `- ${n}`).join('\n')}`));
   if (takeClaim) claims.delete(w.spec);
   console.log('work order', w.id, notes.join('; '));
 }

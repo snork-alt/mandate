@@ -393,8 +393,10 @@ export function chunkSection(doc: ChunkDoc, section: Section, opts: ChunkOptions
   const fenced = Boolean(def?.fence);
   const uri = sectionUri(doc, section);
   const range = doc.source ? sectionLineRange(doc.source, section.id) : null;
-  const start = (doc.source && bodyStartLine(doc.source, section.id, fenced)) || 1;
   const bodyLines = section.body ? section.body.split('\n').length : 0;
+  // An empty last section: its body would start past the end of the file; keep line refs inside the file.
+  const fileLines = doc.source ? doc.source.split('\n').length - (doc.source.endsWith('\n') ? 1 : 0) : Infinity;
+  const start = Math.max(1, Math.min((doc.source && bodyStartLine(doc.source, section.id, fenced)) || 1, bodyLines ? Infinity : fileLines));
   const bodyEnd = bodyLines ? start + bodyLines - 1 : (range?.end ?? start);
   const prefixFor = (path: string[]) => sectionPrefix(doc, section, path);
   const ctx: Ctx = {

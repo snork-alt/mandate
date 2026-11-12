@@ -44,7 +44,7 @@ describe('section links', () => {
   it('computes backlinks, blocked and upstream changed', async () => {
     const { git, storage, spec } = await setup();
     await spec('target', [sec('api'), sec('done-part')]);
-    const c1 = (await git.log(1))[0]!.id.slice(0, 7);
+    const c1 = (await git.log(1))[0]!.id;
     const t = await storage.specs.get('target');
     await storage.specs.update('target', { sections: t.sections.map((s) => (s.id === 'done-part' ? { ...s, implementedCommit: c1 } : s)) });
     await spec('source', [
@@ -53,7 +53,7 @@ describe('section links', () => {
     ]);
     // Implement the source section, then change its upstream target.
     const src = await storage.specs.get('source');
-    const c2 = (await git.log(1))[0]!.id.slice(0, 7);
+    const c2 = (await git.log(1))[0]!.id;
     await storage.specs.update('source', { sections: src.sections.map((s) => (s.id === 'uses-done' ? { ...s, implementedCommit: c2 } : s)) });
     const t2 = await storage.specs.get('target');
     await storage.specs.update('target', { sections: t2.sections.map((s) => (s.id === 'done-part' ? { ...s, body: 'changed upstream' } : s)) });

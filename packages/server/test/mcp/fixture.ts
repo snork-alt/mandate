@@ -9,6 +9,7 @@ import { FakeProvider } from '../../src/index/embed/index.js';
 import { IndexService } from '../../src/index/service.js';
 import { registerMcp, type McpHub } from '../../src/mcp/index.js';
 import type { ToolContext } from '../../src/mcp/define.js';
+import type { UploadService } from '../../src/mcp/uploads.js';
 import { KeyStore } from '../../src/auth/keys.js';
 import { AuthStore } from '../../src/auth/sessions.js';
 import { ProjectRegistry, type ProjectRuntime } from '../../src/projects/registry.js';
@@ -16,7 +17,7 @@ import type { ProjectConfig } from '../../src/config.js';
 import { randomBytes } from 'node:crypto';
 import { ActivityBus } from '../../src/events/index.js';
 import { simpleModel } from './mock-model.js';
-import { createStorage, type Storage } from '../../src/storage/index.js';
+import { createStorage, migrateWorkOrders, type Storage } from '../../src/storage/index.js';
 import { DocReadService } from '../../src/storage/read.js';
 import { DocViewService } from '../../src/storage/views.js';
 import { cleanupTempDirs, tempDir } from '../helpers.js';
@@ -65,7 +66,7 @@ export interface ServedProjects {
 }
 
 /** Fastify with per-project MCP endpoints over prebuilt tool contexts; one agent key per project in a temp keys.json. */
-export async function serveProjects(contexts: Record<string, ToolContext>, opts: { app?: FastifyInstance } = {}): Promise<ServedProjects> {
+export async function serveProjects(contexts: Record<string, ToolContext>, opts: { app?: FastifyInstance; uploads?: UploadService } = {}): Promise<ServedProjects> {
   const home = await tempDir();
   const keys = new KeyStore(path.join(home, 'keys.json'), { touchIntervalMs: 0 });
   keys.ensureProjectKeys(Object.keys(contexts));
@@ -73,10 +74,10 @@ export async function serveProjects(contexts: Record<string, ToolContext>, opts:
   const configs: ProjectConfig[] = Object.keys(contexts).map((id) => ({ id, name: id, dataDir: contexts[id]!.storage.git.dir, branch: 'main', author: { name: 'T', email: 't@x' }, git: { backend: 'embedded', cliPath: 'git', cliEnv: {} }, index: {} as ProjectConfig['index'], idempotencyFile: '', autoPush: { enabled: false, debounceSeconds: 10, intervalSeconds: 300 } }));
   const registry = new ProjectRegistry(configs, async (p) => {
     const ctx = contexts[p.id]!;
-    return { config: p, git: ctx.storage.git, storage: ctx.storage, index: ctx.index, activity: ctx.activity!, ctx: { ...ctx, project: { id: p.id, name: p.name } }, close: async () => undefined } as ProjectRuntime;
+    return { config: p, git: ctx.storage.git, storage: ctx.storage, index: ctx.index, activity: ctx.activity!, ctx: { presetIds: true, ...ctx, project: { id: p.id, name: p.name } }, close: async () => undefined } as ProjectRuntime;
   });
   const app = opts.app ?? Fastify({ logger: false });
-  const hub = registerMcp(app, { projects: registry, auth: { keys, store } });
+  const hub = registerMcp(app, { projects: registry, auth: { keys, store }, ...(opts.uploads ? { uploads: opts.uploads } : {}) });
   await app.listen({ port: 0, host: '127.0.0.1' });
   const port = (app.server.address() as { port: number }).port;
   const url = (id: string) => new URL(`http://127.0.0.1:${port}/p/${id}/mcp`);
@@ -85,13 +86,15 @@ export async function serveProjects(contexts: Record<string, ToolContext>, opts:
   return { app, hub, registry, keys, store, home, url, key, close: () => app.close() };
 }
 
-export async function mcpFixture(): Promise<McpFixture> {
+export async function mcpFixture(extra: Partial<ToolContext> = {}): Promise<McpFixture> {
   const root = await tempDir();
   const dir = path.join(root, 'repo');
   execFileSync('git', ['clone', '-q', SOURCE, dir]);
   const git = new EsGitStore({ dir, author: { name: 'Test', email: 'test@example.com' } });
   await git.open();
   const storage = createStorage(git);
+  // As on server startup: work-orders.jsonl -> work-orders/<id>.md (no-op once the data repo is migrated).
+  await migrateWorkOrders({ git, lock: storage.lock, history: storage.history, heartbeats: storage.heartbeats });
   const index = new IndexService({
     git,
     storage,
@@ -113,7 +116,7 @@ export async function mcpFixture(): Promise<McpFixture> {
   await index.idle();
   const activity = new ActivityBus(git, { pollMs: 0 });
   await activity.start();
-  const served = await serveProjects({ test: { storage, index, activity, reads: new DocReadService(storage), views: new DocViewService(storage), askModel: simpleModel() } });
+  const served = await serveProjects({ test: { storage, index, activity, reads: new DocReadService(storage), views: new DocViewService(storage), askModel: simpleModel(), ...extra } });
   const { app, hub } = served;
   const url = served.url('test');
   const client = await connect(url);

@@ -53,13 +53,14 @@ export function sortFeedback(items: Feedback[], sort: FeedbackSort): Feedback[] 
 export const firstLine = (body: string) => body.split('\n').find((l) => l.trim())?.replace(/[`*]/g, '').trim() ?? '';
 
 /** "login-sso › callback" for a target reference. */
-export function targetLabel(target: string, titles?: Map<string, string>): { kind: 'specs' | 'standards'; id: string; label: string; href: string } {
+export function targetLabel(target: string, titles?: Map<string, string>): { kind: 'specs' | 'standards'; id: string; title: string; label: string; href: string } {
   const r = parseRef(target);
-  if (!r) return { kind: 'specs', id: target, label: target, href: '#' };
+  if (!r) return { kind: 'specs', id: target, title: target, label: target, href: '#' };
   const title = titles?.get(`${r.kind}:${r.id}`) ?? r.id;
   return {
     kind: r.kind as 'specs' | 'standards',
     id: r.id,
+    title,
     label: r.sectionId ? `${title} › ${r.sectionId}` : title,
     href: `/${r.kind}/${r.id}${r.sectionId ? `#section-${r.sectionId}` : ''}`,
   };

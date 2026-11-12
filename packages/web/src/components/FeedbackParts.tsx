@@ -1,3 +1,5 @@
+import { SpecMaturityDot } from './maturity/SpecMaturity';
+import { parseRef } from '@mandate/shared/refs';
 import { Tooltip } from '@mantine/core';
 import type { Feedback, FeedbackChange } from '@mandate/shared';
 import { Link } from 'react-router';
@@ -61,8 +63,22 @@ export function FeedbackStatus({ status, resolution }: { status: Feedback['statu
   );
 }
 
-export function TargetChip({ target, titles, plain }: { target: string; titles?: Map<string, string>; /** Render as text (inside another link). */ plain?: boolean }) {
+const specIdOf = (target: string) => {
+  const r = parseRef(target);
+  return r?.kind === 'specs' ? r.id : undefined;
+};
+
+export function TargetChip({ target, titles, plain, short }: { target: string; titles?: Map<string, string>; /** Render as text (inside another link). */ plain?: boolean; /** Document title only (lists, when space is short); the full label in a tooltip. */ short?: boolean }) {
   const t = targetLabel(target, titles);
+  if (plain && short) {
+    return (
+      <Tooltip label={t.label}>
+        <span className="fb-target" data-kind={t.kind}>
+          {t.title}
+        </span>
+      </Tooltip>
+    );
+  }
   if (plain) {
     return (
       <span className="fb-target" data-kind={t.kind}>
@@ -73,6 +89,7 @@ export function TargetChip({ target, titles, plain }: { target: string; titles?:
   return (
     <Link to={t.href} className="fb-target" onClick={(e) => e.stopPropagation()} data-kind={t.kind}>
       {t.label}
+      {specIdOf(target) && <SpecMaturityDot id={specIdOf(target)!} />}
     </Link>
   );
 }
@@ -100,5 +117,44 @@ export function FeedbackList({ items }: { items: Feedback[] }) {
         </Link>
       ))}
     </>
+  );
+}
+
+/** An open work order acting on a feedback item (pending / in progress). */
+export interface OpenWorkOrderRef {
+  id: string;
+  status: string;
+  title?: string;
+}
+
+/**
+ * The outcome column of the feedback list: "✓ 3 changes", "✕ rejected", "⧉ duplicate", or "→ q-0007" while an open
+ * work order acts on it. Plain text (it sits inside the row link); details in a tooltip.
+ */
+export function FeedbackOutcome({ f, workOrder }: { f: Pick<Feedback, 'status' | 'resolution' | 'resolutionNote' | 'duplicateOf' | 'changes'>; workOrder?: OpenWorkOrderRef }) {
+  const n = f.changes.length;
+  const changes = `${n} change${n === 1 ? '' : 's'}`;
+  let glyph = '';
+  let text = '';
+  let tip: string = '';
+  let tone: string | undefined;
+  if (f.status === 'closed' && f.resolution === 'applied') {
+    [glyph, text, tone, tip] = ['✓', n ? changes : 'applied', 'ok', `Applied${n ? ` · ${changes}` : ''}`];
+  } else if (f.status === 'closed' && f.resolution === 'rejected') {
+    [glyph, text, tone, tip] = ['✕', 'rejected', 'muted', f.resolutionNote ? `Rejected: ${f.resolutionNote}` : 'Rejected'];
+  } else if (f.status === 'closed' && f.resolution === 'duplicate') {
+    [glyph, text, tone, tip] = ['⧉', 'duplicate', 'muted', f.duplicateOf ? `Duplicate of ${f.duplicateOf}` : 'Duplicate'];
+  } else if (workOrder) {
+    [glyph, text, tone, tip] = ['→', workOrder.id, 'active', `Work order ${workOrder.id} · ${workOrder.status.replace('_', ' ')}${workOrder.title ? ` · ${workOrder.title}` : ''}`];
+  } else if (n) {
+    [glyph, text, tone, tip] = ['', changes, 'muted', changes];
+  } else return null;
+  return (
+    <Tooltip label={tip} multiline maw={320}>
+      <span className="fb-outcome" data-tone={tone} data-testid="fb-outcome">
+        {glyph && <span className="fb-outcome-glyph">{glyph}</span>}
+        <span className={workOrder && !f.resolution ? 'mono' : undefined}>{text}</span>
+      </span>
+    </Tooltip>
   );
 }

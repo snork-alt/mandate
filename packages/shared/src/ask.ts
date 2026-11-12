@@ -74,7 +74,8 @@ export interface AskResult {
   /** Every reference in the answer, checked with resolveRef. */
   references: ReferenceCheck[];
   toolCalls: AskToolCall[];
-  usage: { inputTokens: number; outputTokens: number };
+  /** inputTokens includes cachedInputTokens (prompt-cache reads, when the provider reports them). */
+  usage: { inputTokens: number; outputTokens: number; cachedInputTokens?: number };
   /** Why the loop ended: done, max_tool_calls, token_budget, timeout, max_tokens, refusal, aborted. */
   stopReason: string;
   provider: string;
@@ -82,6 +83,18 @@ export interface AskResult {
   /** Configured model id (`ask.models[].id`) and its label. */
   modelId: string;
   modelLabel: string;
+  /** Set when the provider kept failing after retries (stopReason `provider_error`); answer and toolCalls hold what was done. */
+  error?: { code: string; message: string };
+  /** Provider retries of this answer (transient stream / routing / 429 / 5xx failures), with the errors seen. */
+  diagnostics?: { retries: number; providerErrors: AskProviderError[] };
+}
+
+/** A provider failure (never contains keys). */
+export interface AskProviderError {
+  class: string;
+  message: string;
+  status?: number;
+  requestId?: string;
 }
 
 /** The model answering a question. */
@@ -98,6 +111,8 @@ export type AskEvent =
   | { askId: string; type: 'text'; delta: string }
   | { askId: string; type: 'tool_start'; id: string; name: string; args: unknown }
   | { askId: string; type: 'tool_end'; call: AskToolCall }
+  /** The provider dropped the current step; it is retried. `text` replaces the streamed text (the failed step's partial text is discarded). */
+  | { askId: string; type: 'retry'; attempt: number; max: number; message: string; text: string }
   | { askId: string; type: 'done'; result: AskResult }
   | { askId: string; type: 'error'; error: { code: string; message: string } };
 
@@ -108,6 +123,8 @@ export interface AskAnswerState {
   running: { id: string; name: string; args: unknown }[];
   /** The answering model (from the `start` event). */
   model?: AskModelInfo;
+  /** A transient status line (e.g. "Provider interrupted; retrying (1/2)…"). */
+  notice?: string;
   result?: AskResult;
   error?: { code: string; message: string };
 }

@@ -4,8 +4,14 @@ import { RefChip } from './RefChip';
 const isRef = (v: unknown): v is string => typeof v === 'string' && /^(@mandate:)?mandate:\/\//.test(v) && parseNodeUri(v) !== null;
 
 /** One cell: references as chips, lists of them as wrapped chips, other lists comma-separated (no raw JSON for lists). */
-function Cell({ v }: { v: unknown }) {
+function Cell({ v: value }: { v: unknown }) {
+  let v = value;
   if (isRef(v)) return <RefChip to={v} />;
+  // "ref, ref" strings (models often join lists) render as chips too.
+  if (typeof v === 'string' && v.includes(',')) {
+    const parts = v.split(',').map((x) => x.trim()).filter(Boolean);
+    if (parts.length > 1 && parts.every(isRef)) v = parts;
+  }
   if (Array.isArray(v)) {
     if (v.length && v.every(isRef)) {
       return (

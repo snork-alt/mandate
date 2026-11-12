@@ -31,7 +31,12 @@ export interface GEdge {
   /** Edges exist in both directions. */
   both: boolean;
 }
-export interface Graph { nodes: GNode[]; edges: GEdge[] }
+export interface Graph {
+  nodes: GNode[];
+  edges: GEdge[];
+  /** Edges left out of a collapsed summary (cross links between non-seed nodes). */
+  hiddenEdges?: number;
+}
 
 export interface PlacedNode extends GNode { x: number; y: number; w: number; h: number }
 export interface PlacedEdge extends GEdge { points: { x: number; y: number }[] }
@@ -120,6 +125,10 @@ const KIND_PLURAL: Record<string, string> = { feedback: 'feedback', work_order: 
 export const kindPlural = (k: string, n: number) => (n === 1 ? k.replace(/_/g, ' ') : (KIND_PLURAL[k] ?? `${k.replace(/_/g, ' ')}s`));
 
 export const COLLAPSE_ABOVE = 25;
+/** Containers narrower than this (the rail) get the compact candidates and an earlier summary. */
+export const NARROW = 520;
+/** Node count above which the graph is summarised: about 25 in the main column / fullscreen, 12 in the narrow rail. */
+export const collapseThreshold = (avail: number) => (avail < NARROW ? 12 : COLLAPSE_ABOVE);
 
 /**
  * Above `threshold` nodes, the graph is summarised: leaves (non-seed nodes with one neighbour) and nodes two or more
@@ -150,24 +159,30 @@ export function collapseLeaves(g: Graph, expanded: ReadonlySet<string>, threshol
       q.push(m);
     }
   }
+  // Fold hop by hop, so a node whose anchor was folded joins a group hanging off that anchor's group.
   const fold = (pick: (n: GNode) => boolean) => {
-    const groups = new Map<string, GNode[]>();
-    for (const n of g.nodes) {
-      if (n.seed || !pick(n)) continue;
-      const nb = nbrs.get(n.id);
-      const anchor = nb?.size === 1 ? [...nb][0]! : parent.get(n.id);
-      if (!anchor) continue;
-      const key = `group:${anchor}:${n.kind}`;
-      groups.set(key, [...(groups.get(key) ?? []), n]);
-    }
     const repOf = new Map<string, string>();
     const groupNodes: GNode[] = [];
-    for (const [key, members] of groups) {
-      if (members.length < minGroup || expanded.has(key)) continue;
-      const anchor = key.slice(6, key.lastIndexOf(':'));
-      for (const m of members) repOf.set(m.id, key);
-      const names = members.slice(0, 8).map((m) => m.short).join(', ') + (members.length > 8 ? `, +${members.length - 8} more` : '');
-      groupNodes.push({ id: key, kind: members[0]!.kind, label: names, short: `+${members.length} ${kindPlural(members[0]!.kind, members.length)}`, seed: false, group: { members: members.map((m) => m.id), anchor } });
+    const levels = [...new Set(g.nodes.map((n) => dist.get(n.id) ?? Infinity))].sort((x, y) => x - y);
+    for (const lvl of levels) {
+      const groups = new Map<string, { anchor: string; members: GNode[] }>();
+      for (const n of g.nodes) {
+        if (n.seed || (dist.get(n.id) ?? Infinity) !== lvl || !pick(n)) continue;
+        const nb = nbrs.get(n.id);
+        const own = nb?.size === 1 ? [...nb][0]! : parent.get(n.id);
+        if (!own) continue;
+        const anchor = repOf.get(own) ?? own;
+        const key = `group:${anchor}:${n.kind}`;
+        const grp = groups.get(key) ?? { anchor, members: [] };
+        grp.members.push(n);
+        groups.set(key, grp);
+      }
+      for (const [key, { anchor, members }] of groups) {
+        if (members.length < minGroup || expanded.has(key)) continue;
+        for (const m of members) repOf.set(m.id, key);
+        const names = members.slice(0, 8).map((m) => m.short).join(', ') + (members.length > 8 ? `, +${members.length - 8} more` : '');
+        groupNodes.push({ id: key, kind: members[0]!.kind, label: names, short: `+${members.length} ${kindPlural(members[0]!.kind, members.length)}`, seed: false, group: { members: members.map((m) => m.id), anchor } });
+      }
     }
     return { repOf, groupNodes };
   };
@@ -176,8 +191,6 @@ export function collapseLeaves(g: Graph, expanded: ReadonlySet<string>, threshol
   if (g.nodes.length - r.repOf.size + r.groupNodes.length > threshold) r = fold(() => true);
   const { repOf, groupNodes } = r;
   if (!groupNodes.length) return g;
-  // A group anchored on a folded node hangs off that node's group instead.
-  for (const gn of groupNodes) if (repOf.has(gn.group!.anchor)) gn.group!.anchor = repOf.get(gn.group!.anchor)!;
   const nodes = [...g.nodes.filter((n) => !repOf.has(n.id)), ...groupNodes];
   // Re-merge: a group's member edges fold onto one edge per neighbour (counts and kinds summed).
   const merged = new Map<string, GEdge>();
@@ -198,7 +211,17 @@ export function collapseLeaves(g: Graph, expanded: ReadonlySet<string>, threshol
       else m.kinds.push({ ...k });
     }
   }
-  return { nodes, edges: [...merged.values()] };
+  // The summary keeps a tree around the seeds: edges touching a seed and each node's link to where it was reached
+  // from; cross links between other nodes are left to "Show all".
+  const rep = (id: string) => repOf.get(id) ?? id;
+  const seeds = new Set(g.nodes.filter((n) => n.seed).map((n) => n.id));
+  const treeOf = (id: string) => {
+    const gn = groupNodes.find((x) => x.id === id);
+    return gn ? gn.group!.anchor : parent.has(id) ? rep(parent.get(id)!) : undefined;
+  };
+  const all = [...merged.values()];
+  const kept = all.filter((e) => seeds.has(e.from) || seeds.has(e.to) || treeOf(e.from) === e.to || treeOf(e.to) === e.from);
+  return { nodes, edges: kept, hiddenEdges: all.length - kept.length };
 }
 
 /* ---------- measuring ---------- */
@@ -209,7 +232,7 @@ let ctx: CanvasRenderingContext2D | null | undefined;
 export function textWidth(s: string): number {
   if (ctx === undefined) {
     try {
-      ctx = typeof document !== 'undefined' ? document.createElement('canvas').getContext('2d') : null;
+      ctx = typeof document !== 'undefined' && !/jsdom/.test(navigator.userAgent) ? document.createElement('canvas').getContext('2d') : null;
       if (ctx) ctx.font = `500 ${FONT_PX}px ${getComputedStyle(document.body).fontFamily || 'sans-serif'}`;
     } catch {
       ctx = null;
@@ -226,20 +249,28 @@ export function nodeWidth(n: GNode, maxLabel: number): number {
   return Math.round(Math.min(Math.max(textWidth(n.short), 24), maxLabel) + NODE_CHROME + (n.seed ? 6 : 0));
 }
 
-/** Layer index per node: seeds in the middle, successors right / below, predecessors left / above. */
+/**
+ * Layer index per node: seeds in the middle; a seed's successors on one side, its predecessors on the other, and
+ * nodes further out on the side of the node they were reached from, one layer per hop (edges stay short).
+ */
 export function partitions(g: Graph): Map<string, number> {
   const d = new Map<string, number>();
   const q: string[] = [];
   for (const n of g.nodes) if (n.seed) { d.set(n.id, 0); q.push(n.id); }
   if (!q.length && g.nodes[0]) { d.set(g.nodes[0].id, 0); q.push(g.nodes[0].id); }
+  const adj = new Map<string, { id: string; out: boolean }[]>();
+  for (const e of g.edges) {
+    adj.set(e.from, [...(adj.get(e.from) ?? []), { id: e.to, out: true }]);
+    adj.set(e.to, [...(adj.get(e.to) ?? []), { id: e.from, out: false }]);
+  }
   while (q.length) {
     const id = q.shift()!;
     const di = d.get(id)!;
-    for (const e of g.edges) {
-      const fwd = e.from === id ? e.to : null;
-      const back = e.to === id ? e.from : null;
-      if (fwd && !d.has(fwd)) { d.set(fwd, di + 1); q.push(fwd); }
-      if (back && !d.has(back)) { d.set(back, di - 1); q.push(back); }
+    // Outgoing first: a node both pointed at and pointing back sits on the successor side.
+    for (const { id: m, out } of [...(adj.get(id) ?? [])].sort((a, b) => Number(b.out) - Number(a.out))) {
+      if (d.has(m)) continue;
+      d.set(m, di === 0 ? (out ? 1 : -1) : di + Math.sign(di));
+      q.push(m);
     }
   }
   for (const n of g.nodes) if (!d.has(n.id)) d.set(n.id, 1);
@@ -248,7 +279,13 @@ export function partitions(g: Graph): Map<string, number> {
   return d;
 }
 
-export interface LayoutOpts { direction: 'RIGHT' | 'DOWN'; maxLabel: number; compact?: boolean }
+export interface LayoutOpts {
+  direction: 'RIGHT' | 'DOWN';
+  maxLabel: number;
+  compact?: boolean;
+  /** Spread wide layers over several rows (narrow containers). */
+  stack?: boolean;
+}
 
 export async function layoutGraph(g: Graph, o: LayoutOpts): Promise<GraphLayout> {
   const { default: ELK } = await import('elkjs/lib/elk.bundled.js');
@@ -271,6 +308,7 @@ export async function layoutGraph(g: Graph, o: LayoutOpts): Promise<GraphLayout>
       'elk.layered.nodePlacement.strategy': 'NETWORK_SIMPLEX',
       'elk.layered.considerModelOrder.strategy': 'NODES_AND_EDGES',
       'elk.padding': '[top=12,left=12,bottom=12,right=12]',
+      ...(o.stack ? { 'elk.layered.layering.strategy': 'MIN_WIDTH', 'elk.layered.layering.minWidth.upperBoundOnWidth': '2', 'elk.layered.layering.minWidth.upperLayerEstimationScalingFactor': '1' } : {}),
     },
     children: g.nodes.map((n) => ({ id: n.id, width: sizes.get(n.id)!.w, height: NODE_H, layoutOptions: { 'elk.partitioning.partition': String(part.get(n.id) ?? 0) } })),
     edges: g.edges.map((e) => {
@@ -298,9 +336,9 @@ export async function layoutGraph(g: Graph, o: LayoutOpts): Promise<GraphLayout>
 
 /** Lays out a few candidates (direction, label width) and keeps the one that fits `avail` best without shrinking text. */
 export async function bestLayout(g: Graph, avail: number): Promise<GraphLayout> {
-  const narrow = avail < 520;
+  const narrow = avail < NARROW;
   const cands: LayoutOpts[] = narrow
-    ? [{ direction: 'RIGHT', maxLabel: 112, compact: true }, { direction: 'DOWN', maxLabel: 120 }, { direction: 'RIGHT', maxLabel: 84, compact: true }]
+    ? [{ direction: 'RIGHT', maxLabel: 112, compact: true }, { direction: 'DOWN', maxLabel: 120 }, { direction: 'DOWN', maxLabel: 110, stack: true }, { direction: 'RIGHT', maxLabel: 84, compact: true }]
     : [{ direction: 'RIGHT', maxLabel: 170 }, { direction: 'DOWN', maxLabel: 150 }, { direction: 'RIGHT', maxLabel: 120, compact: true }];
   let best: GraphLayout | null = null;
   let bestScore = -1;

@@ -80,10 +80,13 @@ describe('Ask composer', () => {
     expect(signal?.aborted).toBe(true);
     expect(await screen.findByText(/Stopped/)).toBeTruthy();
   });
-  it('shows context suggestions that fill the field', () => {
-    const q = mount(ok);
+  it('sends a context suggestion on click', () => {
+    const callTool = vi.fn(() => new Promise(() => undefined));
+    const q = mount(ok, { callTool: callTool as never, onNotification: () => () => undefined });
     fireEvent.click(screen.getByText("What's blocking it?"));
-    expect(q.value).toBe("What's blocking it?");
+    expect(callTool).toHaveBeenCalledWith('ask', expect.objectContaining({ question: "What's blocking it?", model: 'luna' }), expect.anything(), expect.anything());
+    expect(q.value).toBe('');
+    expect(screen.getByLabelText('Stop')).toBeTruthy();
     expect(suggestionsFor([])).toContain('Which specs are blocked?');
   });
   it('is a disabled field with the configuration note when no model is set', () => {

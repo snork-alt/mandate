@@ -2,71 +2,96 @@ import { useMemo, useState } from 'react';
 import { Button, Text } from '@mantine/core';
 import { IconChevronRight, IconMessageReport, IconSearch, IconX } from '@tabler/icons-react';
 import type { Feedback, FeedbackKind, FeedbackStatus } from '@mandate/shared';
-import { Menu, Tooltip } from '@mantine/core';
+import { Menu } from '@mantine/core';
 import { IconArrowsSort, IconCheck, IconLayoutList } from '@tabler/icons-react';
-import { absoluteTime, relativeTime } from '../lib/time';
+import { absoluteTime } from '../lib/time';
 import { parseRef } from '@mandate/shared/refs';
-import { Link, useSearchParams } from 'react-router';
-import { CopyRef, copyTargetProps } from '../components/copy';
+import { useSearchParams } from 'react-router';
 import { IssuesBadge } from '../components/IssuesBadge';
-import { FeedbackKindIcon, FeedbackStatusIcon, TargetChip } from '../components/FeedbackParts';
+import { FeedbackKindIcon, FeedbackOutcome, FeedbackStatusIcon, TargetChip, type OpenWorkOrderRef } from '../components/FeedbackParts';
 import { FilterButton } from '../components/FilterButton';
 import { EmptyView, ErrorState, RowsSkeleton } from '../components/ListStates';
 import { SearchInput } from '../components/SearchInput';
 import { TopBar } from '../components/TopBar';
 import { FEEDBACK_KIND_META, FEEDBACK_SORTS, FEEDBACK_STATUS_META, FEEDBACK_STATUS_ORDER, RESOLUTION_META, firstLine, sortFeedback, type FeedbackSort } from '../lib/feedback';
-import { useFeedback, useSpecs, useStandards } from '../lib/queries';
+import { useFeedback, useSpecs, useStandards, useWorkOrders } from '../lib/queries';
+import { ListHeader, ListRow, RowTime, withNodes, type ChipItem, type ColDef } from '../components/list/ListRow';
 import { feedbackTarget } from '../lib/refs';
 import { matches } from '../lib/useSearchQuery';
+import { RowPeople } from '../components/people/People';
+import { bareRef } from '../lib/lineage';
 
 const KEYS = ['kind', 'status', 'resolution', 'target'] as const;
 
-function FeedbackRow({ f, titles }: { f: Feedback; titles: Map<string, string> }) {
-  const target = feedbackTarget(f);
+const FEEDBACK_CHIPS_W = 300;
+const FEEDBACK_COLS: ColDef[] = [
+  { key: 'issues', width: 72, hide: 'xl', label: 'Issues', tip: 'Validation issues in the stored feedback' },
+  { key: 'outcome', width: 104, hide: 'sm', label: 'Outcome', tip: 'Outcome: how it was resolved, or the work order handling it' },
+];
+
+function FeedbackListHeader() {
   return (
-    <Link to={`/feedback/${f.id}`} className="row has-copy-ref" {...copyTargetProps(target)}>
-      <FeedbackStatusIcon status={f.status} resolution={f.resolution} />
-      <FeedbackKindIcon kind={f.kind} />
-      <span className="row-id" style={{ width: 64 }}>
-        {f.id}
-      </span>
-      <span className="spec-row-text">
-        <span className="row-title fb-title">{firstLine(f.body)}</span>
-      </span>
-      <span className="row-meta">
-        <span className="row-copy">
-          <CopyRef target={target} size="xs" />
-        </span>
-        <span className="fb-targets">
-          {f.targets.slice(0, 2).map((t) => (
-            <TargetChip key={t} target={t} titles={titles} plain />
-          ))}
-          {f.targets.length > 2 && <span className="tag-pill">+{f.targets.length - 2}</span>}
-        </span>
-        {f.validationIssues && <IssuesBadge issues={f.validationIssues} />}
-        {f.targets.some((t) => !parseRef(t)?.sectionId) && <span className="legacy-badge">legacy</span>}
-        {f.status === 'closed' && f.resolution && (
-          <Tooltip label={RESOLUTION_META[f.resolution].label}>
-            <span className="fb-resolution-glyph" data-resolution={f.resolution}>
-              {RESOLUTION_META[f.resolution].glyph}
-            </span>
-          </Tooltip>
-        )}
-        {f.changes.length > 0 && (
-          <span className="fb-changes-count">
-            {f.changes.length} change{f.changes.length === 1 ? '' : 's'}
-          </span>
-        )}
-        <Tooltip label={f.closedAt ? `Closed ${absoluteTime(f.closedAt)} · created ${absoluteTime(f.createdAt)}` : `Created ${absoluteTime(f.createdAt)}`}>
-          <span className="row-time fb-time">{f.closedAt ? `closed ${relativeTime(f.closedAt)}` : relativeTime(f.createdAt)}</span>
-        </Tooltip>
-      </span>
-    </Link>
+    <ListHeader
+      list="feedback"
+      leadWidth={36}
+      id={{ label: 'ID', tip: 'Feedback id' }}
+      idWidth={84}
+      main={{ label: 'Feedback', tip: 'First line of the feedback' }}
+      chips={{ label: 'Targets', tip: 'The spec or standard sections it is about (hover "+N" for the rest)' }}
+      chipsWidth={FEEDBACK_CHIPS_W}
+      cols={FEEDBACK_COLS}
+      people={{ label: 'People', tip: 'Who filed it (person and agent) and who worked on it' }}
+      time={{ label: 'When', tip: 'Created, or closed for closed feedback' }}
+      timeWidth={96}
+    />
+  );
+}
+
+function FeedbackRow({ f, titles, workOrder }: { f: Feedback; titles: Map<string, string>; workOrder?: OpenWorkOrderRef }) {
+  const target = feedbackTarget(f);
+  const legacy = f.targets.some((t) => !parseRef(t)?.sectionId);
+  const chips: ChipItem[] = [
+    ...(legacy ? [{ key: '~legacy', node: <span className="legacy-badge">legacy</span> }] : []),
+    ...f.targets.map((t) => ({ key: t, node: <TargetChip target={t} titles={titles} plain />, short: <TargetChip target={t} titles={titles} plain short /> })),
+  ];
+  return (
+    <ListRow
+      to={`/feedback/${f.id}`}
+      list="feedback"
+      copy={target}
+      lead={
+        <>
+          <FeedbackStatusIcon status={f.status} resolution={f.resolution} />
+          <FeedbackKindIcon kind={f.kind} />
+        </>
+      }
+      leadWidth={36}
+      id={f.id}
+      idWidth={84}
+      title={<span className="fb-title">{firstLine(f.body)}</span>}
+      chips={chips}
+      chipsMax={legacy ? 3 : 2}
+      chipsWidth={FEEDBACK_CHIPS_W}
+      cols={withNodes(FEEDBACK_COLS, {
+        issues: f.validationIssues ? <IssuesBadge issues={f.validationIssues} /> : null,
+        outcome: <FeedbackOutcome f={f} workOrder={workOrder} />,
+      })}
+      people={<RowPeople refUri={bareRef(target.ref)} first fallback={{ user: f.createdByUser, agent: f.createdBy, at: f.createdAt, verb: 'Filed' }} />}
+      time={
+        <RowTime
+          iso={f.closedAt ?? f.createdAt}
+          prefix={f.closedAt ? 'closed' : undefined}
+          label={f.closedAt ? `Closed ${absoluteTime(f.closedAt)} · created ${absoluteTime(f.createdAt)}` : `Created ${absoluteTime(f.createdAt)}`}
+        />
+      }
+      timeWidth={96}
+    />
   );
 }
 
 export function FeedbackListPage() {
   const query = useFeedback();
+  const workOrders = useWorkOrders();
   const specs = useSpecs();
   const standards = useStandards();
   const [params, setParams] = useSearchParams();
@@ -92,6 +117,15 @@ export function FeedbackListPage() {
       ]),
     [specs.data, standards.data],
   );
+  // Feedback id -> the open work order acting on it (work order `reason` lists feedback ids).
+  const openWorkOrders = useMemo(() => {
+    const m = new Map<string, OpenWorkOrderRef>();
+    for (const w of workOrders.data ?? []) {
+      if (w.status !== 'pending' && w.status !== 'in_progress') continue;
+      for (const id of w.reason ?? []) if (!m.has(id)) m.set(id, { id: w.id, status: w.status, title: w.title });
+    }
+    return m;
+  }, [workOrders.data]);
   const all = query.data ?? [];
   const f = { kind: sel('kind'), status: sel('status'), resolution: sel('resolution'), target: sel('target') };
   const sort = (FEEDBACK_SORTS.some((x) => x.value === params.get('sort')) ? params.get('sort') : 'created-desc') as FeedbackSort;
@@ -197,7 +231,8 @@ export function FeedbackListPage() {
       {query.data && all.length > 0 && visible.length === 0 && (
         <EmptyView icon={<IconSearch size={22} stroke={1.5} />} title="No matching feedback" description="Try another filter or search term." />
       )}
-      {groupNone && sorted.map((x) => <FeedbackRow key={x.id} f={x} titles={titles} />)}
+      {visible.length > 0 && <FeedbackListHeader />}
+      {groupNone && sorted.map((x) => <FeedbackRow key={x.id} f={x} titles={titles} workOrder={openWorkOrders.get(x.id)} />)}
       {!groupNone && FEEDBACK_STATUS_ORDER.map((status: FeedbackStatus) => {
         const items = sorted.filter((x) => x.status === status);
         if (!items.length) return null;
@@ -212,7 +247,7 @@ export function FeedbackListPage() {
                 {items.length}
               </Text>
             </button>
-            {!isCollapsed && items.map((x) => <FeedbackRow key={x.id} f={x} titles={titles} />)}
+            {!isCollapsed && items.map((x) => <FeedbackRow key={x.id} f={x} titles={titles} workOrder={openWorkOrders.get(x.id)} />)}
           </section>
         );
       })}

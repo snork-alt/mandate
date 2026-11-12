@@ -1,0 +1,18 @@
+/* Work-order page: title first, a status strip (progress, claim, git), compact dependency panel. Existing tokens only. */
+.wo-title { overflow-wrap: anywhere; }
+.wo-origin { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--app-border); color: var(--app-text-muted); font-size: var(--mantine-font-size-xs); background: var(--app-surface); }
+.wo-status-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px; margin-top: 12px; padding: 10px 12px; border: 1px solid var(--app-border); border-radius: 10px; background: var(--app-surface); }
+.wo-strip-progress { flex: 0 1 240px; min-width: 160px; }
+.wo-strip-progress .wo-progress { width: 100%; }
+.wo-strip-claim { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: var(--mantine-font-size-sm); }
+.wo-strip-agent { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
+.wo-strip-git { display: flex; align-items: center; gap: 10px; margin-left: auto; flex-wrap: wrap; }
+.wo-plan-missing { display: flex; gap: 10px; align-items: baseline; margin-top: 12px; padding: 10px 12px; border: 1px dashed var(--app-border-strong); border-radius: 10px; font-size: var(--mantine-font-size-sm); color: var(--app-text-muted); }
+.wo-plan-missing strong { color: var(--mantine-color-text); font-weight: 600; }
+.wo-not-written { margin: 10px 0 0; }
+.wo-deps { margin-top: 14px; }
+.wo-deps .dep-strip { margin: 0; }
+@media (max-width: 760px) {
+  .wo-strip-git { margin-left: 0; }
+}
+.q-note .markdown > :first-child { margin-top: 0; } .q-note .markdown > :last-child { margin-bottom: 0; }

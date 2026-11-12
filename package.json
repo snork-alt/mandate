@@ -8,16 +8,20 @@
     "packages/doc",
     "packages/shared",
     "packages/server",
-    "packages/web"
+    "packages/web",
+    "packages/cli"
   ],
   "scripts": {
     "dev": "npm run build -w @mandate/doc -w @mandate/shared && concurrently -k -n doc,shared,server,web -c gray,gray,blue,magenta \"npm run dev -w @mandate/doc\" \"npm run dev -w @mandate/shared\" \"npm run dev -w @mandate/server\" \"npm run dev -w @mandate/web\"",
-    "build": "npm run build -w @mandate/doc -w @mandate/shared && npm run build -w @mandate/server && npm run build -w @mandate/web",
-    "typecheck": "npm run build -w @mandate/doc -w @mandate/shared && npm run typecheck -w @mandate/doc -w @mandate/shared -w @mandate/server -w @mandate/web",
-    "test": "npm run build -w @mandate/doc -w @mandate/shared && npm run test -w @mandate/doc -w @mandate/shared -w @mandate/server -w @mandate/web",
+    "build": "npm run build -w @mandate/doc -w @mandate/shared && npm run build -w @mandate/server && npm run build -w @mandate/web && npm run build -w getmandate",
+    "typecheck": "npm run build -w @mandate/doc -w @mandate/shared && npm run typecheck -w @mandate/doc -w @mandate/shared -w @mandate/server -w @mandate/web -w getmandate",
+    "test": "npm run build -w @mandate/doc -w @mandate/shared && npm run test -w @mandate/doc -w @mandate/shared -w @mandate/server -w @mandate/web -w getmandate",
     "clean": "rm -rf packages/*/dist",
     "seed": "npm run build -w @mandate/doc -w @mandate/shared && npm run seed -w @mandate/server --",
-    "mandate": "npm run -s mandate -w @mandate/server --"
+    "mandate": "npm run -s mandate -w @mandate/server --",
+    "start": "node packages/cli/dist/cli.js start --foreground",
+    "pack:cli": "npm run build && npm pack -w getmandate",
+    "smoke": "npm run smoke -w getmandate"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",
