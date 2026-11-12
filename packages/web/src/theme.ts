@@ -1,0 +1,91 @@
+import {
+  ActionIcon,
+  Badge,
+  Button,
+  Kbd,
+  Menu,
+  Modal,
+  Paper,
+  Select,
+  SegmentedControl,
+  TextInput,
+  Textarea,
+  Tooltip,
+  createTheme,
+  rem,
+  type MantineColorsTuple,
+} from '@mantine/core';
+
+/** Mandate accent: soft lilac. */
+const lilac: MantineColorsTuple = [
+  '#f6f3fc',
+  '#ece6f8',
+  '#d9ccf1',
+  '#c5b1ea',
+  '#b39ae3',
+  '#a184db',
+  '#8f6fd2',
+  '#7a59bf',
+  '#64479f',
+  '#4e377d',
+];
+
+/** Soft charcoal, slightly cool neutrals for layered dark surfaces. */
+const dark: MantineColorsTuple = [
+  '#e4e6eb',
+  '#b8bcc6',
+  '#9196a0',
+  '#6b7079',
+  '#3a3c43',
+  '#2e3036',
+  '#26272c',
+  '#1d1e22',
+  '#18191c',
+  '#141518',
+];
+
+export const theme = createTheme({
+  primaryColor: 'lilac',
+  primaryShade: { light: 6, dark: 4 },
+  colors: { lilac, dark },
+  fontFamily: "'Geist Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+  fontFamilyMonospace: "'Geist Mono Variable', ui-monospace, SFMono-Regular, Menlo, monospace",
+  headings: {
+    fontFamily: "'Geist Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+    fontWeight: '600',
+    sizes: {
+      h1: { fontSize: rem(24), lineHeight: '1.3' },
+      h2: { fontSize: rem(19), lineHeight: '1.35' },
+      h3: { fontSize: rem(16), lineHeight: '1.4' },
+      h4: { fontSize: rem(14), lineHeight: '1.45' },
+    },
+  },
+  fontSizes: { xs: rem(12), sm: rem(13), md: rem(14), lg: rem(16), xl: rem(18) },
+  lineHeights: { xs: '1.4', sm: '1.45', md: '1.55', lg: '1.6', xl: '1.6' },
+  defaultRadius: 'md',
+  radius: { xs: rem(3), sm: rem(4), md: rem(6), lg: rem(8), xl: rem(12) },
+  spacing: { xs: rem(6), sm: rem(10), md: rem(14), lg: rem(20), xl: rem(28) },
+  shadows: {
+    xs: '0 1px 2px rgb(0 0 0 / 0.05)',
+    sm: '0 1px 3px rgb(0 0 0 / 0.08)',
+    md: '0 4px 12px rgb(0 0 0 / 0.08)',
+    lg: '0 8px 24px rgb(0 0 0 / 0.12)',
+    xl: '0 16px 48px rgb(0 0 0 / 0.18)',
+  },
+  cursorType: 'pointer',
+  focusRing: 'auto',
+  components: {
+    Button: Button.extend({ defaultProps: { size: 'xs', radius: 'md' } }),
+    ActionIcon: ActionIcon.extend({ defaultProps: { variant: 'subtle', color: 'gray', radius: 'md' } }),
+    Badge: Badge.extend({ defaultProps: { radius: 'sm', variant: 'light' } }),
+    TextInput: TextInput.extend({ defaultProps: { size: 'xs' } }),
+    Textarea: Textarea.extend({ defaultProps: { size: 'xs' } }),
+    Select: Select.extend({ defaultProps: { size: 'xs', comboboxProps: { shadow: 'md' } } }),
+    SegmentedControl: SegmentedControl.extend({ defaultProps: { size: 'xs', radius: 'md' } }),
+    Tooltip: Tooltip.extend({ defaultProps: { openDelay: 300, fz: 'xs', withArrow: false } }),
+    Menu: Menu.extend({ defaultProps: { shadow: 'md', radius: 'md' } }),
+    Modal: Modal.extend({ defaultProps: { radius: 'lg', centered: true, overlayProps: { blur: 2, backgroundOpacity: 0.4 } } }),
+    Paper: Paper.extend({ defaultProps: { radius: 'md' } }),
+    Kbd: Kbd.extend({ defaultProps: { size: 'xs' } }),
+  },
+});

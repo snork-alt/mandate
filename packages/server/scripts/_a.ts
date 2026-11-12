@@ -1,0 +1,11 @@
+import { createGitStore } from '../src/git/index.js';
+import { loadConfig } from '../src/config.js';
+import { createStorage } from '../src/storage/index.js';
+const git = createGitStore(loadConfig());
+await git.openOrCreate();
+const st = createStorage(git);
+const g = await st.architecture.get({ format: 'mermaid', focus: 'billing' });
+console.log(g.ref, g.groups.map((x) => x.id), g.nodes.map((n) => `${n.id}:${n.group}:${n.focus}:wo${n.overlay.workOrders}:sp${n.overlay.specs}:${n.overlay.claims}`).join(' '));
+console.log(g.edges.map((e) => `${e.from}->${e.to}[${e.label}]${e.focus ? '*' : ''}`).join(' '));
+console.log(g.mermaid);
+console.log((await st.integrity.run()).issues.map((i) => i.rule + ' ' + i.message));

@@ -1,0 +1,23 @@
+.ref-chip-rich { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 0 7px 0 5px; height: 20px; border-radius: 10px; border: 1px solid var(--app-border-strong); background: var(--app-bg); color: var(--mantine-color-text) !important; text-decoration: none !important; font-size: 12px; line-height: 18px; cursor: pointer; vertical-align: middle; }
+.ref-chip-rich:hover { background: var(--app-hover); }
+.ref-chip-rich .ref-chip-icon { flex: none; color: var(--app-text-muted); }
+.ref-chip-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.ref-chip-rich[data-unresolved] { border-style: dashed; border-color: var(--mantine-color-red-6); color: var(--mantine-color-red-6) !important; text-decoration: line-through !important; }
+.ref-chip-rich[data-unresolved] svg { color: var(--mantine-color-red-6); }
+.ref-preview-mono { font-family: var(--mantine-font-family-monospace); font-size: 11px; opacity: 0.8; word-break: break-all; }
+
+.embed-card { border: 1px solid var(--app-border-strong); border-radius: 10px; background: var(--app-bg); padding: 10px 12px; margin: 8px 0; font-size: var(--mantine-font-size-sm); min-width: 0; }
+.embed-card[data-invalid] { border-style: dashed; border-color: var(--mantine-color-red-6); color: var(--mantine-color-red-6); }
+.embed-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; flex-wrap: wrap; }
+.embed-title { font-weight: 600; }
+.embed-sub { color: var(--app-text-muted); font-size: var(--mantine-font-size-xs); }
+.embed-card .doc-section { padding: 0; margin: 0; border: 0; }
+.embed-compact { max-height: 260px; overflow: hidden; position: relative; }
+.embed-compact::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 36px; background: linear-gradient(transparent, var(--app-bg)); pointer-events: none; }
+.embed-progress { height: 5px; border-radius: 3px; background: var(--app-active); overflow: hidden; margin: 6px 0; }
+.embed-progress > span { display: block; height: 100%; background: var(--mantine-color-teal-6); }
+.embed-table { width: 100%; border-collapse: collapse; font-size: var(--mantine-font-size-xs); }
+.embed-table th { text-align: left; color: var(--app-text-muted); font-weight: 500; padding: 4px 8px; border-bottom: 1px solid var(--app-border-strong); }
+.embed-table td { padding: 4px 8px; border-bottom: 1px solid var(--app-border); vertical-align: middle; }
+.embed-table-wrap { overflow-x: auto; }
+.embed-table .ref-chips { margin-top: 0; }

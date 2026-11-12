@@ -1,0 +1,41 @@
+{
+  "name": "@mandate/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "seed": "tsx scripts/seed.ts",
+    "index:rebuild": "tsx scripts/index-cli.ts rebuild",
+    "index:status": "tsx scripts/index-cli.ts status",
+    "index": "tsx scripts/index-cli.ts",
+    "test:graph": "vitest run test/refs-contract test/graph-navigation test/cypher test/history-merges",
+    "mandate": "tsx scripts/mandate.ts"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "4.0.91",
+    "@ai-sdk/google": "4.0.107",
+    "@ai-sdk/openai": "4.0.104",
+    "@ai-sdk/openai-compatible": "3.0.80",
+    "@mandate/doc": "0.1.0",
+    "@mandate/shared": "0.1.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "ai": "7.0.156",
+    "better-sqlite3": "^13.0.3",
+    "es-git": "^0.7.0",
+    "fastify": "^5.12.8",
+    "gray-matter": "^4.0.3",
+    "sqlite-vec": "^0.1.9",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "fast-check": "^4.10.2",
+    "tsx": "^4.23.15"
+  }
+}

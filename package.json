@@ -1,0 +1,31 @@
+{
+  "name": "mandate",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Specification management system for agents (git-backed)",
+  "workspaces": [
+    "packages/doc",
+    "packages/shared",
+    "packages/server",
+    "packages/web"
+  ],
+  "scripts": {
+    "dev": "npm run build -w @mandate/doc -w @mandate/shared && concurrently -k -n doc,shared,server,web -c gray,gray,blue,magenta \"npm run dev -w @mandate/doc\" \"npm run dev -w @mandate/shared\" \"npm run dev -w @mandate/server\" \"npm run dev -w @mandate/web\"",
+    "build": "npm run build -w @mandate/doc -w @mandate/shared && npm run build -w @mandate/server && npm run build -w @mandate/web",
+    "typecheck": "npm run build -w @mandate/doc -w @mandate/shared && npm run typecheck -w @mandate/doc -w @mandate/shared -w @mandate/server -w @mandate/web",
+    "test": "npm run build -w @mandate/doc -w @mandate/shared && npm run test -w @mandate/doc -w @mandate/shared -w @mandate/server -w @mandate/web",
+    "clean": "rm -rf packages/*/dist",
+    "seed": "npm run build -w @mandate/doc -w @mandate/shared && npm run seed -w @mandate/server --",
+    "mandate": "npm run -s mandate -w @mandate/server --"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "concurrently": "^10.0.7",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
