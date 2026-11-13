@@ -2,7 +2,7 @@ import { ActionIcon, AppShell, Box, Burger, Group, ScrollArea, Text, Tooltip, Un
 import { useEffect } from 'react';
 import { useDisclosure, useMediaQuery } from '@mantine/hooks';
 import { installCopyHotkeys } from './copy';
-import { IconGitMerge, IconLayoutDashboard, IconMoon, IconPlugConnected, IconSearch, IconSun } from '@tabler/icons-react';
+import { IconChecklist, IconGitMerge, IconLayoutDashboard, IconMessageQuestion, IconMoon, IconPlugConnected, IconSearch, IconSun } from '@tabler/icons-react';
 import { NavLink, Outlet } from 'react-router';
 import { useEntityList } from '../lib/queries';
 import { SECTIONS, type SectionDef } from '../sections';
@@ -37,7 +37,20 @@ function NavItem({ section, onClick }: { section: SectionDef; onClick: () => voi
   );
 }
 
-/** Open questions from coding agents, on the Overview item (same query as the Overview's decisions card). */
+/** Open decisions (everything on the Actions page's decisions card), on the Actions item. */
+function ActionsCount() {
+  const n = useDecisions(50).data?.total ?? 0;
+  if (!n) return <span className="nav-count" />;
+  return (
+    <Tooltip label={`${n} decision${n === 1 ? '' : 's'} waiting for you`} openDelay={300} withinPortal>
+      <span className="nav-count nav-count-alert" data-testid="nav-actions" aria-label={`${n} open decision${n === 1 ? '' : 's'}`}>
+        {n}
+      </span>
+    </Tooltip>
+  );
+}
+
+/** Open questions from coding agents, on the Questions item (same query as the Overview's decisions card). */
 function QuestionsCount() {
   const n = useDecisions(50).data?.counts.question ?? 0;
   if (!n) return <span className="nav-count" />;
@@ -82,7 +95,7 @@ function AppLayoutShell() {
       <AppShell.Header className="app-mobile-header" hiddenFrom="sm">
         <Group h="100%" px="md" gap="sm" wrap="nowrap">
           <Burger opened={opened} onClick={toggle} size="sm" aria-label="Toggle navigation" />
-          <Logo size={22} />
+          <Logo size={28} />
           <Text fw={600} size="md" style={{ letterSpacing: '-0.015em' }}>
             {APP_NAME}
           </Text>
@@ -114,11 +127,21 @@ function AppLayoutShell() {
             <NavLink to="/" end onClick={close} className="nav-item" data-testid="nav-overview">
               <IconLayoutDashboard size={16} stroke={1.7} className="nav-icon" />
               <span>Overview</span>
-              <QuestionsCount />
+              <span className="nav-count" />
+            </NavLink>
+            <NavLink to="/actions" onClick={close} className="nav-item" data-testid="nav-actions-item">
+              <IconChecklist size={16} stroke={1.7} className="nav-icon" />
+              <span>Actions</span>
+              <ActionsCount />
             </NavLink>
             {SECTIONS.map((section) => (
               <NavItem key={section.kind} section={section} onClick={close} />
             ))}
+            <NavLink to="/questions" onClick={close} className="nav-item" data-testid="nav-questions-item">
+              <IconMessageQuestion size={16} stroke={1.7} className="nav-icon" />
+              <span>Questions</span>
+              <QuestionsCount />
+            </NavLink>
             <NavLink to="/lineage" onClick={close} className="nav-item" data-testid="nav-lineage">
               <IconGitMerge size={16} stroke={1.7} className="nav-icon" />
               <span>Lineage</span>

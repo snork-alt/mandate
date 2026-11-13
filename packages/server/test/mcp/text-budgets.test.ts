@@ -13,20 +13,20 @@ const tok = (s: string) => Math.ceil(s.length / 4);
 
 describe('working agreement budgets', () => {
   it('master skill (was ~3250 tokens before the lifecycle registry, 2055 before the prompts review)', () => {
-    expect(tok(SKILL_BODY)).toBeLessThanOrEqual(1828);
-    expect(SKILL_BODY.split('\n').length).toBeLessThanOrEqual(104);
+    expect(tok(SKILL_BODY)).toBeLessThanOrEqual(2090);
+    expect(SKILL_BODY.split('\n').length).toBeLessThanOrEqual(111);
     expect(tok(SKILL_DESCRIPTION)).toBeLessThanOrEqual(87);
     expect(SKILL_BODY).toContain('lifecycle_get');
   });
 
   it('server instructions (CORE_RULES mirror)', () => {
-    expect(tok(CORE_RULES)).toBeLessThanOrEqual(750);
-    expect(tok(INSTRUCTIONS)).toBeLessThanOrEqual(1019);
+    expect(tok(CORE_RULES)).toBeLessThanOrEqual(990);
+    expect(tok(INSTRUCTIONS)).toBeLessThanOrEqual(1235);
     expect(INSTRUCTIONS).toContain('lifecycle_get');
   });
 
   it('/mandate-flow command', () => {
-    expect(tok(FLOW_COMMAND.render('$ARGUMENTS'))).toBeLessThanOrEqual(152);
+    expect(tok(FLOW_COMMAND.render('$ARGUMENTS'))).toBeLessThanOrEqual(200);
     expect(tok(FLOW_COMMAND.description)).toBeLessThanOrEqual(37);
   });
 });

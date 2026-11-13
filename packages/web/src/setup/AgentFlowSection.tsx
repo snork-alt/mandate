@@ -1,13 +1,13 @@
 /**
- * Settings → Agent flow: per project, the policy (admins) and my agents' preferences (switches; locked when the
- * policy enforces them). Team admins also see every client, read-only.
+ * Settings → Agent flow: per project, the policy (admins) and my agents' state (read-only: only the agent changes it,
+ * with /mandate-flow; locked when the policy enforces it). Team admins also see every client.
  */
-import { Alert, Avatar, Group, Loader, SegmentedControl, Switch, Table, Text, Tooltip } from '@mantine/core';
+import { Alert, Avatar, Badge, Group, Loader, SegmentedControl, Table, Text, Tooltip } from '@mantine/core';
 import { IconLock } from '@tabler/icons-react';
 import { relativeTime } from '../lib/time';
 import { StepIntro } from './widgets';
 import type { SectionProps } from './sections';
-import { AgentIcon, APPROVAL_TEXT, POLICY_TEXT, useFlowMutations, useFlowState, type FlowClient, type FlowProject, type FlowState, type Policy, type QuestionsVia } from './flowApi';
+import { AgentIcon, APPROVAL_TEXT, POLICY_TEXT, useFlowMutations, useFlowState, type FlowClient, type FlowProject, type FlowState, type Policy } from './flowApi';
 
 function Locked({ children }: { children: React.ReactNode }) {
   return (
@@ -40,58 +40,41 @@ function ClientName({ c }: { c: FlowClient }) {
   );
 }
 
+/** On / off state of one client setting (read-only: only the agent changes it, with /mandate-flow). */
+function State({ c, k }: { c: FlowClient; k: 'flow' | 'approval' }) {
+  const on = c.effective[k] === 'on';
+  const badge = (
+    <Badge size="sm" variant="light" color={on ? 'green' : 'gray'} aria-label={`${k === 'flow' ? 'Flow' : 'Approval'} for ${c.label}: ${on ? 'on' : 'off'}`} data-testid={`flow-${k}-${c.id}`}>
+      {on ? 'On' : 'Off'}
+    </Badge>
+  );
+  if (c.locked[k])
+    return (
+      <Group gap={6} wrap="nowrap">
+        {badge}
+        <Locked>
+          <IconLock size={12} /> enforced by policy
+        </Locked>
+      </Group>
+    );
+  if (k === 'approval' && c.effective.flow === 'off')
+    return (
+      <Tooltip label="No effect while this agent's flow is off" withinPortal>
+        <span>{badge}</span>
+      </Tooltip>
+    );
+  return badge;
+}
+
 function MyAgents({ p }: { p: FlowProject }) {
-  const m = useFlowMutations();
   if (!p.mine.length)
     return (
       <Text size="sm" c="dimmed" data-testid={`flow-mine-empty-${p.id}`}>
         No agents have used this project yet. Run <code>mandate connect</code> in a code repository, then use your agent there.
       </Text>
     );
-  const sw = (c: FlowClient, k: 'flow' | 'approval') => {
-    const control = (
-      <Switch
-        size="sm"
-        aria-label={`${k === 'flow' ? 'Flow' : 'Approval'} for ${c.label}`}
-        checked={c.effective[k] === 'on'}
-        disabled={c.locked[k] || !c.editable || m.client.isPending || (k === 'approval' && c.effective.flow === 'off')}
-        onChange={(e) => m.client.mutate({ project: p.id, id: c.id, patch: { [k]: e.currentTarget.checked ? 'on' : 'off' } })}
-        data-testid={`flow-${k}-${c.id}`}
-      />
-    );
-    if (k === 'approval' && !c.locked.approval && c.effective.flow === 'off')
-      return (
-        <Tooltip label="No effect while this agent's flow is off" withinPortal>
-          <span>{control}</span>
-        </Tooltip>
-      );
-    return c.locked[k] ? (
-      <Group gap={6} wrap="nowrap">
-        {control}
-        <Locked>
-          <IconLock size={12} /> enforced by policy
-        </Locked>
-      </Group>
-    ) : (
-      control
-    );
-  };
   // Older servers do not report the questions preference: no column then.
   const hasQuestions = p.mine.some((c) => c.effective.questions !== undefined);
-  const questions = (c: FlowClient) => (
-    <SegmentedControl
-      size="xs"
-      aria-label={`Questions for ${c.label}`}
-      value={c.effective.questions ?? 'mandate'}
-      disabled={!c.editable || m.client.isPending}
-      onChange={(v) => m.client.mutate({ project: p.id, id: c.id, patch: { questions: v as QuestionsVia } })}
-      data={[
-        { value: 'mandate', label: 'Via Mandate' },
-        { value: 'chat', label: 'In chat' },
-      ]}
-      data-testid={`flow-questions-${c.id}`}
-    />
-  );
   return (
     <Table verticalSpacing={8} withRowBorders={false} className="flow-table" data-testid={`flow-mine-${p.id}`}>
       <Table.Thead>
@@ -114,19 +97,27 @@ function MyAgents({ p }: { p: FlowProject }) {
             <Table.Td>
               <ClientName c={c} />
             </Table.Td>
-            <Table.Td>{sw(c, 'flow')}</Table.Td>
-            <Table.Td>{sw(c, 'approval')}</Table.Td>
-            {hasQuestions && <Table.Td>{questions(c)}</Table.Td>}
+            <Table.Td>
+              <State c={c} k="flow" />
+            </Table.Td>
+            <Table.Td>
+              <State c={c} k="approval" />
+            </Table.Td>
+            {hasQuestions && (
+              <Table.Td>
+                <Text size="sm" data-testid={`flow-questions-${c.id}`}>
+                  {c.effective.questions === 'chat' ? 'In chat' : 'Via Mandate'}
+                </Text>
+              </Table.Td>
+            )}
           </Table.Tr>
         ))}
       </Table.Tbody>
-      {m.client.error && (
-        <Table.Caption>
-          <Text size="xs" c="red">
-            {(m.client.error as Error).message}
-          </Text>
-        </Table.Caption>
-      )}
+      <Table.Caption>
+        <Text size="xs" c="dimmed" data-testid={`flow-mine-hint-${p.id}`}>
+          Change it from the agent with <code>/mandate-flow on|off</code> (also <code>approval on|off</code>, <code>questions mandate|chat</code>).
+        </Text>
+      </Table.Caption>
     </Table>
   );
 }
@@ -227,8 +218,8 @@ export function AgentFlowSection(_p: SectionProps) {
     <div className="su-section" data-testid="agent-flow">
       <StepIntro title="Agent flow">
         With the flow on, coding agents record requests as feedback, update specs and components, and work through work orders; with approval on they show you the plan and wait for your go.
-        Each agent client has its own setting (also <code>/mandate-flow on|off</code> in the agent); the project policy can require it or turn it off for everyone. Changes to standards always need
-        your confirmation.
+        Each agent client has its own setting, changed only from the agent with <code>/mandate-flow on|off</code>; with the flow off, Mandate refuses that agent&apos;s write requests. The
+        project policy can require it or turn it off for everyone. Changes to standards always need your confirmation.
       </StepIntro>
       {q.isLoading && <Loader size="sm" />}
       {q.error && <Alert color="red">{(q.error as Error).message}</Alert>}

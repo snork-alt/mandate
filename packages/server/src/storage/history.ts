@@ -97,6 +97,11 @@ export class HistoryService {
     return (await this.git.fileHistory(this.dirs)).get(file) ?? [];
   }
 
+  /** Commits that changed `file` (newest first, first-parent). */
+  fileCommits(file: string): Promise<FileCommit[]> {
+    return this.commits(file);
+  }
+
   async log(file: string): Promise<HistoryEntry[]> {
     const commits = await this.commits(file);
     return Promise.all(

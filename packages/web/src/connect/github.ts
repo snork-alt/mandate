@@ -58,7 +58,31 @@ export interface NewProjectInput {
   description?: string;
   repo: string;
   branch?: string;
+  /** Folder inside the repo (older projects; the dialog no longer offers it). */
   path?: string;
+  /** Code repositories (read-only for Mandate) by short name. */
+  codeRepos?: CodeRepoEntry[];
+}
+
+/** A registered code repository: stable short name (code refs use it) → GitHub repo. */
+export interface CodeRepoEntry {
+  name: string;
+  github: string;
+  defaultBranch?: string;
+}
+
+/** Settings → Code repositories, per project. */
+export interface CodeReposProject {
+  id: string;
+  name: string;
+  specsRepo: string | null;
+  codeRepos: CodeRepoEntry[];
+  /** Repo names used in the project's data that are not registered yet. */
+  unlinked: { name: string; uses: number }[];
+}
+export interface CodeReposState {
+  admin: boolean;
+  projects: CodeReposProject[];
 }
 
 export const PROJECT_ID_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
@@ -112,6 +136,11 @@ export const githubApi = {
 };
 
 export { reposQuery };
+
+export const codeReposApi = {
+  list: (project?: string) => uiRequest<CodeReposState>('GET', `/ui/code-repos${project ? `?project=${encodeURIComponent(project)}` : ''}`, undefined, { noLoginRedirect: true }),
+  save: (project: string, codeRepos: CodeRepoEntry[]) => uiRequest<CodeReposProject>('PUT', `/ui/code-repos/${encodeURIComponent(project)}`, { codeRepos }),
+};
 
 /** `owner/name[/path]` of a project's GitHub storage. */
 export const repoLabel = (g: { repo: string; path: string | null }) => (g.path ? `${g.repo}/${g.path}` : g.repo);

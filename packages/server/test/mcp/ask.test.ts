@@ -742,3 +742,33 @@ describe('provider failures', () => {
     expect(describeProviderError(new Error('failed with Bearer sk-abcdefghijklmnop and key sk-live-1234567890abcdef')).message).not.toMatch(/sk-/);
   });
 });
+
+describe('question context (Ask pane chip for /questions/:id)', () => {
+  it('accepts a mandate://questions ref as context, offers question_get, and resolves the cited question', async () => {
+    const q = await fx.storage.questionService.ask(
+      { purpose: 'decision', blocking: false, context: ['mandate://specs/login-sso'], questions: [{ header: 'Session', question: 'How long should remember-me last?', options: [{ label: '30 days', description: 'Default' }, { label: '7 days', description: 'Safer' }], recommended: '30 days', multiSelect: false }] },
+      { agent: 'claude-code@test' },
+      { agent: 'claude-code@test' },
+    );
+    await fx.index.idle();
+    const ref = `mandate://questions/${q.id}`;
+    expect(askToolset(TOOLS).map((t) => t.name)).toEqual(expect.arrayContaining(['question_get', 'questions_list']));
+    // question_get is a deferred tool: the model loads it with find_tools, then reads the question.
+    const t = await askApp((_req, step) =>
+      step === 1
+        ? { text: '', toolCalls: [{ id: 'f1', name: 'find_tools', input: { query: 'question_get' } }] }
+        : step === 2
+          ? { text: '', toolCalls: [{ id: 'c1', name: 'question_get', input: { id: q.id } }] }
+          : { text: `The agent asks about remember-me ([${q.id}](${ref})).` },
+    );
+    const r = await t.ask({ question: 'What is this question about?', context: [`@mandate:${ref}`] });
+    expect(r.isError, JSON.stringify(r.body)).toBe(false);
+    const res = r.body as AskResult;
+    expect(res.toolCalls.map((c) => [c.name, c.ok]), JSON.stringify(res.toolCalls)).toEqual([
+      ['find_tools', true],
+      ['question_get', true],
+    ]);
+    expect(userText(t.model!.requests[0]!, 0)).toContain(`- @mandate:${ref}`);
+    expect(res.references.find((x) => x.ref === ref)).toMatchObject({ resolved: true, kind: 'question' });
+  });
+});

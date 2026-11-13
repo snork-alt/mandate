@@ -88,6 +88,7 @@ describe('documents', () => {
       expect.objectContaining({ id: 'markdown', label: 'Markdown' }),
       expect.objectContaining({ id: 'mermaid', fence: 'mermaid' }),
       expect.objectContaining({ id: 'html', fence: 'html' }),
+      expect.objectContaining({ id: 'image', label: 'Image' }),
       expect.objectContaining({ id: 'acceptance' }),
       expect.objectContaining({ id: 'rule', label: 'Rule' }),
       expect.objectContaining({ id: 'audit-item', label: 'Audit item' }),

@@ -20,6 +20,7 @@ import {
 import type { CommitMeta } from '../../storage/index.js';
 import { defineTool, type AnyToolDef, type ToolContext } from '../define.js';
 import { ToolError } from '../errors.js';
+import { checkCodeRepos, stampLocations } from '../code-claims.js';
 
 const idOf = (refOrId: string) => parseRef(refOrId)?.id ?? refOrId;
 function metaOf(ctx: ToolContext, commits: string[], extra: Record<string, string> = {}): CommitMeta {
@@ -61,14 +62,16 @@ Example: {"ref":"mandate://work-orders/wo-01jc...","plan":"1. Add the callback r
     name: 'work_order_touch',
     title: 'Record touched code',
     kind: 'write',
-    description: `Record the code you changed for a work order (idempotent merge: paths normalized, line ranges merged, symbols / commits unioned; renames keep from): into touched and, with section (spec section id or work-order section reference), that section's codeRefs. Call it at least per section and before completion. ${TOUCHED}.${COMMON}
+    description: `Record the code you changed for a work order (idempotent merge: paths normalized, line ranges merged, symbols / commits unioned; renames keep from): into touched and, with section (spec section id or work-order section reference), that section's codeRefs. Call it at least per section and before completion. ${TOUCHED}; code { repo, commit, dirty } covers files without commits.${COMMON}
 Example: {"ref":"wo-01jc...","section":"auth-flow","files":["app:src/auth/callback.ts#L40-L80",{"repo":"app","path":"src/auth/old.ts","change":"deleted"}]}`,
     input: workOrderTouchInputSchema,
     run: async (a, ctx) => {
       const commits: string[] = [];
       const id = idOf(a.ref);
-      await ctx.storage.workOrderService.touch(id, ctx.commit!.agent, { section: a.section, files: a.files }, metaOf(ctx, commits));
-      return woResult(ctx, id, commits);
+      // Code locations carry repo + commit: code (stamped on files without commits; dirty: linked on completion) or per-file commits.
+      const st = stampLocations(ctx, [{ files: a.files, path: 'files' }], a.code);
+      await ctx.storage.workOrderService.touch(id, ctx.commit!.agent, { section: a.section, files: st.lists[0]! }, metaOf(ctx, commits));
+      return woResult(ctx, id, commits, {}, st.warnings);
     },
   }),
   defineTool({
@@ -81,8 +84,9 @@ Example: {"ref":"wo-01jc...","repo":"app","range":"main..HEAD"}`,
     run: async (a, ctx) => {
       const commits: string[] = [];
       const id = idOf(a.ref);
+      const cw = checkCodeRepos(ctx, [a.repo], 'repo');
       const r = await ctx.storage.workOrderService.touchFromCommits(id, ctx.commit!.agent, a, ctx.codeRepos, metaOf(ctx, commits));
-      return woResult(ctx, id, commits, { files: r.files, codeCommits: r.commits });
+      return woResult(ctx, id, commits, { files: r.files, codeCommits: r.commits }, cw);
     },
   }),
   defineTool({
@@ -97,8 +101,9 @@ Example: {"ref":"wo-01jc...","repo":"app","branch":"wo/login-callback","baseBran
       const { ref, ...patch } = a;
       const id = idOf(ref);
       // `branch` (the common write input) is the code branch of this repo.
+      const cw = checkCodeRepos(ctx, [patch.repo], 'repo');
       await ctx.storage.workOrderService.gitUpdate(id, ctx.commit!.agent, { ...patch, ...(ctx.commit!.branch ? { branch: ctx.commit!.branch } : {}) }, metaOf(ctx, commits));
-      return woResult(ctx, id, commits);
+      return woResult(ctx, id, commits, {}, cw);
     },
   }),
   defineTool({

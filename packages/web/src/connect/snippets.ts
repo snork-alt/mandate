@@ -253,16 +253,27 @@ export type InstallShell = 'sh' | 'powershell';
 /** Windows browsers get the PowerShell one-liner first. */
 export const shellFor = (userAgent: string): InstallShell => (/Windows/i.test(userAgent) ? 'powershell' : 'sh');
 
-/** `curl -fsSL <base>/p/<id>/install.sh | sh` (or `irm …/install.ps1 | iex`); no token in it, ever. */
-export function installCommand(base: string, project: string, shell: InstallShell): string {
+/** `curl -fsSL <base>/p/<id>/install.sh | sh` (or `irm …/install.ps1 | iex`): installs the getmandate CLI from the
+ * server, then connects the agents; no token in it, ever. `flags` (e.g. `--agents codex`) go to `getmandate connect`:
+ * `sh -s -- <flags>`, or on Windows `& ([scriptblock]::Create((irm …/install.ps1))) <flags>` (the form install.ps1 documents). */
+export function installCommand(base: string, project: string, shell: InstallShell, flags = ''): string {
   const root = `${base.replace(/\/+$/, '')}/p/${project}`;
-  return shell === 'sh' ? `curl -fsSL ${root}/install.sh | sh` : `irm ${root}/install.ps1 | iex`;
+  const f = flags.trim();
+  if (shell === 'sh') return f ? `curl -fsSL ${root}/install.sh | sh -s -- ${f}` : `curl -fsSL ${root}/install.sh | sh`;
+  return f ? `& ([scriptblock]::Create((irm ${root}/install.ps1))) ${f}` : `irm ${root}/install.ps1 | iex`;
+}
+
+/** Removes the agent wiring (`getmandate uninstall`) and the CLI the installer put on the machine. */
+export function uninstallCommand(base: string, shell: InstallShell): string {
+  const root = base.replace(/\/+$/, '');
+  return shell === 'sh' ? `curl -fsSL ${root}/uninstall.sh | sh` : `irm ${root}/uninstall.ps1 | iex`;
 }
 
 /** Download, check the published SHA-256, then run (for people who do not pipe into a shell). */
-export function verifyCommands(base: string, project: string, shell: InstallShell): string {
+export function verifyCommands(base: string, project: string, shell: InstallShell, flags = ''): string {
   const root = `${base.replace(/\/+$/, '')}/p/${project}`;
+  const f = flags.trim() ? ` ${flags.trim()}` : '';
   return shell === 'sh'
-    ? `curl -fsSLO ${root}/install.sh\ncurl -fsSL ${root}/install.sh.sha256 | shasum -a 256 -c -\nsh install.sh`
-    : `irm ${root}/install.ps1 -OutFile install.ps1\n(Get-FileHash install.ps1 -Algorithm SHA256).Hash.ToLower() -eq (irm ${root}/install.ps1.sha256).Split(' ')[0]\n.\\install.ps1`;
+    ? `curl -fsSLO ${root}/install.sh\ncurl -fsSL ${root}/install.sh.sha256 | shasum -a 256 -c -\nsh install.sh${f}`
+    : `irm ${root}/install.ps1 -OutFile install.ps1\n(Get-FileHash install.ps1 -Algorithm SHA256).Hash.ToLower() -eq (irm ${root}/install.ps1.sha256).Split(' ')[0]\n.\\install.ps1${f}`;
 }

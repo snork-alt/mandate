@@ -65,7 +65,7 @@ describe('decisions_list', () => {
 describe('UI allow-list (uiAllowed)', () => {
   it('only the human-decision tools are uiAllowed, and they are write tools', () => {
     const allowed = TOOLS.filter((t) => t.uiAllowed).map((t) => t.name).sort();
-    expect(allowed).toEqual(['feedback_accept', 'feedback_close', 'integrity_snooze', 'question_answer', 'work_order_release']);
+    expect(allowed).toEqual(['approval_override_confirm', 'feedback_accept', 'feedback_close', 'integrity_snooze', 'question_answer', 'work_order_release']);
     for (const n of allowed) expect(tool(n).kind).toBe('write');
   });
 

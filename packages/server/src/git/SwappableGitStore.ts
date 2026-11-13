@@ -116,6 +116,9 @@ export class SwappableGitStore implements GitStore {
   readFileAt(commit: string, p: string) {
     return this.call((g) => g.readFileAt(commit, p));
   }
+  readBlobAt(commit: string, p: string) {
+    return this.call((g) => g.readBlobAt(commit, p));
+  }
   head() {
     return this.call((g) => g.head());
   }

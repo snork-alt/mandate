@@ -369,8 +369,10 @@ export function RowPeople({ refUri, fallback, first, max = 3 }: { refUri: string
   const cs = q.data ?? [];
   let content: ReactNode = null;
   if (cs.length) content = <AvatarStack contributors={first ? withFirst(cs, fallback) : cs} max={max} size="xs" />;
-  else if (q.isLoading) content = null;
+  // The recorded user (Mandate-User trailer, from the row's own git meta) shows while contributors load too: a slow
+  // `contributors` call (the index syncing a busy bootstrap) must not leave the people column empty.
   else if (show && fallback?.user) content = <UserAvatar user={fallback.user} size="xs" agent={fallback.agent} at={fallback.at} />;
+  else if (q.isLoading) content = null;
   else content = <AgentAvatar agent={fallback?.agent} size="xs" legacy={show} verb={fallback?.verb} at={fallback?.at} />;
   return (
     <span className="row-slot row-slot-people lr-people" data-testid="row-people">

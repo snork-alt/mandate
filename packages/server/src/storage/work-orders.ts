@@ -35,6 +35,7 @@ import {
   type UpdateWorkOrderInput,
   type WorkOrder,
   type WorkOrderDependenciesInput,
+  type CodeLink,
 } from '@mandate/shared';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
@@ -666,7 +667,7 @@ export class WorkOrderService {
    * non-blocking open threads only warn), every still-pending section marked done (recording implementedCommit), then
    * done (frozen from now on).
    */
-  async complete(id: string, agent: string, input: { outcome?: string; reconciliation?: string } & DeliveryExtras = {}, meta: CommitMeta = {}): Promise<{ workOrder: WorkOrder; warnings: string[] }> {
+  async complete(id: string, agent: string, input: { outcome?: string; reconciliation?: string; codeLinks?: CodeLink[] } & DeliveryExtras = {}, meta: CommitMeta = {}): Promise<{ workOrder: WorkOrder; warnings: string[] }> {
     {
       const probe = await this.doc(id);
       this.applyExtras(probe, input); // MW-11: invalid extras fail before any commit
@@ -699,7 +700,9 @@ export class WorkOrderService {
             if (s.id === WO_RECONCILIATION && input.reconciliation?.trim()) return { ...s, body: input.reconciliation.trim() };
             return s;
           });
-          return this.applyExtras({ ...cur, sections, status: 'done' }, input);
+          // Dirty claims (uncommitted code) made during this work order, linked to the commit that completed it.
+          const links = input.codeLinks?.length ? { codeLinks: [...(cur.codeLinks ?? []), ...input.codeLinks.filter((l) => !(cur.codeLinks ?? []).some((c) => c.ref === l.ref))] } : {};
+          return this.applyExtras({ ...cur, sections, status: 'done', ...links }, input);
         },
         { ...meta, message: meta.message ?? `work order: complete ${id}` },
       );

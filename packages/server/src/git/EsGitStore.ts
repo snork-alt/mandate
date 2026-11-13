@@ -315,12 +315,16 @@ export class EsGitStore implements GitStore {
   }
 
   async readFileAt(commit: string, file: string): Promise<string | null> {
+    return (await this.readBlobAt(commit, file))?.toString('utf8') ?? null;
+  }
+
+  async readBlobAt(commit: string, file: string): Promise<Buffer | null> {
     const id = await this.resolveCommit(commit);
     if (!id) throw new Error(`unknown commit '${commit}'`);
     const entry = this.r.getCommit(id).tree().getPath(file);
     if (!entry) return null;
     try {
-      return Buffer.from(entry.toObject(this.r).peelToBlob().content()).toString('utf8');
+      return Buffer.from(entry.toObject(this.r).peelToBlob().content());
     } catch {
       return null; // a directory, not a file
     }

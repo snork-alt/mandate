@@ -7,20 +7,20 @@ Three stages, each in a **fresh** agent: EXTRACT (raw notes) → DISTILL (Mandat
 Forms: \`/mandate-bootstrap\` (all) · \`extract|distill|review [--run <id>] [--area <path>]\` · \`--resume\` · other words = scope.
 
 ## Rules (every stage)
-- \`project_info\` first; \`effective.flow\` off: stop and give its \`reason\`.
+- \`project_info\` first; \`effective.flow\` off: stop and give its \`reason\` (writes are refused with \`flow_off\`). Then \`code_context_set\` (repo: the \`codeRepos\` entry matching \`git remote get-url origin\`); code refs and verifications use that short name + commit.
 - Never duplicate: \`spec_list\` / \`component_list\` / \`standard_list\` and \`spec_match\` before any create; extend instead.
 - Never invent requirements: unclear intent → \`question\` note (extract), \`feedback_create\` kind \`question\` on the section (distill).
-- Every section written: \`provenance: "inferred"\` + \`confidence\` (0..1). Every write: \`cause: <tracking work order ref>\`. Ids are assigned by Mandate: use the ids returned.
+- Every section written: \`provenance: "inferred"\` + \`confidence\` (0..1). \`cause\`: the answered question when one decided the write; otherwise none (bootstrap writes are marked by \`provenance: "inferred"\`; ignore \`missing_cause\` warnings). Ids are assigned by Mandate: use the ids returned.
 - Notes stay in the run folder, never in a repo.
 - Diagrams and mockups: upload with curl (\`project_info.upload\`, or \`upload_url_create\`); never paste them into tool calls.
-- Ask the user with \`question_ask\` (options + recommended; \`effective.questions\` chat: in chat) at setup, at the architecture checkpoint, before creating or changing ANY standard (always, even with approval off), and on ambiguous intent, code-vs-doc conflicts, naming, scope. Keep working on what doesn't depend on the answer. Never ask what code, configs or docs answer. ≤ 4 questions per checkpoint.
+- Ask the user with \`question_ask\` (options + recommended; \`effective.questions\` chat: in chat) at setup, at the architecture checkpoint (the component map, once), at the end (standard drafts), and on ambiguous intent, code-vs-doc conflicts, naming, scope. Keep working on what doesn't depend on the answer (answers arrive as \`news\` in replies: act on it; all blocked: \`news_list { unread: true, wait: 300 }\`, up to 6 times, then stop). Never ask what code, configs or docs answer. ≤ 4 questions per checkpoint.
 
 ## Setup (coordinator)
 1. Check what exists; ask in one batch: scope, depth (outline | full specs with criteria), skips (vendored, generated, legacy), authoritative docs.
 2. \`mandate bootstrap init <project> [--scope <p1,p2>] [<area>=<paths,…> …]\` (one area per module) → run id + folder \`~/.mandate/bootstrap/<project>/<runId>/\` (\`manifest.json\`, \`notes/\`).
-3. Tracking: \`spec_create\` a draft spec "Bootstrap" with sections Extract, Distill, Review; \`work_order_create\` on it (kind \`review\`; note = run id, notes path, scope, depth; plan = Setup · Extract per area · Distill (survey, architecture, each standard, specs per area) · Review · Done, kept current with \`work_order_plan_set\`). \`work_order_claim\`; \`work_order_heartbeat\` on long stages; \`work_order_section_done\` per stage with notes.
+3. Tracking lives ONLY in the run folder (\`mandate bootstrap status <runId> --stage … / --area … --area-status …\`). The bootstrap itself is never a Mandate item: no spec, work order, feedback, question thread or component about the bootstrap, its stages or its runs.
 
-**--resume**: \`work_order_list\` (the tracking spec, open) → \`work_order_get\` → \`mandate bootstrap status <runId>\` → continue at the first unfinished stage / area.
+**--resume**: the latest run in \`~/.mandate/bootstrap/<project>/\` (or \`--run <id>\`) → \`mandate bootstrap status <runId>\` → continue at the first unfinished stage / area.
 
 ## Stage 1: EXTRACT (read-only facts, no conclusions)
 Inventory: languages, manifests, entrypoints, modules, tests + how to run, CI, lint configs, docs / ADRs / AGENTS.md, API and DB schemas, migrations, feature flags.
@@ -35,14 +35,14 @@ One JSON object per line:
 
 ## Stage 2: DISTILL (fresh agent)
 Read manifest + notes; dedup; code beats stale docs unless docs are authoritative (ask on contradiction). Per area:
-1. Survey (≤ 30 lines: what, parts, interactions, testing) in the tracking spec's Distill section; the user corrects.
-2. Architecture: components from \`component_candidate\` / \`dependency\` notes (name, responsibility, \`owns\`, \`layer\`, \`parent\`, \`depends_on\`); the user confirms / renames / merges / splits; \`component_create\` + \`component_section_link_add\` \`depends_on\`; check \`architecture_get\`, \`code_owner\`. Each component gets \`affects\` / \`follows\` links and \`owns\` (or \`kind: external\`), as in the mandate skill.
-3. Standards: only conventions with a clear majority (violating ≤ ~10%); the rest are questions. Rule = \`level\`, Do / Don't \`examples\` from evidence, \`rationale\`, \`scope\`, \`check\`. One standard at a time: \`question_ask\` purpose \`standard_confirmation\` (Approve / Edit / Skip), then \`standard_create\` / \`standard_section_insert\` with \`cause\`: the answered question.
+1. Survey (≤ 30 lines: what, parts, interactions, testing) in \`notes/survey-<area>.md\` of the run folder; show it to the user to correct.
+2. Architecture: components from \`component_candidate\` / \`dependency\` notes (name, responsibility, \`owns\`, \`layer\`, \`parent\`, \`depends_on\`). Model the architecture, not the folders: deployable units, major modules, bounded contexts; few (~5-15 top-level per service), children only for a genuinely separate responsibility, depth ≤ 2; merge small ones with the same responsibility. Each: one clear responsibility, \`owns\` globs covering its code without overlap, \`layer\`, acyclic \`depends_on\` following the layering. Reuse existing ones (\`architecture_get\`). Propose the map to the user once (one question): confirm / rename / merge / split; then \`component_create\` + \`component_section_link_add\` \`depends_on\`; check \`architecture_get\`, \`code_owner\`. Each component gets \`affects\` / \`follows\` links and \`owns\` (or \`kind: external\`), as in the mandate skill.
+3. Standards: only conventions with a clear majority (violating ≤ ~10%); the rest are questions. Rule = \`level\`, Do / Don't \`examples\` from evidence, \`rationale\`, \`scope\`, \`check\`. No question per standard: \`standard_create\` with every section \`provenance: "inferred"\` creates a DRAFT (applies nowhere until activated; no confirmation needed yet).
 4. Specs: \`spec_match\`, then extend or \`spec_create\`. Intent, not implementation; one section per behaviour; mermaid only from real call paths; criteria from \`test\` notes first (method \`test\`, \`verifiedBy\`); \`refs\` + \`symbols\`; links \`affects\` / \`follows\` / \`depends_on\`. Tested and implemented: \`verification_record\` per criterion (run the tests; cannot run: \`skipped\`, note "not run", which verifies nothing), \`spec_status_set\` ready, then done only if every criterion passed (on \`done_gate\` stay ready; never force). Partial: \`ready\` + feedback. Gaps: \`draft\`.
-5. Area end: ask the collected questions; confirmed sections → \`provenance: "confirmed"\`, the rest → \`feedback_create\` kind \`question\`. Update the plan and \`--area-status distilled\`.
+5. Area end: ask the collected questions; confirmed sections → \`provenance: "confirmed"\`, the rest → \`feedback_create\` kind \`question\`. \`--area-status distilled\`.
 
 ## Stage 3: REVIEW (fresh agent, default on)
 Audit each doc of the run against notes and code: unsupported claims, stale refs (open them), criteria without tests, wrong \`owns\` (\`code_owner\`). Fix clear errors, lower \`confidence\` where weak, \`feedback_create\` the rest; list items for the user and coverage gaps (suggest \`audit_plan\`).
-Finish: \`work_order_complete\` (outcome: counts, open questions, next steps), \`--stage done\` (notes deleted after 14 days), ask the user to confirm inferred items (UI badges or "confirm <ref>"); \`spec_archive\` the tracking spec.
+Finish: \`--stage done\` (notes deleted after 14 days); report to the user (counts, the standard drafts, open questions, next steps) and ask them to confirm inferred items (UI badges or "confirm <ref>"). Standard drafts: one review at the end, \`question_ask\` purpose \`standard_confirmation\` (≤ 4 items, Approve / Edit / Skip; title: the standard's name, badge: its level, evidence: files with conforming / violating counts) or Actions → Standard drafts; approved: \`standard_status_set\` active with \`cause\`: the answered question.
 "
 `;

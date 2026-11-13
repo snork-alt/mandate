@@ -12,6 +12,7 @@ import type { ToolContext } from '../mcp/define.js';
 import { migrate, type Migration } from '../db/migrate.js';
 import type { Db, Dialect } from '../db/types.js';
 import type { ProjectsStore } from './store.js';
+import { codeRepoProblems, codeRepoSchema, type CodeRepo } from '@mandate/shared';
 
 export type FlowPolicy = 'required' | 'optional' | 'off';
 export type ApprovalPolicy = 'required' | 'optional';
@@ -64,6 +65,8 @@ export interface Effective {
   questions: QuestionsVia;
   /** Why (policy or preference), one sentence. */
   reason: string;
+  /** Whether the project policy decides the flow (required / off) rather than this client's preference. */
+  flowByPolicy: boolean;
 }
 
 /* ------------------------------------------------------------------ client identity */
@@ -128,8 +131,29 @@ export function effective(policy: Policy, pref: (Pick<ClientRecord, 'flow' | 'ap
   }
   const questions = pref?.questions ?? 'mandate';
   if (pref?.questions) reasons.push(`questions via ${pref.questions} by preference`);
-  return { flow, approval, questions, reason: `${reasons.join('; ')}.` };
+  return { flow, approval, questions, reason: `${reasons.join('; ')}.`, flowByPolicy: policy.flowPolicy !== 'optional' };
 }
+
+/**
+ * What the calling agent must do FROM NOW ON, until the setting changes (flow_set, /mandate-flow, project_info). The
+ * agent saves it to its memory, replacing any earlier Mandate-flow note.
+ */
+export function flowInstructions(eff: Effective): string {
+  const save = 'Save these instructions to your memory now, replacing any earlier Mandate-flow note.';
+  if (eff.flow === 'off')
+    return `Mandate flow is OFF for this coding agent (${eff.reason.replace(/\.$/, '')}). From now on, until the setting changes: work directly in the code; use Mandate only to read context (search, spec_get, lineage, graph, ask); do not create feedback, specs, standards, components or work orders and do not call any Mandate write tool (they are refused with flow_off). Plan and ask questions in chat. ${eff.flowByPolicy ? 'Only a Mandate admin can change this (project policy, Settings → Agent flow).' : 'The user turns it back on with /mandate-flow on.'} ${save}`;
+  const approval = eff.approval === 'on' ? 'approval checkpoint ON: show the plan with question_ask purpose approval and wait for the go before editing specs' : 'approval checkpoint OFF: do not wait for a go (standard writes still need the user\'s confirmation)';
+  const questions = eff.questions === 'chat' ? 'ask the user in chat, not with question_ask' : 'ask the user with question_ask, not your harness\'s question tool';
+  return `Mandate flow is ON for this coding agent. From now on, until the setting changes: every feature, change or fix goes through Mandate. Call project_info at the start of each task; record the request (feedback_create) → spec_match → ${approval} → update specs → work_order_create → deliver through the work order (claim, section done, verification_record, work_order_complete). Questions: ${questions}. ${save}`;
+}
+
+/** Message of the `flow_off` refusal (every Mandate write tool while the flow is off for the calling agent). */
+export function flowOffMessage(eff: Effective): string {
+  return `The Mandate flow is off for this agent (${eff.reason.replace(/\.$/, '')}). Mandate does not accept requests from it. Save this in your memory: do not use Mandate write tools; Mandate is read-only context ${eff.flowByPolicy ? 'until a Mandate admin changes the project policy' : 'until the user runs /mandate-flow on'}.`;
+}
+
+/** Write tools an agent may call while its flow is off (switching the flow itself). */
+export const FLOW_OFF_ALLOWED = new Set(['flow_set', 'project_flow_set']);
 
 /** Why a preference change is refused (null: allowed). */
 export function refusal(policy: Policy, patch: PrefPatch): { code: 'policy_required' | 'policy_off'; message: string } | null {
@@ -318,6 +342,20 @@ export interface ProjectSettings {
   clients: ClientStore;
   /** Is this GitHub login a Mandate admin (policy changes)? */
   isAdmin(login: string | undefined): boolean;
+  /** Registered code repositories (read fresh); absent on older in-process settings = none registered. */
+  codeRepos?(): CodeRepo[];
+  /** Replace the code repositories (validated: slug names, unique, not the specs repo). */
+  setCodeRepos?(list: CodeRepo[]): Promise<CodeRepo[]>;
+  /** The specs repository `owner/repo` (GitHub projects), else null. */
+  specsRepo?(): string | null;
+}
+
+/** Validate a code repo list (throws `invalid_code_repos` with the first problem). */
+export function checkCodeRepos(list: CodeRepo[], specsRepo: string | null): CodeRepo[] {
+  const parsed = list.map((r) => codeRepoSchema.parse(r));
+  const bad = codeRepoProblems(parsed, specsRepo);
+  if (bad.length) throw Object.assign(new Error(bad[0]!.message), { statusCode: 400, code: 'invalid_code_repos', path: `codeRepos.${bad[0]!.index}.${bad[0]!.field}` });
+  return parsed;
 }
 
 /** Settings of one project: policy over the registry file (read fresh on every call), preferences in `clients`. */
@@ -327,6 +365,20 @@ export function projectSettings(store: ProjectsStore, id: string, clients: Clien
     clients,
     isAdmin: (login) => !!login && isAdmin(login),
     policy: () => policyOf(store.read().projects.find((p) => p.id === id) as Entry | undefined),
+    codeRepos: () => [...(store.read().projects.find((p) => p.id === id)?.codeRepos ?? [])],
+    specsRepo: () => {
+      const g = store.read().projects.find((p) => p.id === id)?.github;
+      return g ? `${g.owner}/${g.repo}` : null;
+    },
+    setCodeRepos: (list) =>
+      store.mutate((reg) => {
+        const e = reg.projects.find((p) => p.id === id);
+        if (!e) throw new Error(`project '${id}' is not in the project registry (${store.file})`);
+        const next = checkCodeRepos(list, e.github ? `${e.github.owner}/${e.github.repo}` : null);
+        if (next.length) e.codeRepos = next;
+        else delete e.codeRepos;
+        return next;
+      }),
     setPolicy: (patch) =>
       store.mutate((reg) => {
         const e = reg.projects.find((p) => p.id === id) as Entry | undefined;
@@ -341,9 +393,20 @@ export function projectSettings(store: ProjectsStore, id: string, clients: Clien
 }
 
 /** In-memory settings (tests, in-process contexts). */
-export function memorySettings(initial: Partial<Policy> = {}, project = 'test', clients: ClientStore = new MemoryClientStore()): ProjectSettings {
+export function memorySettings(initial: Partial<Policy> = {}, project = 'test', clients: ClientStore = new MemoryClientStore(), code: { codeRepos?: CodeRepo[]; specsRepo?: string | null } = {}): ProjectSettings {
   let policy = { ...DEFAULT_POLICY, ...initial };
-  return { project, clients, isAdmin: () => true, policy: () => ({ ...policy }), setPolicy: async (patch) => (policy = { ...policy, ...patch }) };
+  let repos = [...(code.codeRepos ?? [])];
+  const specs = code.specsRepo ?? null;
+  return {
+    project,
+    clients,
+    isAdmin: () => true,
+    policy: () => ({ ...policy }),
+    setPolicy: async (patch) => (policy = { ...policy, ...patch }),
+    codeRepos: () => [...repos],
+    specsRepo: () => specs,
+    setCodeRepos: async (list) => (repos = checkCodeRepos(list, specs)),
+  };
 }
 
 /** Who a UI-triggered write (Settings, flow toggles, project creation) is attributed to: the signed-in user. */

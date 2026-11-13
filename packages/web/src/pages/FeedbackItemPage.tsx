@@ -18,6 +18,7 @@ import { IconAlertTriangle, IconLock } from '@tabler/icons-react';
 import { EmptyView, ErrorState } from '../components/ListStates';
 import { Markdown } from '../components/Markdown';
 import { Prop, PropGroup } from '../components/PropertyList';
+import { QuestionsPanel } from '../components/questions/QuestionsPanel';
 import { TimeAgo } from '../components/TimeAgo';
 import { TopBar } from '../components/TopBar';
 import { FEEDBACK_KIND_META, firstLine } from '../lib/feedback';
@@ -213,35 +214,38 @@ export function FeedbackItemPage() {
   );
 
   const panels = (
-    <PropGroup title="Properties">
-      <Prop label="Status" to={`/feedback?status=${f.status}`}>
-        <FeedbackStatus status={f.status} resolution={f.resolution} />
-      </Prop>
-      {f.status === 'closed' && (
-        <Prop label="Locked">
-          <span className="inline-icon faint">
-            <IconLock size={13} /> Closed · immutable
+    <>
+      <QuestionsPanel refUri={buildRef({ kind: 'feedback', id: f.id })} />
+      <PropGroup title="Properties">
+        <Prop label="Status" to={`/feedback?status=${f.status}`}>
+          <FeedbackStatus status={f.status} resolution={f.resolution} />
+        </Prop>
+        {f.status === 'closed' && (
+          <Prop label="Locked">
+            <span className="inline-icon faint">
+              <IconLock size={13} /> Closed · immutable
+            </span>
+          </Prop>
+        )}
+        {f.closedAt && (
+          <Prop label="Closed">
+            <TimeAgo iso={f.closedAt} />
+          </Prop>
+        )}
+        <Prop label="Kind" to={`/feedback?kind=${f.kind}`}>
+          <span className="inline-icon">
+            <FeedbackKindIcon kind={f.kind} size={14} />
+            {FEEDBACK_KIND_META[f.kind].label}
           </span>
         </Prop>
-      )}
-      {f.closedAt && (
-        <Prop label="Closed">
-          <TimeAgo iso={f.closedAt} />
+        <Prop label="Created">
+          <TimeAgo iso={f.createdAt} />
         </Prop>
-      )}
-      <Prop label="Kind" to={`/feedback?kind=${f.kind}`}>
-        <span className="inline-icon">
-          <FeedbackKindIcon kind={f.kind} size={14} />
-          {FEEDBACK_KIND_META[f.kind].label}
-        </span>
-      </Prop>
-      <Prop label="Created">
-        <TimeAgo iso={f.createdAt} />
-      </Prop>
-      <Prop label="Updated">
-        <TimeAgo iso={f.updatedAt} />
-      </Prop>
-    </PropGroup>
+        <Prop label="Updated">
+          <TimeAgo iso={f.updatedAt} />
+        </Prop>
+      </PropGroup>
+    </>
   );
 
   return (

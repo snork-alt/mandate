@@ -19,17 +19,23 @@ describe('bootstrap skill', () => {
     const texts = [BOOTSTRAP_SKILL_BODY, BOOTSTRAP_COMMAND.render('--resume')];
     const mentioned = new Set(texts.flatMap((t) => [...t.matchAll(/\b([a-z]+(?:_[a-z]+)+)\b/g)].map((m) => m[1]!)).filter((n) => (PREFIX.test(n) || n === 'rules_for_code') && !(NOTE_TYPES as readonly string[]).includes(n) && n !== 'standard_confirmation'));
     expect([...mentioned].filter((n) => !names.has(n))).toEqual([]);
-    for (const n of ['project_info', 'spec_match', 'spec_create', 'component_create', 'standard_create', 'work_order_create', 'work_order_plan_set', 'verification_record', 'feedback_create', 'work_order_complete']) expect(mentioned.has(n), n).toBe(true);
+    for (const n of ['project_info', 'spec_match', 'spec_create', 'component_create', 'standard_create', 'verification_record', 'feedback_create', 'code_context_set']) expect(mentioned.has(n), n).toBe(true);
   });
 
   it('covers the stages, resume, notes schema, asking rules and the standards rule', () => {
     const t = BOOTSTRAP_SKILL_BODY;
-    for (const x of ['Stage 1: EXTRACT', 'Stage 2: DISTILL', 'Stage 3: REVIEW', '--resume', 'mandate bootstrap validate', 'mandate bootstrap init', 'provenance: "inferred"', 'standard_confirmation', 'fresh', 'sub-agents', 'cause: <tracking work order ref>', 'Never invent requirements', 'Never ask what code', 'done only if every criterion passed', 'distilled|reviewed']) expect(t, x).toContain(x);
+    for (const x of ['Stage 1: EXTRACT', 'Stage 2: DISTILL', 'Stage 3: REVIEW', '--resume', 'mandate bootstrap validate', 'mandate bootstrap init', 'provenance: "inferred"', 'standard_confirmation', 'fresh', 'sub-agents', 'never a Mandate item', 'Never invent requirements', 'Never ask what code', 'done only if every criterion passed', 'distilled|reviewed']) expect(t, x).toContain(x);
     // H1 / M8: no workOrder field on every write; never done after skipped verifications.
     expect(t).not.toContain('workOrder:');
     expect(t).not.toMatch(/ready → done/);
     for (const type of NOTE_TYPES) expect(t).toContain(type);
-    expect(t).toMatch(/before creating or changing ANY standard \(always, even with approval\s+off\)/);
+    // Standards are inferred drafts (no question per standard); one review at the end activates them.
+    expect(t).not.toMatch(/before creating or changing ANY standard/);
+    expect(t).toMatch(/No question per standard/);
+    expect(t).toMatch(/one review at the end/);
+    // Components at the architecture level, proposed once.
+    expect(t).toMatch(/not the folders/);
+    expect(t).toMatch(/Propose the map to the user once/);
     expect(t).toMatchSnapshot();
   });
 

@@ -54,6 +54,10 @@ export function eventTitle(e: ActivityEvent): string {
     const id = e.refs[0] ? (parseRef(e.refs[0])?.id ?? '') : '';
     if (id && res) return `Closed feedback ${id} as ${res.replace(/_/g, ' ')}`;
   }
+  if (e.type === 'approval.override_confirmed') {
+    const id = e.refs[0] ? (parseRef(e.refs[0])?.id ?? '') : '';
+    return id ? `Confirmed the approval override of feedback ${id}` : 'Confirmed an approval override';
+  }
   if (e.type === 'approval.override') {
     const id = e.refs[0] ? (parseRef(e.refs[0])?.id ?? '') : '';
     return id ? `Self-approved feedback ${id} (approval override)` : 'Approval override';

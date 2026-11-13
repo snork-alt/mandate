@@ -7,6 +7,7 @@ const SUGGESTIONS: Record<AskChipKind | 'none', string[]> = {
   work_order: ['Plan the implementation', 'Which rules apply to the code involved?', 'What should I verify when done?'],
   feedback: ['Propose the changes to resolve this', 'Which sections does this affect?'],
   component: ['What does this component do?', 'Which specs affect it?', 'What depends on it, and which rules apply?'],
+  question: ['Explain this question and its options', 'What would each option change?', 'Which option fits the specs and standards?'],
   other: ['Explain this'],
   none: ['What is in progress right now?', 'Which specs are blocked?', 'Find specs about authentication'],
 };

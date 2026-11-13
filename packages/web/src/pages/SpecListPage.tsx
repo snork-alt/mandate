@@ -121,7 +121,7 @@ export function SpecListPage() {
       tag: sorted(countBy(all, (s) => s.tags)).map(([v, n]) => ({ value: v, label: v, count: n })),
       category: sorted(countBy(all, (s) => s.category ?? NO_CATEGORY)).map(([v, n]) => ({
         value: v,
-        label: v === NO_CATEGORY ? 'No category' : categoryLabel(v),
+        label: v === NO_CATEGORY ? 'General' : categoryLabel(v),
         count: n,
       })),
       // One state filter (X1/L5): maturity stages, then flags (overlays), in two groups.
@@ -204,7 +204,7 @@ export function SpecListPage() {
           .sort((a, b) => (a === NO_CATEGORY ? 1 : b === NO_CATEGORY ? -1 : a.localeCompare(b)))
           .map((c) => ({
             key: c,
-            label: c === NO_CATEGORY ? 'No category' : categoryLabel(c),
+            label: c === NO_CATEGORY ? 'General' : categoryLabel(c),
             icon: <IconFolder size={14} stroke={1.7} color="var(--app-text-muted)" />,
             specs: m.get(c)!,
           }));
@@ -240,7 +240,7 @@ export function SpecListPage() {
         )}
         {activeCount > 0 && (
           <Tooltip label="Clear all filters">
-            <Button variant="subtle" color="gray" leftSection={<IconX size={12} />} onClick={clear}>
+            <Button variant="subtle" color="gray" leftSection={<IconX size={12} />} onClick={() => clear()}>
               Clear
             </Button>
           </Tooltip>
@@ -292,7 +292,7 @@ export function SpecListPage() {
           title="No matching specs"
           description="Nothing matches the current search and filters."
           action={
-            <Button variant="default" onClick={() => (clear(), update({ q: '' }))}>
+            <Button variant="default" onClick={() => clear({ q: true })}>
               Clear filters
             </Button>
           }

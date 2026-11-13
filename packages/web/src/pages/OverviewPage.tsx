@@ -1,21 +1,21 @@
-import { useEffect } from 'react';
-import { Skeleton, Tabs, Tooltip } from '@mantine/core';
-import { IconAlertTriangle, IconCircleCheck, IconFileText, IconHeartbeat, IconPlayerPlay } from '@tabler/icons-react';
-import { Link, useSearchParams } from 'react-router';
+import { useEffect, useState } from 'react';
+import { Button, Skeleton, Tabs, Tooltip } from '@mantine/core';
+import { IconAlertTriangle, IconCircleCheck, IconFileText, IconHeartbeat, IconPlayerPlay, IconSparkles } from '@tabler/icons-react';
+import { Link, Navigate, useNavigate, useSearchParams } from 'react-router';
 import { MATURITY_LABELS, MATURITY_STEPS, STEP_TONE, type ProjectOverview } from '@mandate/shared';
 import { TopBar } from '../components/TopBar';
 import { ErrorState } from '../components/ListStates';
 import { MaturityMeter } from '../components/maturity/MaturityBadge';
 import { DecisionDialogs } from '../components/decisions/DecisionActions';
-import { AttentionSpecs, Blocked, Decisions, MustFindings } from '../components/overview/ActionTab';
 import { InProgress, RecentlyChanged } from '../components/overview/ProgressTab';
 import { ByCategory, Coverage, VerificationGaps, Warnings } from '../components/overview/HealthTab';
 import { Empty, pct, plural } from '../components/overview/parts';
 import { getCurrentProject } from '../project';
 import { useProjects } from '../connect/projects';
+import { openConnectAgent } from '../connect/ConnectAgentModal';
+import { EmptyProjectOverview, GettingStartedModal, isEmptyProject, markAutoOpened, shouldAutoOpen, useGettingStartedPrefs } from '../connect/GettingStarted';
 import { useNow } from '../lib/specs';
-import { useDecisionAccess, useDecisions } from '../lib/decisions';
-import { actionCount, CHIP_TARGET, loadTab, pickTab, saveTab, specsFiltered, STEP_COLOR, useOverview, useRecentActivity, type AttentionFocus, type OverviewTab } from '../lib/overview';
+import { CHIP_TARGET, loadTab, pickTab, saveTab, specsFiltered, STEP_COLOR, useOverview, useRecentActivity, type AttentionFocus, type OverviewTab } from '../lib/overview';
 import '../components/overview/overview.css';
 
 /* ---------------------------------------------------------------- header */
@@ -111,22 +111,51 @@ function OverviewSkeleton() {
 const TabCount = ({ n, tone }: { n: number | undefined; tone?: 'danger' }) => (n ? <span className="ov-tab-count" data-tone={tone}>{n}</span> : null);
 
 /**
- * Project landing: a compact header (name, maturity bar, attention chips) and three tabs: "Action needed" (default when
- * anything is pending), "In progress" and "Health". The tab lives in `?tab=` and is remembered per project.
+ * Project landing: a compact header (name, maturity bar, attention chips) and two tabs: "In progress" (default) and
+ * "Health". The tab lives in `?tab=` and is remembered per project. What the user has to act on is the Actions page
+ * (/actions; the old `?tab=action` redirects there, attention chips open it).
  */
 export function OverviewPage() {
   const now = useNow();
   const q = useOverview();
-  const decisions = useDecisions(50);
-  const access = useDecisionAccess().data;
   const recent = useRecentActivity();
+  const navigate = useNavigate();
   const projectId = getCurrentProject() ?? '';
-  const name = useProjects().data?.items.find((p) => p.id === projectId)?.name ?? projectId;
+  const summary = useProjects().data?.items.find((p) => p.id === projectId);
+  const name = summary?.name ?? projectId;
+  // Empty project (no specs, standards, components, work orders): Getting started opens by itself once per session.
+  const empty = isEmptyProject(summary);
+  const gsPrefs = useGettingStartedPrefs(projectId);
+  const [gsOpen, setGsOpen] = useState(false);
+  useEffect(() => {
+    if (!shouldAutoOpen(projectId, empty, gsPrefs.modalHidden)) return;
+    markAutoOpened(projectId);
+    setGsOpen(true);
+  }, [projectId, empty, gsPrefs.modalHidden]);
+  const gettingStarted = empty ? (
+    <GettingStartedModal
+      projectId={projectId}
+      projectName={name}
+      opened={gsOpen}
+      onClose={() => setGsOpen(false)}
+      dontShow={gsPrefs.modalHidden}
+      onDontShow={gsPrefs.setModalHidden}
+      onOpenConnect={() => {
+        setGsOpen(false);
+        openConnectAgent();
+      }}
+    />
+  ) : null;
+  const gsButton = empty ? (
+    <Button size="xs" variant="light" leftSection={<IconSparkles size={14} />} onClick={() => setGsOpen(true)} data-testid="gs-topbar">
+      Getting started
+    </Button>
+  ) : null;
   const [params, setParams] = useSearchParams();
   const crumbs = [{ label: 'Overview' }];
-  const pending = q.data && decisions.data ? actionCount(q.data, decisions.data.total) : null;
-  const tab = pickTab(params.get('tab'), loadTab(projectId), pending);
+  const tab = pickTab(params.get('tab'), loadTab(projectId));
   const focus = (params.get('focus') ?? undefined) as AttentionFocus | undefined;
+  const legacyAction = params.get('tab') === 'action';
   const select = (t: OverviewTab, f?: AttentionFocus) => {
     saveTab(projectId, t);
     setParams((p) => {
@@ -144,11 +173,14 @@ export function OverviewPage() {
     return () => clearTimeout(t);
   }, [focus, tab]);
 
+  // Old links to the "Action needed" tab.
+  if (legacyAction) return <Navigate to={`/actions${focus ? `?focus=${focus}` : ''}`} replace />;
   if (q.isPending) {
     return (
       <>
-        <TopBar crumbs={crumbs} />
+        <TopBar crumbs={crumbs}>{gsButton}</TopBar>
         <OverviewSkeleton />
+        {gettingStarted}
       </>
     );
   }
@@ -164,7 +196,8 @@ export function OverviewPage() {
   const health = o.attention.integrityWarnings + o.gaps.length;
   return (
     <DecisionDialogs>
-      <TopBar crumbs={crumbs} />
+      <TopBar crumbs={crumbs}>{gsButton}</TopBar>
+      {gettingStarted}
       <div className="ov-page" data-testid="overview">
         <header className="ov-header">
           <div className="ov-title-row">
@@ -176,6 +209,8 @@ export function OverviewPage() {
           </div>
           {o.maturity.total > 0 ? (
             <MaturityBar m={o.maturity} />
+          ) : empty ? (
+            <EmptyProjectOverview projectName={name} showBanner={!gsOpen && !gsPrefs.bannerHidden} onOpen={() => setGsOpen(true)} onHideBanner={() => gsPrefs.setBannerHidden(true)} onConnect={openConnectAgent} />
           ) : (
             <Empty icon={<IconFileText size={18} stroke={1.5} />} title="No specs yet">
               Ask your coding agent to write the first spec (Connect agent in the sidebar), or <Link to="/specs">open Specs</Link>.
@@ -185,15 +220,14 @@ export function OverviewPage() {
             o={o}
             onPick={(key) => {
               const t = CHIP_TARGET[key];
-              if (t) select(t.tab, t.focus);
+              if (!t) return;
+              if (t.tab === 'actions') void navigate(`/actions?focus=${t.focus}`);
+              else select(t.tab, t.focus);
             }}
           />
         </header>
         <Tabs value={tab} onChange={(v) => v && select(v as OverviewTab)} keepMounted={false} className="ov-tabs" activateTabWithKeyboard>
           <Tabs.List>
-            <Tabs.Tab value="action" leftSection={<IconAlertTriangle size={14} />} rightSection={<TabCount n={pending ?? undefined} tone="danger" />} data-testid="tab-action">
-              Action needed
-            </Tabs.Tab>
             <Tabs.Tab value="progress" leftSection={<IconPlayerPlay size={14} />} rightSection={<TabCount n={o.inProgressTotal} />} data-testid="tab-progress">
               In progress
             </Tabs.Tab>
@@ -201,20 +235,6 @@ export function OverviewPage() {
               Health
             </Tabs.Tab>
           </Tabs.List>
-          <Tabs.Panel value="action" pt="md">
-            <div className="ov-health">
-              <Decisions q={decisions} projectId={projectId} overrideOk={access?.override.ok ?? false} />
-              <div className="ov-cols">
-                <div className="ov-col">
-                  <AttentionSpecs o={o} projectId={projectId} focus={focus} />
-                  <MustFindings o={o} />
-                </div>
-                <div className="ov-col">
-                  <Blocked o={o} projectId={projectId} />
-                </div>
-              </div>
-            </div>
-          </Tabs.Panel>
           <Tabs.Panel value="progress" pt="md">
             <div className="ov-cols">
               <div className="ov-col">

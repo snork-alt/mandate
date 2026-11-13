@@ -45,6 +45,7 @@ import type { ArchitectureEdge, ArchitectureGraph, ArchitectureNode, ComponentKi
 import { mentionOf, refMention } from '@mandate/shared/refs';
 import { useNavigate } from 'react-router';
 import { api } from '../../api';
+import { EmptyView, ErrorState } from '../ListStates';
 import { copyText } from '../../lib/copy';
 import type { CopyTarget } from '../../lib/refs';
 import { copyTargetProps, CopyMenu } from '../copy';
@@ -665,7 +666,7 @@ export function ArchitectureView({ initialFocus }: { initialFocus?: string | nul
         )}
         {target && <CopyMenu target={target} visible />}
       </div>
-      {g.isError && <div className="faint small">Could not load the architecture: {(g.error as Error).message}</div>}
+      {g.isError && <ErrorState error={g.error as Error} onRetry={() => void g.refetch()} />}
       {g.data && l && g.data.nodes.length > 0 && (
         <ArchAuditProvider>
           <ReactFlowProvider>
@@ -673,7 +674,13 @@ export function ArchitectureView({ initialFocus }: { initialFocus?: string | nul
           </ReactFlowProvider>
         </ArchAuditProvider>
       )}
-      {g.data && !g.data.nodes.length && <div className="faint small">No components yet.</div>}
+      {g.data && !g.data.nodes.length && (
+        <EmptyView
+          icon={<IconBox size={22} stroke={1.5} />}
+          title="No components yet"
+          description="Components describe the architecture: coding agents add them with component_create as they document the system."
+        />
+      )}
     </div>
   );
 }

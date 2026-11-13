@@ -9,6 +9,10 @@
  *   only (no token in the shell). The URL embeds a single-use, 10-minute token signed with the server secret and bound
  *   to the principal, project, target, mode and type; it is never a long-lived key.
  *
+ * Images (PNG, JPEG, GIF, WebP, SVG) go up the same two ways as an `image` section (`?alt=…[&caption=…]`): checked
+ * by content (magic bytes, dimensions, size cap `MANDATE_UPLOAD_IMAGE_MAX_BYTES`, default 10 MB), stored next to the
+ * document and served by `GET /p/<project>/images/...` (images.ts).
+ *
  * Both write through the SAME path as `<kind>_section_insert` / `_update`: `callTool` (attribution, `Caused-By`,
  * `Agent-Key`, `Mandate-User`, idempotent-safe trailers, integrity delta, warnings) over `DocWriteService` (write lock,
  * validation, commit); activity events and the index follow the commit as for every write. Commits carry
@@ -17,9 +21,10 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { buildRef, parseRef } from '@mandate/shared';
-import { slugSchema } from '@mandate/doc';
+import { parseImageBody, slugSchema } from '@mandate/doc';
 import { z } from 'zod';
-import { DocWriteService, type DocKind } from '../storage/doc-writes.js';
+import { DocWriteService, type DocKind, type ImageUpload } from '../storage/doc-writes.js';
+import { checkImage, DEFAULT_IMAGE_MAX_BYTES, IMAGE_MEDIA, ImageError, imageUrl, readSectionImage, sniffRaster } from './images.js';
 import type { ServerState } from '../db/state.js';
 import { authenticate, type AuthOptions, type Principal } from '../auth/http.js';
 import type { RepoPermissions } from '../auth/github-perms.js';
@@ -30,7 +35,7 @@ import { ToolError, type ToolErrorBody } from './errors.js';
 /* ---------------------------------------------------------------- types and content */
 
 /** Section types an upload can write (`text` / `json` become a markdown section holding one fenced block). */
-export const UPLOAD_TYPES = ['html', 'markdown', 'mermaid', 'text', 'json'] as const;
+export const UPLOAD_TYPES = ['html', 'markdown', 'mermaid', 'text', 'json', 'image'] as const;
 export type UploadType = (typeof UPLOAD_TYPES)[number];
 const DOC_KINDS = ['specs', 'standards', 'components'] as const;
 
@@ -45,10 +50,11 @@ const MEDIA: Record<string, UploadType> = {
   'application/vnd.mermaid': 'mermaid',
   'text/plain': 'text',
   'application/json': 'json',
+  ...Object.fromEntries([...IMAGE_MEDIA].map((m) => [m, 'image' as const])),
 };
 /** Media types curl and friends send by default: they do not select a type (the target / token decides). */
 const GENERIC_MEDIA = new Set(['', 'application/x-www-form-urlencoded', 'application/octet-stream']);
-export const CONTENT_TYPE_OF: Record<UploadType, string> = { html: 'text/html', markdown: 'text/markdown', mermaid: 'text/x-mermaid', text: 'text/plain', json: 'application/json' };
+export const CONTENT_TYPE_OF: Record<UploadType, string> = { html: 'text/html', markdown: 'text/markdown', mermaid: 'text/x-mermaid', text: 'text/plain', json: 'application/json', image: 'image/png' };
 /** The stored section type of an upload type. */
 const storedType = (t: UploadType) => (t === 'text' || t === 'json' ? 'markdown' : t);
 
@@ -77,6 +83,7 @@ function parseContentType(header: string | undefined): { media: string; charset?
 /** The upload type a Content-Type names (null = generic: decided by the target). Unknown or non-UTF-8 → 415. */
 export function typeOfContentType(header: string | undefined): UploadType | null {
   const { media, charset } = parseContentType(header);
+  if (IMAGE_MEDIA.has(media)) return 'image';
   if (charset && charset !== 'utf-8' && charset !== 'utf8' && charset !== 'us-ascii') throw new UploadError(415, 'unsupported_charset', `charset ${charset} is not supported; uploads are UTF-8`, 'convert the file to UTF-8 and send charset=utf-8 (or no charset)');
   if (GENERIC_MEDIA.has(media)) return null;
   const t = MEDIA[media];
@@ -163,16 +170,16 @@ export async function checkTarget(ctx: ToolContext, t: { kind: DocKind; docId: s
   }
   if (t.after && !doc.sections.some((s) => s.id === t.after)) throw new UploadError(404, 'not_found', `section '${t.after}' (after) is not in ${t.kind}/${t.docId}`, 'pass an existing section id, or omit after (appends)');
   if (t.mode === 'new_section') {
-    if (!t.type) throw new UploadError(415, 'type_required', 'a new section needs a type', "send -H 'Content-Type: text/html' (or text/markdown, text/x-mermaid, text/plain, application/json)");
+    if (!t.type) throw new UploadError(415, 'type_required', 'a new section needs a type', "send -H 'Content-Type: text/html' (or text/markdown, text/x-mermaid, text/plain, application/json, image/png|jpeg|gif|webp|svg+xml)");
     return t.type;
   }
   const s = doc.sections.find((x) => x.id === t.section);
   if (!s) throw new UploadError(404, 'not_found', `section '${t.section}' is not in ${t.kind}/${t.docId}`, 'pass create=1&title=… to insert a new section (Mandate assigns its id)');
   if (s.archived) throw new UploadError(409, 'section_archived', `section '${t.section}' is archived; archived sections are kept as they were`, 'insert a new section instead (create=1&title=…)');
   const current = s.type ?? 'markdown';
-  if (!['html', 'markdown', 'mermaid'].includes(current)) throw new UploadError(415, 'type_mismatch', `section '${t.section}' is a ${current} section; uploads replace html, markdown or mermaid sections`, `edit it with ${t.kind === 'specs' ? 'spec' : t.kind === 'standards' ? 'standard' : 'component'}_section_update`);
+  if (!['html', 'markdown', 'mermaid', 'image'].includes(current)) throw new UploadError(415, 'type_mismatch', `section '${t.section}' is a ${current} section; uploads replace html, markdown, mermaid or image sections`, `edit it with ${t.kind === 'specs' ? 'spec' : t.kind === 'standards' ? 'standard' : 'component'}_section_update`);
   // text/plain is what generic tools send for any text: it takes the existing markdown / mermaid section's type.
-  const type = !t.type || (t.type === 'text' && current !== 'html') ? (current as UploadType) : t.type;
+  const type = !t.type || (t.type === 'text' && current !== 'html' && current !== 'image') ? (current as UploadType) : t.type;
   if (storedType(type) !== current) throw new UploadError(415, 'type_mismatch', `section '${t.section}' is ${current}; the upload is ${type} (${CONTENT_TYPE_OF[type]})`, `send Content-Type ${CONTENT_TYPE_OF[current as UploadType]}, or change the section type first with the section_update tool`);
   return type;
 }
@@ -182,7 +189,7 @@ export async function checkTarget(ctx: ToolContext, t: { kind: DocKind; docId: s
 const SINGULAR: Record<DocKind, string> = { specs: 'spec', standards: 'standard', components: 'component' } as Record<DocKind, string>;
 
 /** Write tools used by uploads: the section insert / update service calls under the public tool names, with the upload size limit for `body`. */
-function uploadWriteTool(kind: DocKind, mode: 'new_section' | 'replace_section', maxBytes: number): AnyToolDef {
+function uploadWriteTool(kind: DocKind, mode: 'new_section' | 'replace_section', maxBytes: number, image?: ImageUpload): AnyToolDef {
   const k = SINGULAR[kind];
   return defineTool({
     name: `${k}_section_${mode === 'new_section' ? 'insert' : 'update'}`,
@@ -194,8 +201,10 @@ function uploadWriteTool(kind: DocKind, mode: 'new_section' | 'replace_section',
         doc: z.string().min(1),
         section: slugSchema.optional(),
         title: z.string().trim().min(1).max(300).optional(),
-        type: z.enum(['html', 'markdown', 'mermaid']),
-        body: z.string().max(maxBytes),
+        type: z.enum(['html', 'markdown', 'mermaid', 'image']),
+        body: z.string().max(maxBytes).optional(),
+        alt: z.string().max(2000).optional(),
+        caption: z.string().max(2000).optional(),
         after: slugSchema.optional(),
         note: z.string().max(500).optional(),
       })
@@ -208,13 +217,16 @@ function uploadWriteTool(kind: DocKind, mode: 'new_section' | 'replace_section',
       const writes = new DocWriteService(ctx.storage, { sectionSoftLimitTokens: 600 });
       let sid: string;
       let warnings: string[];
+      // Images: the bytes come from the route (closure), alt / caption from the arguments.
+      const opts = a.type === 'image' && image ? { image: { ...image, ...(a.alt !== undefined ? { alt: a.alt } : {}), ...(a.caption !== undefined ? { caption: a.caption } : {}) } } : {};
+      if (a.type === 'image' && !image) throw new ToolError('validation', 'image uploads need the image bytes', undefined, 'type');
       if (mode === 'new_section') {
-        const out = await writes.sectionInsert(kind, a.doc, { title: a.title!, type: a.type, body: a.body }, a.after ? { after: a.after } : { position: 'last' }, meta);
+        const out = await writes.sectionInsert(kind, a.doc, { title: a.title!, type: a.type, body: a.body ?? '' }, a.after ? { after: a.after } : { position: 'last' }, meta, opts);
         sid = out.sectionId;
         warnings = out.warnings;
       } else {
         sid = a.section!;
-        const out = await writes.sectionUpdate(kind, buildRef({ kind, id: a.doc, sectionId: sid }), { type: a.type, body: a.body }, meta);
+        const out = await writes.sectionUpdate(kind, buildRef({ kind, id: a.doc, sectionId: sid }), { type: a.type, body: a.body ?? '' }, meta, opts);
         warnings = out.warnings;
       }
       // Long mockups exceed the prose soft limit by design: that warning is noise here.
@@ -231,7 +243,10 @@ export interface UploadWrite {
   title?: string;
   after?: string;
   type: UploadType;
+  /** Text uploads. */
   text: string;
+  /** Image uploads: the checked bytes (alt / caption included). */
+  image?: ImageUpload;
   agent: string;
   branch?: string;
   cause?: string[];
@@ -250,13 +265,13 @@ function statusOf(code: string): number {
 
 /** Run the upload write through `callTool` (same attribution, trailers, causes and integrity as the MCP tools). */
 export async function runUploadWrite(ctx: ToolContext, w: UploadWrite, maxBytes: number, baseUrl: string) {
-  const def = uploadWriteTool(w.kind, w.mode, Math.max(maxBytes * 2, maxBytes + 1024));
+  const def = uploadWriteTool(w.kind, w.mode, Math.max(maxBytes * 2, maxBytes + 1024), w.image);
   const args = {
     doc: w.docId,
     ...(w.section && w.mode === 'replace_section' ? { section: w.section } : {}),
     ...(w.title ? { title: w.title } : {}),
     type: storedType(w.type),
-    body: bodyOf(w.type, w.text),
+    ...(w.type === 'image' ? { ...(w.image?.alt !== undefined ? { alt: w.image.alt } : {}), ...(w.image?.caption !== undefined ? { caption: w.image.caption } : {}) } : { body: bodyOf(w.type, w.text) }),
     ...(w.after ? { after: w.after } : {}),
     ...(w.note ? { note: w.note } : {}),
     agent: w.agent,
@@ -271,6 +286,12 @@ export async function runUploadWrite(ctx: ToolContext, w: UploadWrite, maxBytes:
   }
   const sid = body.section as string;
   const project = ctx.project?.id ?? '';
+  let image: Record<string, unknown> | undefined;
+  if (w.type === 'image') {
+    const s = (await repoOf(ctx, w.kind).get(w.docId)).sections.find((x) => x.id === sid) as { body?: string } | undefined;
+    const m = s?.body ? parseImageBody(s.body) : null;
+    if (m) image = { alt: m.alt, ...(m.caption ? { caption: m.caption } : {}), mime: m.mime, width: m.width, height: m.height, bytes: m.bytes, sha256: m.sha256, url: imageUrl({ ...ctx, baseUrl }, w.kind, w.docId, sid, m) };
+  }
   return {
     ref: buildRef({ kind: w.kind, id: w.docId, sectionId: sid }),
     section: sid,
@@ -278,6 +299,7 @@ export async function runUploadWrite(ctx: ToolContext, w: UploadWrite, maxBytes:
     created: w.mode === 'new_section',
     commit: body.commit ?? null,
     url: `${baseUrl}/p/${encodeURIComponent(project)}/${w.kind}/${encodeURIComponent(w.docId)}#section-${sid}`,
+    ...(image ? { image } : {}),
     integrity: body.integrity ?? { introduced: [], resolved: [] },
     warnings: body.warnings ?? [],
   };
@@ -305,6 +327,9 @@ export interface UploadClaims {
   ti?: string;
   af?: string;
   n?: string;
+  /** Images: alt text and caption. */
+  al?: string;
+  ca?: string;
   /** Expiry (epoch ms) and nonce (single use). */
   x: number;
   j: string;
@@ -316,6 +341,8 @@ export interface UploadServiceOptions {
   /** Server-state database: used tokens are recorded there (several instances, restarts); else in memory. */
   state?: ServerState;
   maxBytes?: number;
+  /** Size cap of image uploads (default `MANDATE_UPLOAD_IMAGE_MAX_BYTES`, else 10 MB). */
+  imageMaxBytes?: number;
   ttlMs?: number;
   now?: () => number;
 }
@@ -326,6 +353,7 @@ const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 /** Signs, verifies and consumes one-time upload tokens. */
 export class UploadService {
   readonly maxBytes: number;
+  readonly imageMaxBytes: number;
   readonly ttlMs: number;
   private readonly key: Buffer;
   private readonly used = new Map<string, number>();
@@ -335,6 +363,8 @@ export class UploadService {
     this.key = createHmac('sha256', opts.secret ?? randomBytes(32)).update('mandate-upload-url-v1').digest();
     const envMax = Number(process.env.MANDATE_UPLOAD_MAX_BYTES);
     this.maxBytes = opts.maxBytes ?? (Number.isFinite(envMax) && envMax > 0 ? envMax : DEFAULT_UPLOAD_MAX_BYTES);
+    const envImg = Number(process.env.MANDATE_UPLOAD_IMAGE_MAX_BYTES);
+    this.imageMaxBytes = opts.imageMaxBytes ?? (Number.isFinite(envImg) && envImg > 0 ? envImg : DEFAULT_IMAGE_MAX_BYTES);
     this.ttlMs = opts.ttlMs ?? UPLOAD_TTL_MS;
     this.now = opts.now ?? Date.now;
   }
@@ -407,6 +437,7 @@ export function uploadInfo(ctx: ToolContext) {
     curl: envVar
       ? `curl -sS -X PUT -H "Authorization: Bearer $${envVar}" -H 'Content-Type: text/html' --data-binary @<file> '${base}/specs/<id>/<sid>?cause=<ref>'  (new section: '${base}/specs/<id>?create=1&title=<title>&cause=<ref>')`
       : 'no token in your shell (MCP sign-in): call upload_url_create and run the curl it returns',
+    ...(envVar ? { image: `curl -sS -X PUT -H "Authorization: Bearer $${envVar}" -H 'Content-Type: image/png' --data-binary @<file.png> '${base}/specs/<id>?create=1&title=<title>&alt=<what it shows>&cause=<ref>'` } : {}),
   };
 }
 
@@ -420,7 +451,7 @@ export const uploadUrlTool = defineTool({
   name: 'upload_url_create',
   title: 'Create a section upload URL',
   kind: 'write',
-  description: `One-time URL (10 min, single use) to upload a generated file (HTML mockup, mermaid, markdown, text / json example) as a section with curl, so its content never passes through a tool call. target: spec / standard / component ref; mode new_section (title, after?) | replace_section (section). Returns url, curl, expiresAt, maxBytes; the PUT returns ref, section, commit, integrity. With the env var named in project_info.upload in your shell, PUT directly (its curl). The URL is the credential: do not store or share it.
+  description: `One-time URL (10 min, single use) to upload a generated file (HTML mockup, mermaid, markdown, text / json example; image: PNG/JPEG/GIF/WebP/SVG screenshot, mockup or diagram with alt) as a section with curl, so its content never passes through a tool call. target: spec / standard / component ref; mode new_section (title, after?) | replace_section (section). Returns url, curl, expiresAt, maxBytes; the PUT returns ref, section, commit, integrity. With the env var named in project_info.upload in your shell, PUT directly (its curl). The URL is the credential: do not store or share it.
 Example: {"target":"mandate://specs/checkout","mode":"new_section","sectionType":"html","title":"Checkout mockup"}`,
   input: z
     .object({
@@ -431,6 +462,8 @@ Example: {"target":"mandate://specs/checkout","mode":"new_section","sectionType"
       section: slugSchema.optional(),
       after: slugSchema.optional(),
       note: z.string().trim().min(1).max(500).regex(/^[^\r\n]*$/, 'single line').optional(),
+      alt: z.string().trim().min(1).max(1000).optional(),
+      caption: z.string().trim().min(1).max(1000).optional(),
     })
     .strict(),
   run: async (a, ctx) => {
@@ -442,6 +475,8 @@ Example: {"target":"mandate://specs/checkout","mode":"new_section","sectionType"
     const section = a.section ?? ref?.sectionId;
     if (a.mode === 'new_section' && !a.title) throw new ToolError('validation', 'a new section needs a title', 'pass title (Mandate assigns the section id from it)', 'title');
     if (a.mode === 'replace_section' && !section) throw new ToolError('validation', 'replace_section needs the section id', 'pass section (or a section ref as target)', 'section');
+    if (a.sectionType === 'image' && a.mode === 'new_section' && !a.alt) throw new ToolError('alt_required', 'an image section needs alt text', 'pass alt: what the image shows (agents, search and Ask read it)', 'alt');
+    if ((a.alt || a.caption) && a.sectionType !== 'image') throw new ToolError('validation', 'alt / caption are for image uploads', 'drop them, or use sectionType image', 'alt');
     try {
       await checkTarget(ctx, { kind, docId, mode: a.mode, ...(section ? { section } : {}), ...(a.after ? { after: a.after } : {}), type: a.sectionType });
     } catch (e) {
@@ -464,16 +499,19 @@ Example: {"target":"mandate://specs/checkout","mode":"new_section","sectionType"
       ...(a.title ? { ti: a.title } : {}),
       ...(a.after ? { af: a.after } : {}),
       ...(a.note ? { n: a.note } : {}),
+      ...(a.alt ? { al: a.alt } : {}),
+      ...(a.caption ? { ca: a.caption } : {}),
     });
     const url = `${ctx.baseUrl}/p/${encodeURIComponent(ctx.project.id)}/uploads/${token}`;
-    const contentType = CONTENT_TYPE_OF[a.sectionType];
-    const file = a.sectionType === 'html' ? 'mockup.html' : a.sectionType === 'mermaid' ? 'diagram.mmd' : a.sectionType === 'json' ? 'example.json' : a.sectionType === 'text' ? 'example.txt' : 'section.md';
+    // Images: a generic Content-Type, so the server tells PNG / JPEG / GIF / WebP / SVG from the bytes.
+    const contentType = a.sectionType === 'image' ? 'application/octet-stream' : CONTENT_TYPE_OF[a.sectionType];
+    const file = a.sectionType === 'image' ? 'image.png' : a.sectionType === 'html' ? 'mockup.html' : a.sectionType === 'mermaid' ? 'diagram.mmd' : a.sectionType === 'json' ? 'example.json' : a.sectionType === 'text' ? 'example.txt' : 'section.md';
     return {
       url,
       method: 'PUT',
       headers: { 'Content-Type': contentType },
       expiresAt: new Date(expiresAt).toISOString(),
-      maxBytes: ctx.uploads.maxBytes,
+      maxBytes: a.sectionType === 'image' ? ctx.uploads.imageMaxBytes : ctx.uploads.maxBytes,
       curl: `curl -sS -X PUT --data-binary @${file} -H 'Content-Type: ${contentType}' '${url}'`,
       warnings: [],
     };
@@ -494,7 +532,7 @@ export interface UploadRouteDeps {
 }
 
 const send = (reply: FastifyReply, e: unknown) => {
-  if (e instanceof UploadError) return reply.code(e.status).send({ error: { code: e.code, message: e.message, ...(e.hint ? { hint: e.hint } : {}) } });
+  if (e instanceof UploadError || e instanceof ImageError) return reply.code(e.status).send({ error: { code: e.code, message: e.message, ...(e.hint ? { hint: e.hint } : {}) } });
   const msg = (e as Error)?.message ?? String(e);
   reply.log?.error?.(`upload: ${msg}`);
   return reply.code(500).send({ error: { code: 'internal', message: 'the upload failed', hint: 'retry; if it keeps failing, check the server log' } });
@@ -514,6 +552,21 @@ function requestFile(req: FastifyRequest): { data: Buffer; contentType: string |
 
 const one = (v: unknown): string | undefined => (typeof v === 'string' && v.length ? v : Array.isArray(v) && typeof v[0] === 'string' ? v[0] : undefined);
 const many = (v: unknown): string[] => (typeof v === 'string' ? v.split(',') : Array.isArray(v) ? (v as string[]) : []).map((s) => s.trim()).filter(Boolean);
+
+const safeSniff = (b: Buffer) => {
+  try {
+    return sniffRaster(b) !== null;
+  } catch {
+    return true; // a truncated image header: the image check reports it
+  }
+};
+
+/** Checked image bytes (magic bytes, size cap, dimensions; the declared Content-Type must agree) for the write. */
+function imageUpload(data: Buffer, maxBytes: number, contentType: string | undefined, alt: string | undefined, caption: string | undefined): ImageUpload {
+  const media = parseContentType(contentType).media;
+  const img = checkImage(data, maxBytes, IMAGE_MEDIA.has(media) ? media : undefined);
+  return { data, mime: img.mime, ...(img.width ? { width: img.width } : {}), ...(img.height ? { height: img.height } : {}), sha256: img.sha256, ...(alt !== undefined ? { alt } : {}), ...(caption !== undefined ? { caption } : {}) };
+}
 
 /** `PUT /p/:projectId/sections/...` and `PUT /p/:projectId/uploads/:token`. */
 export function registerUploadRoutes(app: FastifyInstance, d: UploadRouteDeps): void {
@@ -535,9 +588,10 @@ export function registerUploadRoutes(app: FastifyInstance, d: UploadRouteDeps): 
 
   void app.register(async (sub) => {
     sub.removeAllContentTypeParsers();
-    sub.addContentTypeParser('*', { parseAs: 'buffer', bodyLimit: d.uploads.maxBytes + 256 * 1024 }, (_req, body, done) => done(null, body));
+    const bodyLimit = Math.max(d.uploads.maxBytes, d.uploads.imageMaxBytes) + 256 * 1024;
+    sub.addContentTypeParser('*', { parseAs: 'buffer', bodyLimit }, (_req, body, done) => done(null, body));
     sub.setErrorHandler((err: Error & { statusCode?: number; code?: string }, _req, reply) => {
-      if (err.statusCode === 413 || err.code === 'FST_ERR_CTP_BODY_TOO_LARGE') return send(reply, new UploadError(413, 'too_large', `the upload exceeds the limit of ${d.uploads.maxBytes} bytes`, 'split the content into several sections, or raise MANDATE_UPLOAD_MAX_BYTES on the server'));
+      if (err.statusCode === 413 || err.code === 'FST_ERR_CTP_BODY_TOO_LARGE') return send(reply, new UploadError(413, 'too_large', `the upload exceeds the limit (${d.uploads.maxBytes} bytes for text, ${d.uploads.imageMaxBytes} for images)`, 'split the content into several sections or compress the image, or raise MANDATE_UPLOAD_MAX_BYTES / MANDATE_UPLOAD_IMAGE_MAX_BYTES on the server'));
       if (err.statusCode && err.statusCode < 500) return send(reply, new UploadError(err.statusCode, 'bad_request', err.message, "send the raw file: --data-binary @file -H 'Content-Type: text/html'"));
       return send(reply, err);
     });
@@ -589,15 +643,24 @@ export function registerUploadRoutes(app: FastifyInstance, d: UploadRouteDeps): 
         const body = requestFile(req);
         const queryType = one(q.type);
         if (queryType && !(UPLOAD_TYPES as readonly string[]).includes(queryType)) throw new UploadError(400, 'validation', `type must be one of ${UPLOAD_TYPES.join(', ')}`, 'or send a matching Content-Type');
-        const ctType = typeOfContentType(body.contentType);
+        let ctType = typeOfContentType(body.contentType);
         if (queryType && ctType && queryType !== ctType) throw new UploadError(415, 'type_mismatch', `type=${queryType} but Content-Type says ${ctType}`, 'make them agree (or drop type=)');
+        // A generic Content-Type (curl's default) with PNG / JPEG / GIF / WebP bytes: an image.
+        if (!ctType && !queryType && safeSniff(body.data)) ctType = 'image';
         const type = await checkTarget(ctx, { kind, docId, mode, ...(sid && mode === 'replace_section' ? { section: sid } : {}), ...(after ? { after } : {}), type: (queryType as UploadType | undefined) ?? ctType });
-        const text = decodeUpload(body.data, d.uploads.maxBytes);
+        const alt = one(q.alt);
+        const caption = one(q.caption);
+        let image: ImageUpload | undefined;
+        if (type === 'image') {
+          if (mode === 'new_section' && !alt?.trim()) throw new UploadError(400, 'alt_required', 'an image section needs alt text', 'add &alt=<what the image shows> (URL-encoded): agents, search and Ask read it instead of the pixels');
+          image = imageUpload(body.data, d.uploads.imageMaxBytes, body.contentType, alt, caption);
+        } else if (alt || caption) throw new UploadError(400, 'validation', 'alt / caption are for image uploads', 'drop them, or upload an image');
+        const text = image ? '' : decodeUpload(body.data, d.uploads.maxBytes);
         const agent = one(q.agent) ?? one(req.headers['x-mandate-agent']) ?? (principal.kind === 'user' ? principal.tokenName : principal.keyName) ?? 'curl';
         const cause = many(q.cause);
         const out = await runUploadWrite(
           ctx,
-          { kind, docId, mode, ...(mode === 'replace_section' ? { section: sid } : {}), ...(title ? { title } : {}), ...(after ? { after } : {}), type, text, agent: agent.slice(0, 200), ...(one(q.branch) ? { branch: one(q.branch) } : {}), ...(cause.length ? { cause } : {}), ...(one(q.note) ? { note: one(q.note) } : {}) },
+          { kind, docId, mode, ...(mode === 'replace_section' ? { section: sid } : {}), ...(title ? { title } : {}), ...(after ? { after } : {}), type, text, ...(image ? { image } : {}), agent: agent.slice(0, 200), ...(one(q.branch) ? { branch: one(q.branch) } : {}), ...(cause.length ? { cause } : {}), ...(one(q.note) ? { note: one(q.note) } : {}) },
           d.uploads.maxBytes,
           baseOf(req),
         );
@@ -632,14 +695,17 @@ export function registerUploadRoutes(app: FastifyInstance, d: UploadRouteDeps): 
         const body = requestFile(req);
         const ctType = typeOfContentType(body.contentType);
         if (ctType && ctType !== claims.t && !(ctType === 'text' && (claims.t === 'markdown' || claims.t === 'mermaid'))) throw new UploadError(415, 'type_mismatch', `this URL uploads ${claims.t} (${CONTENT_TYPE_OF[claims.t]}); the request sent ${CONTENT_TYPE_OF[ctType]}`, `send -H 'Content-Type: ${CONTENT_TYPE_OF[claims.t]}', or create a URL with sectionType ${ctType}`);
-        const text = decodeUpload(body.data, d.uploads.maxBytes);
+        const q = req.query as Record<string, unknown>;
+        const image = claims.t === 'image' ? imageUpload(body.data, d.uploads.imageMaxBytes, body.contentType, claims.al ?? one(q.alt), claims.ca ?? one(q.caption)) : undefined;
+        if (image && claims.m === 'new_section' && !image.alt?.trim()) throw new UploadError(400, 'alt_required', 'an image section needs alt text', 'add &alt=<what the image shows> to the URL, or create the URL with alt');
+        const text = image ? '' : decodeUpload(body.data, d.uploads.maxBytes);
         if (!(await d.uploads.consume(claims))) throw new UploadError(410, 'used', 'this upload URL was already used', 'call upload_url_create again (one URL per upload)');
         consumed = true;
         const ctx = await ctxFor(project, principal, access, req);
         await checkTarget(ctx, { kind: claims.k, docId: claims.d, mode: claims.m, ...(claims.s ? { section: claims.s } : {}), ...(claims.af ? { after: claims.af } : {}), type: claims.t });
         const out = await runUploadWrite(
           ctx,
-          { kind: claims.k, docId: claims.d, mode: claims.m, ...(claims.s ? { section: claims.s } : {}), ...(claims.ti ? { title: claims.ti } : {}), ...(claims.af ? { after: claims.af } : {}), type: claims.t, text, agent: claims.ag, ...(claims.br ? { branch: claims.br } : {}), ...(claims.c?.length ? { cause: claims.c } : {}), ...(claims.n ? { note: claims.n } : {}) },
+          { kind: claims.k, docId: claims.d, mode: claims.m, ...(claims.s ? { section: claims.s } : {}), ...(claims.ti ? { title: claims.ti } : {}), ...(claims.af ? { after: claims.af } : {}), type: claims.t, text, ...(image ? { image } : {}), agent: claims.ag, ...(claims.br ? { branch: claims.br } : {}), ...(claims.c?.length ? { cause: claims.c } : {}), ...(claims.n ? { note: claims.n } : {}) },
           d.uploads.maxBytes,
           baseOf(req),
         );
@@ -647,6 +713,45 @@ export function registerUploadRoutes(app: FastifyInstance, d: UploadRouteDeps): 
       } catch (e) {
         // A failed write gives the URL back (fix the file, retry); a successful one never does.
         if (consumed && claims) await d.uploads.release(claims);
+        return send(reply, e);
+      }
+    });
+
+    /* ---- image sections: the stored bytes (web UI cookie or an agent credential; same project access) */
+    sub.get('/p/:projectId/images/:kind/:docId/:sid', async (req, reply) => {
+      const { projectId: project, kind: kindParam, docId, sid } = req.params as { projectId: string; kind: string; docId: string; sid: string };
+      const q = req.query as Record<string, unknown>;
+      // Errors never reveal more than "not found" to a caller without access.
+      reply.header('X-Content-Type-Options', 'nosniff');
+      reply.header('Cache-Control', 'private, no-store');
+      try {
+        if (!d.hostOk(req)) throw new UploadError(403, 'forbidden', 'forbidden host', 'call the server by its configured host name');
+        if (!d.projects.config(project)) throw new UploadError(404, 'not_found', `unknown project '${project}'`, 'check the project id');
+        const auth = await authenticate(req, project, d.auth);
+        if (!auth.ok) throw new UploadError(auth.status, auth.status === 401 ? 'unauthorized' : 'forbidden', auth.message, 'sign in (web UI) or send Authorization: Bearer <your agent token>');
+        const access = await accessOf(loginOf(auth.principal), project);
+        if (access === 'none') throw new UploadError(404, 'not_found', `unknown project '${project}'`, 'check the project id');
+        const kind = docKindOf(kindParam);
+        if (!kind || !slugSchema.safeParse(docId).success || !slugSchema.safeParse(sid).success) throw new UploadError(404, 'not_found', 'no such image', 'GET /p/<project>/images/<specs|standards|components>/<docId>/<sid>');
+        const h = one(q.h);
+        const version = one(q.version);
+        if (h && !/^[0-9a-f]{64}$/.test(h)) throw new UploadError(400, 'validation', 'h must be the image sha256 (64 hex characters)', 'use the url from the section (image.url)');
+        if (version && !/^[0-9a-f]{4,64}$/.test(version)) throw new UploadError(400, 'validation', 'version must be a commit sha', 'pass ?version=<sha>');
+        const ctx = await ctxFor(project, auth.principal, access === 'write' ? 'write' : 'read', req);
+        const img = await readSectionImage(ctx, kind, docId, sid, { ...(h ? { h } : {}), ...(version ? { version } : {}) }).catch((e) => {
+          if (e instanceof ImageError || e instanceof UploadError) throw e;
+          if (/not exist|not found|unknown/i.test((e as Error)?.message ?? '')) throw new UploadError(404, 'not_found', `no image at ${kind}/${docId}/${sid}`, 'check the reference');
+          throw e;
+        });
+        const etag = `"${img.meta.sha256}"`;
+        reply.header('ETag', etag);
+        reply.header('Cache-Control', img.pinned ? 'private, max-age=31536000, immutable' : 'private, no-cache');
+        reply.header('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox");
+        reply.header('Cross-Origin-Resource-Policy', 'same-origin');
+        reply.header('Content-Disposition', `inline; filename="${img.meta.file}"`);
+        if (req.headers['if-none-match'] === etag) return reply.code(304).send();
+        return reply.code(200).type(img.meta.mime).send(img.data);
+      } catch (e) {
         return send(reply, e);
       }
     });

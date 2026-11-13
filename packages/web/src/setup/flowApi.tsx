@@ -1,4 +1,7 @@
-/** Agent flow: project policy + per-client preferences (`/ui/flow*`), shared by Settings → Agent flow and the badge. */
+/**
+ * Agent flow: project policy (admins change it) + per-client preferences (read-only here: only the agent changes them,
+ * with /mandate-flow), shared by Settings → Agent flow and the badge.
+ */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { IconBrandGithubCopilot, IconBrandGoogle, IconBrandOpenai, IconBrandVscode, IconRobot, IconSparkles, IconTerminal2 } from '@tabler/icons-react';
 import { uiRequest } from '../lib/ui';
@@ -25,7 +28,6 @@ export interface FlowClient {
   lastSeenAt: string;
   effective: { flow: OnOff; approval: OnOff; questions?: QuestionsVia };
   locked: { flow: boolean; approval: boolean };
-  editable: boolean;
 }
 export interface FlowProject {
   id: string;
@@ -49,10 +51,6 @@ export function useFlowMutations() {
   const done = () => void qc.invalidateQueries({ queryKey: ['ui-flow'] });
   return {
     policy: useMutation({ mutationFn: ({ project, patch }: { project: string; patch: Partial<Policy> }) => uiRequest('PUT', `/ui/flow/${encodeURIComponent(project)}/policy`, patch), onSuccess: done }),
-    client: useMutation({
-      mutationFn: ({ project, id, patch }: { project: string; id: string; patch: { flow?: OnOff; approval?: OnOff; questions?: QuestionsVia } }) => uiRequest('PUT', `/ui/flow/${encodeURIComponent(project)}/clients/${encodeURIComponent(id)}`, patch),
-      onSuccess: done,
-    }),
   };
 }
 
@@ -64,7 +62,7 @@ export function AgentIcon({ client, size = 14 }: { client: string; size?: number
 
 export const POLICY_TEXT: Record<Policy['flowPolicy'], { label: string; body: string }> = {
   required: { label: 'Required', body: 'Every coding agent follows the Mandate flow: requests become feedback, specs and work orders. Agents cannot turn it off.' },
-  optional: { label: 'Optional', body: 'Each agent client chooses (default on). People switch their own agents below or with /mandate-flow.' },
+  optional: { label: 'Optional', body: 'Each agent client chooses (default on). People switch their own agents from the agent with /mandate-flow on|off.' },
   off: { label: 'Off', body: 'Agents use Mandate as read-only context: no feedback, spec edits or work orders.' },
 };
 export const APPROVAL_TEXT: Record<Policy['approvalPolicy'], { label: string; body: string }> = {

@@ -16,6 +16,7 @@ import { sectionSchema, touchedFileSchema, TOUCH_CHANGES, type TouchedFile } fro
 import { idSchema, PRIORITIES, WORK_ORDER_KINDS, WORK_ORDER_STATUSES } from './base.js';
 import { docRefSchema, sectionRefSchema } from './read-schemas.js';
 import { parseNodeUri, parseRef } from './refs.js';
+import { codeClaimSchema, codeLinkSchema } from './code-context.js';
 
 export { touchedFileSchema, TOUCH_CHANGES, type TouchedFile };
 
@@ -102,6 +103,8 @@ export const workOrderFrontmatterSchema = z.object({
   completedAt: z.string().min(1).optional(),
   touched: z.array(touchedFileSchema).optional(),
   git: z.array(gitContextSchema).optional(),
+  /** Claims made on uncommitted code (dirty) during this work order, linked to the commit that completed it. */
+  codeLinks: z.array(codeLinkSchema).optional(),
 });
 export type WorkOrderFrontmatter = z.infer<typeof workOrderFrontmatterSchema>;
 export const workOrderDocSchema = workOrderFrontmatterSchema.extend({ id: idSchema, sections: z.array(sectionSchema) });
@@ -284,6 +287,8 @@ export const workOrderTouchInputSchema = z
     /** The work-order section (spec section id or work-order section reference) the code belongs to. */
     section: z.string().trim().min(1).max(400).optional(),
     files: z.array(touchedInputSchema).min(1).max(500),
+    /** Repo + commit (or dirty base) of files without their own commits. */
+    code: codeClaimSchema.optional(),
   })
   .strict();
 export const workOrderTouchFromCommitsInputSchema = z

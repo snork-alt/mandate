@@ -176,6 +176,9 @@ describe('web UI session (GitHub sign-in cookie)', () => {
     const all = (await ui.callTool({ name: 'project_list', arguments: {} })).structuredContent as { items: { id: string; counts: { specs: number } }[]; defaultProject: string };
     expect(all.items.map((p) => p.id)).toEqual(['alpha', 'beta']);
     expect(all.items[0]!.counts.specs).toBe(1);
+    // Card stats: active work orders, items waiting for a human decision, linked code repos.
+    expect(all.items[0]).toMatchObject({ counts: { activeWorkOrders: 0 }, codeRepos: [] });
+    expect(typeof (all.items[0] as unknown as { openActions: number }).openActions).toBe('number');
     expect((all.items[0] as unknown as { lastActivity: { summary: string } | null }).lastActivity).not.toBeNull();
     expect(all.defaultProject).toBe('alpha');
     const agent = new Client({ name: 'a', version: '0' });

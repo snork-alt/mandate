@@ -19,9 +19,10 @@ import type { ActivityBus, ActivityFilter } from '../events/bus.js';
 import type { AutoPusher } from '../git/autopush.js';
 import type { ConversationStore } from '../ask/agent.js';
 import type { Principal } from '../auth/http.js';
-import type { ProjectSettings } from '../projects/settings.js';
+import { clientIdentity, effective, FLOW_OFF_ALLOWED, flowInstructions, flowOffMessage, type ProjectSettings } from '../projects/settings.js';
+import { newsFallback, readRefs, WATCH_TOOLS, type NewsService } from '../news/index.js';
 import { ToolError, toToolError, toWriteError, withHint, type ToolErrorBody } from './errors.js';
-import { gateSummary, parseRef, CAUSE_TRAILER, LEGACY_USER_TRAILER, SERVICE_USER_PREFIX, USER_TRAILER, causeInputSchema } from '@mandate/shared';
+import { gateSummary, parseRef, CAUSE_TRAILER, CODE_CONTEXT_TRAILER, codeContextLabel, type CodeContext, LEGACY_USER_TRAILER, SERVICE_USER_PREFIX, USER_TRAILER, causeInputSchema } from '@mandate/shared';
 import { CauseError, resolveCauses } from '../storage/causes.js';
 import { collectIntegrity } from '../storage/integrity.js';
 import { takePresetIds, withPresetIds } from '../storage/preset-ids.js';
@@ -62,6 +63,10 @@ export interface ToolContext {
   notify?: (method: string, params: Record<string, unknown>) => Promise<void>;
   /** Per call: aborted when the client cancels the request. */
   signal?: AbortSignal;
+  /** Per call: a progress notification (only when the request carried a progressToken): keeps long waits alive. */
+  progress?: (progress: number, message?: string) => Promise<void>;
+  /** Per-client news feed of this project (news/index.ts); a memory one per activity bus when unset. */
+  news?: NewsService | null;
   /** Override the configured Ask model (tests: an AI SDK mock model). */
   askModel?: AskModelOverride;
   /** `ask` config block (model for the Ask panel); the key never leaves the server. */
@@ -92,6 +97,14 @@ export interface SessionState {
   subscription: (ActivityFilter & { enabled: boolean }) | null;
   /** Questions this session asked (`question_ask`): it is notified when one is answered. */
   asked?: Set<string>;
+  /** MCP session id (Streamable HTTP `mcp-session-id`): routes news to the session that asked / claimed. */
+  id?: string;
+  /** Set when the transport closed (its unread news moves to the client's next session). */
+  closed?: boolean;
+  /** A news_list wait is in progress (one per session). */
+  waiting?: boolean;
+  /** The code the agent works on (`code_context_set`): stamped on every write of this session (Code-Context trailer). */
+  codeContext?: CodeContext;
 }
 
 export interface WriteMeta {
@@ -121,7 +134,7 @@ export const WRITE_FIELDS = {
 };
 
 /** Trailers only the server sets (a tool's `trailers()` can never produce them). */
-const RESERVED_TRAILERS = new Set([USER_TRAILER, LEGACY_USER_TRAILER, 'Agent-Key', CAUSE_TRAILER, 'Agent', 'Branch', 'Co-authored-by'].map((k) => k.toLowerCase()));
+const RESERVED_TRAILERS = new Set([USER_TRAILER, LEGACY_USER_TRAILER, 'Agent-Key', CAUSE_TRAILER, CODE_CONTEXT_TRAILER, 'Agent', 'Branch', 'Co-authored-by'].map((k) => k.toLowerCase()));
 
 /** `Co-authored-by:` trailers for the causes' contributors (GitHub noreply addresses), unless MANDATE_CO_AUTHORS=0. */
 export function coAuthorsEnabled(ctx: Pick<ToolContext, 'settings'>): boolean {
@@ -295,11 +308,21 @@ function keysOf(schema: z.ZodType): string[] {
 
 const MAX_TEXT = 400_000;
 
+/**
+ * Extra MCP content blocks of a result (e.g. an image block for `includeImage`), kept under a symbol so they never
+ * enter the JSON text / structuredContent; spreading the result object keeps them.
+ */
+export const EXTRA_CONTENT = Symbol('mandate.extraContent');
+type ExtraBlock = CallToolResult['content'][number];
+
 export function okResult(value: unknown): CallToolResult {
   const structured = value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : { result: value };
   let text = JSON.stringify(structured);
   if (text.length > MAX_TEXT) text = `${text.slice(0, MAX_TEXT)}… (truncated; use limit / cursor or narrower filters)`;
-  return { content: [{ type: 'text', text }], structuredContent: structured };
+  const extra = (structured as { [EXTRA_CONTENT]?: ExtraBlock[] })[EXTRA_CONTENT];
+  if (!extra) return { content: [{ type: 'text', text }], structuredContent: structured };
+  // The symbol stays out of structuredContent (the SDK validates its keys).
+  return { content: [{ type: 'text', text }, ...extra], structuredContent: Object.fromEntries(Object.entries(structured)) };
 }
 
 export function errorResult(body: ToolErrorBody): CallToolResult {
@@ -334,18 +357,130 @@ async function withContributors(name: string, args: Record<string, unknown>, res
   try {
     const c = await ctx.index.contributors({ refs: [ref], depth: 2 });
     const list = Object.values(c.contributors)[0] ?? [];
-    return okResult({ ...body, contributors: list });
+    const out = okResult({ ...body, contributors: list });
+    return { ...out, content: [...out.content, ...(res.content ?? []).slice(1)] };
   } catch {
     return res; // a ref the index does not know yet (just written): the result stays as it is
   }
 }
 
-/** Validate and run one tool call. Never throws. */
+/**
+ * Server-enforced flow switch: while the Mandate flow is off for the calling agent client (project policy off, or the
+ * client's own preference), every write tool is refused with `flow_off`, except switching the flow itself
+ * (`FLOW_OFF_ALLOWED`). Read and ops tools (git_pull / git_push sync, embedding retries) stay available. Only agent
+ * principals (personal tokens / MCP OAuth, agent keys) on an endpoint with settings: the web UI and in-process callers
+ * (seeds, tests, the Ask agent) are not affected.
+ */
+async function flowOffRefusal(def: AnyToolDef, ctx: ToolContext): Promise<ToolErrorBody | null> {
+  if (def.kind !== 'write' || def.uiOnly || FLOW_OFF_ALLOWED.has(def.name) || !ctx.settings) return null;
+  const kind = ctx.principal?.kind;
+  if (kind !== 'user' && kind !== 'key') return null;
+  const s = ctx.settings;
+  const policy = s.policy();
+  const pref = policy.flowPolicy === 'optional' ? await s.clients.get(s.project, clientIdentity(ctx).id).catch(() => undefined) : undefined;
+  const eff = effective(policy, pref);
+  if (eff.flow !== 'off') return null;
+  return {
+    code: 'flow_off',
+    message: flowOffMessage(eff),
+    path: 'name',
+    hint: eff.flowByPolicy ? 'work directly in the code; read Mandate for context only. A Mandate admin changes the project policy in Settings → Agent flow.' : 'work directly in the code; read Mandate for context only. To use Mandate again the user runs /mandate-flow on (flow_set {"flow":"on"}).',
+  };
+}
+
+/** The news feed of an agent client's call (null: the web UI, in-process callers, endpoints without settings). */
+export function newsOf(ctx: ToolContext): NewsService | null {
+  const kind = ctx.principal?.kind;
+  if ((kind !== 'user' && kind !== 'key') || !ctx.settings) return null;
+  return ctx.news ?? (ctx.activity ? newsFallback(ctx.settings.project, ctx.activity) : null);
+}
+
+/** Tools whose replies carry no news notice (the news tools themselves). */
+const NO_NOTICE = new Set(['news_list', 'news_ack']);
+const FLOW_SET_TOOLS = new Set(['flow_set', 'project_flow_set']);
+
+/**
+ * News bookkeeping around an agent client's call (never fails the call): record what it now owns (WATCH_TOOLS), mark
+ * news read when it reads the referenced item, detect flow changes, and add the unread items as `news` to the reply.
+ */
+async function withNews(def: AnyToolDef, rawArgs: unknown, ctx: ToolContext, res: CallToolResult): Promise<CallToolResult> {
+  const news = newsOf(ctx);
+  if (!news) return res;
+  try {
+    const me = clientIdentity(ctx);
+    const session = ctx.session?.id ?? null;
+    news.touch(session, ctx.session);
+    const args = (rawArgs && typeof rawArgs === 'object' ? rawArgs : {}) as Record<string, unknown>;
+    const body = res.structuredContent as Record<string, any> | undefined;
+    if (!res.isError && body) {
+      const w = WATCH_TOOLS[def.name];
+      if (w) {
+        const refs = w.refs(body, args).filter((r): r is string => typeof r === 'string' && r.length > 0);
+        const watch = async (ref: string, role: string) => news.watch({ client: me.id, ref, session, agent: (typeof args.agent === 'string' && args.agent) || ctx.clientName || me.client, user: principalUser(ctx) ?? null, role });
+        if (w.unwatch) await news.unwatch(me.id, refs);
+        else for (const ref of refs) await watch(ref, w.role);
+        if (w.then) for (const ref of w.then.refs(body).filter((r): r is string => typeof r === 'string' && r.length > 0)) await watch(ref, w.then.role);
+      }
+      if (def.kind === 'read') await news.markReadRefs(me.id, readRefs(def.name, args, body));
+    }
+    if (NO_NOTICE.has(def.name)) return res;
+    const notice = await news.notice(me.id, session);
+    if (!notice) return res;
+    const structured = { ...(body ?? {}), news: notice };
+    const text = JSON.stringify(structured);
+    const first = res.content?.[0];
+    const prevText = first && first.type === 'text' ? first.text : '';
+    return { ...res, content: [{ type: 'text', text: text.length <= MAX_TEXT ? text : `${prevText}\n${JSON.stringify({ news: notice })}` }, ...(res.content ?? []).slice(1)], structuredContent: structured };
+  } catch {
+    return res;
+  }
+}
+
+/** Flow settings: a change since this client's last call is client-wide news (its own flow_set is not). Before the call, so news_ack can clear it. */
+async function flowNews(def: AnyToolDef, ctx: ToolContext): Promise<void> {
+  const news = newsOf(ctx);
+  if (!news) return;
+  try {
+    const me = clientIdentity(ctx);
+    const s = ctx.settings!;
+    const policy = s.policy();
+    const eff = effective(policy, await s.clients.get(s.project, me.id).catch(() => undefined));
+    const sig = `${eff.flow}|${eff.approval}|${eff.questions}`;
+    const prev = await news.store.flowSig(s.project, me.id);
+    if (prev !== sig) {
+      await news.store.setFlowSig(s.project, me.id, sig);
+      if (prev !== undefined && !FLOW_SET_TOOLS.has(def.name)) await news.addClientWide(me.id, 'flow_changed', `mandate://projects/${s.project}`, `Mandate flow settings changed (${eff.reason}). New instructions: ${flowInstructions(eff)}`);
+    }
+  } catch {
+    // never fails the call
+  }
+}
+
+/** Stale claims (no event): swept on agent calls, throttled in the news service. Never fails the call. */
+async function claimNews(ctx: ToolContext): Promise<void> {
+  const news = newsOf(ctx);
+  if (!news) return;
+  await news.sweepStaleClaims(() => ctx.storage.workOrders.list()).catch(() => undefined);
+}
+
+/** Validate and run one tool call (agent clients: with their news). Never throws. */
 export async function callTool(def: AnyToolDef, rawArgs: unknown, ctx: ToolContext): Promise<CallToolResult> {
+  await flowNews(def, ctx);
+  await claimNews(ctx);
+  const res = await runCall(def, rawArgs, ctx);
+  // Its own flow change: record the new setting silently.
+  if (FLOW_SET_TOOLS.has(def.name)) await flowNews(def, ctx);
+  return withNews(def, rawArgs, ctx, res);
+}
+
+async function runCall(def: AnyToolDef, rawArgs: unknown, ctx: ToolContext): Promise<CallToolResult> {
   if (ctx.presetIds && def.kind === 'write') {
     const { args, presets } = takePresetIds(def.name, rawArgs);
-    if (presets) return withPresetIds(presets, () => callTool(def, args, { ...ctx, presetIds: false }));
+    if (presets) return withPresetIds(presets, () => runCall(def, args, { ...ctx, presetIds: false }));
   }
+  // Before validation: an agent whose flow is off learns that, not a schema detail.
+  const off = await flowOffRefusal(def, ctx);
+  if (off) return errorResult(off);
   const keys = keysOf(def.input);
   let args: unknown;
   try {
@@ -401,6 +536,8 @@ export async function callTool(def: AnyToolDef, rawArgs: unknown, ctx: ToolConte
   if (ctx.principal?.kind === 'key') trailers = { ...trailers, 'Agent-Key': ctx.principal.keyName };
   // Personal tokens / MCP OAuth: which credential of the acting user made the write.
   if (ctx.principal?.kind === 'user') trailers = { ...trailers, 'Agent-Key': `${ctx.principal.via === 'oauth' ? 'oauth' : 'token'}:${ctx.principal.tokenName}` };
+  // The code the session works on (code_context_set): every write records it, intent statements included.
+  if (ctx.session?.codeContext) trailers = { ...trailers, [CODE_CONTEXT_TRAILER]: codeContextLabel(ctx.session.codeContext) };
   // Attribution: the triggering user, from the principal only (`Agent-User` kept for compatibility).
   const user = principalUser(ctx);
   if (user) trailers = { ...trailers, [USER_TRAILER]: user, [LEGACY_USER_TRAILER]: user };

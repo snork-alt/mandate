@@ -14,6 +14,9 @@ export const ASK_EXCLUDED_TOOLS: Readonly<Record<string, string>> = {
   ask: 'recursion',
   // A per-session streaming subscription (it only changes which notifications this MCP session receives): no result for a model.
   activity_subscribe: 'streaming subscription',
+  // The calling agent client's own news feed (the Ask agent is in-process: no client).
+  news_list: 'agent client state',
+  news_ack: 'agent client state',
   // Answer no user question about the project (settings, operations, raw files, self-batching): tokens on every request.
   ...Object.fromEntries(['project_info', 'flow_clients_list', 'users_resolve', 'decision_access', 'ask_status', 'embedding_jobs', 'index_status', 'doc_list', 'doc_raw', 'section_types', 'graph_batch'].map((n) => [n, 'not a project question'])),
 };

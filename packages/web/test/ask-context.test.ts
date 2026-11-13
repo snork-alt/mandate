@@ -38,3 +38,10 @@ describe('dedupeChips', () => {
     expect(out[0]!.quote).toBe('q1\nq2');
   });
 });
+
+describe('question chips', () => {
+  it('a question page (/questions/:id) gives the question chip', () => {
+    expect(chipsFromLocation({ pathname: '/questions/ask-0007', search: '', hash: '' })).toEqual([{ uri: 'mandate://questions/ask-0007', kind: 'question', label: 'ask-0007' }]);
+    expect(chipsFromLocation({ pathname: '/questions', search: '?tab=answered', hash: '' })).toEqual([]);
+  });
+});

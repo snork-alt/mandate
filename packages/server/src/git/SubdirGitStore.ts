@@ -74,6 +74,9 @@ export class SubdirGitStore implements GitStore {
   readFileAt(commit: string, p: string) {
     return this.inner.readFileAt(commit, this.in(p));
   }
+  readBlobAt(commit: string, p: string) {
+    return this.inner.readBlobAt(commit, this.in(p));
+  }
   head() {
     return this.inner.head();
   }

@@ -5,7 +5,8 @@
   "type": "module",
   "license": "FSL-1.1-ALv2",
   "bin": {
-    "mandate": "dist/cli.js"
+    "mandate": "dist/cli.js",
+    "getmandate": "dist/cli.js"
   },
   "files": [
     "dist",

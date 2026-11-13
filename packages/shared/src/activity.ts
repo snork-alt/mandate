@@ -60,6 +60,7 @@ export const ACTIVITY_TYPES = [
   'audit.abandoned',
   'audit.finding_resolved',
   'approval.override',
+  'approval.override_confirmed',
   'git.pulled',
   'git.pushed',
   'git.push_failed',

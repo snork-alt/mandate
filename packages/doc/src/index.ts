@@ -1,8 +1,9 @@
 export * from './schema.js';
 export * from './errors.js';
 export { checkBody, createRegistry, SECTION_TYPE_ID_RE, type SectionTypeDef, type SectionTypeRegistry } from './registry.js';
-export { acceptanceType, auditItemType, createDefaultRegistry, htmlType, markdownType, mermaidType, woSectionType } from './types/index.js';
+export { acceptanceType, auditItemType, createDefaultRegistry, htmlType, imageType, markdownType, mermaidType, woSectionType } from './types/index.js';
 export { ACCEPTANCE_METHODS, acceptanceMetaSchema, verifiedByEdges } from './types/acceptance.js';
+export { IMAGE_EXT, IMAGE_FILE_FIELDS, IMAGE_MIME_TYPES, imageBody, imageBodyProblems, imageMetaSchema, parseImageBody, type ImageMeta, type ImageMime } from './types/image.js';
 export { auditItemMetaSchema } from './types/audit-item.js';
 export { woSectionMetaSchema } from './types/wo-section.js';
 export { CODE_REF_URI, RULE_CHECK_KINDS, RULE_LEVELS, ruleCheckSchema, ruleExamples, ruleMetaSchema, ruleScopeSchema, type RuleCheck, type RuleLevel, type RuleScope } from './types/rule.js';

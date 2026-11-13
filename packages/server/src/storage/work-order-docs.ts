@@ -88,6 +88,7 @@ export function projectWorkOrder(d: StoredWorkOrderDoc, heartbeat: (claim: NonNu
     ...(d.completedAt ? { completedAt: d.completedAt } : {}),
     ...(d.touched?.length ? { touched: d.touched } : {}),
     ...(d.git?.length ? { git: d.git } : {}),
+    ...(d.codeLinks?.length ? { codeLinks: d.codeLinks } : {}),
     hasPlan: sectionBody(d, WO_PLAN).trim().length > 0,
   } as WorkOrder;
   return out;

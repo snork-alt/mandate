@@ -9,6 +9,7 @@ import { docRefSchema, sectionRefSchema } from './read-schemas.js';
 import { parseNodeUri, parseRef, type RefKind } from './refs.js';
 import { woDeliveryExtras } from './work-orders.js';
 import { auditCodeRefSchema } from './audits.js';
+import { codeClaimSchema } from './code-context.js';
 
 const text = (max: number) => z.string().max(max);
 const line = (max: number) => z.string().trim().min(1).max(max).regex(/^[^\r\n]*$/, 'single line');
@@ -94,7 +95,7 @@ export const specCreateInputSchema = z
   .object({ ...specMeta, title: line(300), sections: z.array(specSectionCreateSchema).max(200).default([]) })
   .strict();
 export const standardCreateInputSchema = z
-  .object({ ...standardMeta, title: line(300), sections: z.array(standardSectionCreateSchema).max(200).default([]) })
+  .object({ ...standardMeta, title: line(300), status: z.enum(['draft', 'active']).optional(), sections: z.array(standardSectionCreateSchema).max(200).default([]) })
   .strict();
 export const specUpdateMetaInputSchema = z
   .object({ ref: writeDocRef('specs'), ...specMeta })
@@ -215,6 +216,8 @@ export const workOrderSectionDoneInputSchema = z
     verifications: z.array(z.string().trim().min(1).max(400)).max(50).optional(),
     git: woDeliveryExtras.git,
     touched: woDeliveryExtras.touched,
+    /** Repo + commit (or dirty base) of codeRefs / touched entries without their own commits. */
+    code: codeClaimSchema.optional(),
   })
   .strict();
 export const workOrderCompleteInputSchema = z
@@ -285,6 +288,8 @@ export const feedbackAcceptInputSchema = z
   })
   .strict()
   .refine((v) => !v.override || !!v.overrideReason?.trim(), { message: 'override needs overrideReason', path: ['overrideReason'] });
+/** A second person confirms a self-approval override (`approval_override_confirm`, web UI). */
+export const approvalOverrideConfirmInputSchema = z.object({ ref: fbRef, note: line(500) }).strict();
 export const feedbackCloseInputSchema = z
   .object({ ref: fbRef, resolution: z.enum(FEEDBACK_RESOLUTIONS), resolutionNote: text(5000).optional(), duplicateOf: fbRef.optional() })
   .strict();
@@ -299,7 +304,8 @@ export const verificationRecordInputSchema = z
     appliedTo: writeDocRef('specs').optional(),
     /** Mandate commit verified against (default HEAD). */
     specCommit: z.string().regex(/^[0-9a-f]{4,40}$/).optional(),
-    code: z.object({ repo: line(200), commit: z.string().regex(/^[0-9a-f]{7,64}$/, 'code commit sha (7-64 hex chars)'), branch: line(200).optional() }).strict(),
+    /** The code verified: repo (registered short name), commit; dirty: uncommitted changes on top of commit. */
+    code: codeClaimSchema,
     result: z.enum(VERIFICATION_RESULTS),
     method: z.enum(VERIFICATION_METHODS),
     evidence: z.object({ test: line(1000).optional(), ci: line(2000).optional(), note: text(5000).optional() }).strict().optional(),

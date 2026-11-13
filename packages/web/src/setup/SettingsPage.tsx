@@ -10,6 +10,7 @@ import { useSetupState, type SetupState } from './api';
 import { AccessSection, AskSection, configChangedMessage, GitSection, GithubSection, SearchSection, ServerInfo, AddressSection, type Saver, type SectionProps } from './sections';
 import { SetupShell } from './SetupWizard';
 import { AgentFlowSection } from './AgentFlowSection';
+import { CodeReposSection } from './CodeReposSection';
 import { WritersSection } from './WritersSection';
 import { DatabaseSection } from './DatabaseSection';
 
@@ -28,6 +29,7 @@ const sectionsFor = (_s: SetupState): Entry[] => [
   { id: 'ask', label: 'Ask models', Section: AskSection },
   { id: 'search', label: 'Semantic search', Section: SearchSection },
   { id: 'flow', label: 'Agent flow', Section: AgentFlowSection, instant: true },
+  { id: 'code-repos', label: 'Code repositories', Section: CodeReposSection, instant: true },
   { id: 'writers', label: 'Recent writers', Section: WritersSection, instant: true },
   // Advanced: the server address (proxies, domains) and the server-state backend (SQLite default, Postgres).
   { id: 'address', label: 'Server address (advanced)', Section: AddressSection, instant: true },

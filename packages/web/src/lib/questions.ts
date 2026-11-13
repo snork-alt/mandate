@@ -7,6 +7,8 @@ import { notifications } from '@mantine/notifications';
 import type { DecisionsList, Question, QuestionItem } from '@mandate/shared';
 import { callTool } from '../mcp/client';
 import { refMatches } from './decisions';
+import { createElement } from 'react';
+import { ContinueNotice } from '../components/questions/ContinueNotice';
 
 export type Answers = Record<string, string | string[]>;
 export interface AnswerArgs {
@@ -82,8 +84,8 @@ export function useAnswerQuestion(onDone?: () => void) {
       for (const [k, v] of ctx?.keys ?? []) qc.setQueryData(k, v);
       notifications.show({ color: 'red', title: 'Answer not recorded', message: errorText(e) });
     },
-    onSuccess: () => {
-      notifications.show({ color: 'teal', title: 'Answer sent', message: 'The coding agent picks it up on its next step.' });
+    onSuccess: (_r, a) => {
+      notifications.show({ color: 'teal', title: 'Answer sent', message: createElement(ContinueNotice, { ids: [a.id] }), autoClose: 12_000 });
       onDone?.();
     },
     onSettled: () => settle(qc),
@@ -103,14 +105,15 @@ export function useAnswerAllRecommended(onDone?: () => void) {
           failed.push(`${q.id}: ${errorText(e)}`);
         }
       }
-      return { ok: qs.length - failed.length, failed };
+      return { ok: qs.length - failed.length, failed, answered: qs.map((q) => q.id).filter((id) => !failed.some((f) => f.startsWith(`${id}:`))) };
     },
     onMutate: (qs) => ({ keys: dropPending(qc, qs.map((q) => q.id)) }),
     onSuccess: (r) => {
       notifications.show({
         color: r.failed.length ? 'yellow' : 'teal',
         title: `Answered ${r.ok} question${r.ok === 1 ? '' : 's'}`,
-        message: r.failed.length ? `Not recorded: ${r.failed.join('; ')}` : 'Every question took its recommended answer.',
+        message: createElement('div', null, r.failed.length ? `Not recorded: ${r.failed.join('; ')}` : null, r.answered.length ? createElement(ContinueNotice, { ids: r.answered }) : null),
+        autoClose: 12_000,
       });
       onDone?.();
     },

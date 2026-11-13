@@ -2,6 +2,7 @@ import { parseNodeUri, parseRef } from './refs.js';
 import { auditCodeRefSchema, findingUriSchema, type LastAudit, type SpecAudits, type StandardAudits } from './audits.js';
 import type { SpecMaturity } from './maturity.js';
 import { gitContextSchema, pastClaimSchema, touchedFileSchema, type CommentCounts, type CommentThread, type GitContext, type PastClaim, type TouchedFile } from './work-orders.js';
+import { codeLinkSchema } from './code-context.js';
 import { z } from 'zod';
 import { layerSchema, type LayerInfo } from './layers.js';
 import { idSchema, STORED_SPEC_STATUSES, PRIORITIES, exemptionSchema, appliesToSchema, WORK_ORDER_KINDS, FEEDBACK_KINDS, FEEDBACK_RESOLUTIONS, VERIFICATION_RESULTS, VERIFICATION_METHODS, SPEC_STATUSES, WORK_ORDER_STATUSES, FEEDBACK_STATUSES, CRITERION_STATES, STANDARD_STATUSES, COMPONENT_STATUSES } from './base.js';
@@ -289,9 +290,11 @@ export function languageOf(path: string): string | null {
   return ext ? (LANGUAGES[ext] ?? ext) : null;
 }
 
-/** Glob match over repo paths: `**` (any directories), `*` (within a segment), `?`, `{a,b}`. */
-export function globMatch(glob: string, path: string): boolean {
-  const p = path.replace(/^\/+/, '');
+/** Compiled glob regexes (globs are few and reused across every path; compiling dominated ownership lookups). */
+const globCache = new Map<string, RegExp>();
+function globRegex(glob: string): RegExp {
+  let rx = globCache.get(glob);
+  if (rx) return rx;
   let re = '';
   for (let i = 0; i < glob.length; i++) {
     const c = glob[i]!;
@@ -310,7 +313,17 @@ export function globMatch(glob: string, path: string): boolean {
       i = end;
     } else re += c.replace(/[.+^$()|[\]\\]/g, '\\$&');
   }
-  return new RegExp(`^${re}$`).test(p.replace(/^\.\//, '').replace(/^\/+/, '')) || new RegExp(`^${re}$`).test(p);
+  rx = new RegExp(`^${re}$`);
+  if (globCache.size >= 10_000) globCache.clear();
+  globCache.set(glob, rx);
+  return rx;
+}
+
+/** Glob match over repo paths: `**` (any directories), `*` (within a segment), `?`, `{a,b}`. */
+export function globMatch(glob: string, path: string): boolean {
+  const p = path.replace(/^\/+/, '');
+  const rx = globRegex(glob);
+  return rx.test(p.replace(/^\.\//, '').replace(/^\/+/, '')) || rx.test(p);
 }
 
 /** Does code (path) fall in a scope (paths globs AND languages; an absent part matches everything)? */
@@ -369,8 +382,40 @@ export function globSpecificity(glob: string): number {
   return literal * 10 - wild;
 }
 
+/**
+ * Memo of `ownerOf` per components array: (repo, path) -> owner. Validated on every call against a snapshot of the
+ * ownership-relevant fields (each component object, its status and its owns array), so a different components array,
+ * a replaced component or a changed status / owns invalidates it. O(components) per call, far cheaper than glob matching.
+ */
+type OwnerMemo = { snap: unknown[]; results: Map<string, { component: unknown; glob: string } | null> };
+const ownerMemo = new WeakMap<object, OwnerMemo>();
+function memoValid(memo: OwnerMemo, components: (Pick<StoredComponent, 'owns'> & { status?: string })[]): boolean {
+  const s = memo.snap;
+  if (s.length !== components.length * 3) return false;
+  for (let i = 0; i < components.length; i++) {
+    const c = components[i]!;
+    if (s[i * 3] !== c || s[i * 3 + 1] !== c.status || s[i * 3 + 2] !== c.owns) return false;
+  }
+  return true;
+}
+
 /** The owning component of a code path: glob match on `owns`, the most specific match wins; archived components own nothing. */
 export function ownerOf<C extends Pick<StoredComponent, 'id' | 'owns'> & { status?: string }>(repo: string | undefined, path: string, components: C[]): { component: C; glob: string } | null {
+  let memo = ownerMemo.get(components);
+  if (!memo || !memoValid(memo, components)) {
+    memo = { snap: components.flatMap((c) => [c, c.status, c.owns]), results: new Map() };
+    ownerMemo.set(components, memo);
+  }
+  const key = `${repo ?? ''}\u0000${path}`;
+  const hit = memo.results.get(key);
+  if (hit !== undefined) return hit as { component: C; glob: string } | null;
+  const found = computeOwner(repo, path, components);
+  if (memo.results.size >= 50_000) memo.results.clear();
+  memo.results.set(key, found);
+  return found;
+}
+
+function computeOwner<C extends Pick<StoredComponent, 'id' | 'owns'> & { status?: string }>(repo: string | undefined, path: string, components: C[]): { component: C; glob: string } | null {
   let best: { component: C; glob: string; score: number } | null = null;
   for (const c of components) {
     if (c.status === 'archived') continue;
@@ -676,6 +721,8 @@ export const workOrderSchema = z.object({
   completedAt: z.string().optional(),
   touched: z.array(touchedFileSchema).optional(),
   git: z.array(gitContextSchema).optional(),
+  /** Dirty code claims linked to the completing commit. */
+  codeLinks: z.array(codeLinkSchema).optional(),
   /** The `plan` section is non-empty. */
   hasPlan: z.boolean().optional(),
 });
@@ -866,7 +913,17 @@ const feedbackFields = {
    * Approval override (server-set by feedback_accept with override: true): the acceptance may approve the accepter's
    * own waivers / exemptions / criteria removals. Only for the sole active user or an admin; recorded and warned on.
    */
-  approvalOverride: z.object({ by: z.string().min(1), reason: z.string().min(1), at: z.string().min(1) }).optional(),
+  approvalOverride: z
+    .object({
+      by: z.string().min(1),
+      reason: z.string().min(1),
+      at: z.string().min(1),
+      /** A second person reviewed and confirmed the override (`approval_override_confirm`): no longer warned on. */
+      confirmedBy: z.string().min(1).optional(),
+      confirmedAt: z.string().min(1).optional(),
+      confirmNote: z.string().min(1).optional(),
+    })
+    .optional(),
 };
 
 /** Resolution rules shared by stored items and create inputs. */
@@ -1081,7 +1138,8 @@ export const verificationRecordSchema = z.object({
   appliedTo: z.string().refine((u) => /^mandate:\/\/specs\/[^/@#]+$/.test(u), 'appliedTo must be a spec URI'),
   /** Mandate repo commit the verification was made against. */
   specCommit: commitish,
-  code: z.object({ repo: z.string().min(1), commit: commitish, branch: z.string().min(1).optional() }),
+  /** dirty: uncommitted changes on top of commit (linked to the final commit when the work order completes). */
+  code: z.object({ repo: z.string().min(1), commit: commitish, branch: z.string().min(1).optional(), dirty: z.boolean().optional() }),
   result: z.enum(VERIFICATION_RESULTS),
   method: z.enum(VERIFICATION_METHODS),
   evidence: z
@@ -1415,3 +1473,4 @@ export * from './questions.js';
 export * from './lifecycle.js';
 export * from './lineage.js';
 export * from './overview.js';
+export * from './code-context.js';

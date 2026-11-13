@@ -10,10 +10,22 @@ import { AskStatusNotice } from './AskStatusNotice';
 import { AskTurnView } from './AskThread';
 import { useAsk } from './AskProvider';
 import type { AskChip } from './types';
+import { useQuestions } from '../../lib/questions';
+import { matches } from '../../lib/useSearchQuery';
 
 const NO_FILTERS = { kinds: [], status: [] };
 
-const KIND_NAME: Partial<Record<string, string>> = { spec: 'Spec', standard: 'Standard', section: 'Section', component: 'Component', work_order: 'Work order', feedback: 'Feedback' };
+const KIND_NAME: Partial<Record<string, string>> = { spec: 'Spec', standard: 'Standard', section: 'Section', component: 'Component', work_order: 'Work order', feedback: 'Feedback', question: 'Question' };
+
+/** A picker row: a search hit, or a question (label: its id; sub: shown after the title). */
+interface Hit {
+  uri: string;
+  docTitle: string;
+  sectionTitle?: string;
+  sectionId?: string;
+  label?: string;
+  sub?: string;
+}
 
 /** "Add context" picker: shared search box, typed results with icons, arrow keys + Enter, and Esc / × / click outside to cancel. */
 function ChipPicker({ onPick, onClose }: { onPick: (c: AskChip) => void; onClose: () => void }) {
@@ -22,16 +34,22 @@ function ChipPicker({ onPick, onClose }: { onPick: (c: AskChip) => void; onClose
   const root = useRef<HTMLDivElement>(null);
   const term = q.trim();
   const res = useMcpSearch(term, NO_FILTERS, term.length > 1);
-  const hits = (res.data?.groups ?? []).flatMap((g) => g.hits.slice(0, 2)).slice(0, 8);
+  // Questions coding agents asked are not in the search index's documents: matched here by id and text.
+  const asked = useQuestions(undefined, 'all', 200);
+  const questionHits = term.length > 1 ? (asked.data?.items ?? []).filter((x) => matches(term, x.id, ...x.questions.flatMap((i) => [i.header, i.question]))).slice(0, 3) : [];
+  const hits: Hit[] = [
+    ...questionHits.map((x) => ({ uri: x.uri, docTitle: x.questions[0]?.question ?? x.id, sectionTitle: undefined, sectionId: undefined, label: x.id, sub: x.id })),
+    ...(res.data?.groups ?? []).flatMap((g) => g.hits.slice(0, 2)).filter((h) => !questionHits.some((x) => x.uri === h.uri)),
+  ].slice(0, 8);
   useEffect(() => setActive(0), [term]);
   useEffect(() => {
     const down = (e: PointerEvent) => root.current && !root.current.contains(e.target as Node) && onClose();
     document.addEventListener('pointerdown', down);
     return () => document.removeEventListener('pointerdown', down);
   }, [onClose]);
-  const pick = (h: (typeof hits)[number]) => {
+  const pick = (h: Hit) => {
     const uri = h.uri.replace(/#.*$/, '');
-    onPick({ uri, kind: h.sectionId ? 'section' : (refKind(uri) as AskChip['kind']) ?? 'other', label: h.sectionTitle ? `${h.docTitle} › ${h.sectionTitle}` : h.docTitle });
+    onPick({ uri, kind: h.sectionId ? 'section' : (refKind(uri) as AskChip['kind']) ?? 'other', label: h.label ?? (h.sectionTitle ? `${h.docTitle} › ${h.sectionTitle}` : h.docTitle) });
     onClose();
   };
   const onKey = (e: KeyboardEvent<HTMLElement>) => {
@@ -44,7 +62,7 @@ function ChipPicker({ onPick, onClose }: { onPick: (c: AskChip) => void; onClose
   return (
     <div className="ask-picker" ref={root}>
       <div className="ask-picker-head">
-        <SearchField variant="input" size="sm" autoFocus value={q} onChange={setQ} loading={res.isFetching} placeholder="Add a spec, section, work order…" ariaLabel="Add context" onKeyDown={onKey} style={{ flex: 1 }} />
+        <SearchField variant="input" size="sm" autoFocus value={q} onChange={setQ} loading={res.isFetching} placeholder="Add a spec, section, work order, question…" ariaLabel="Add context" onKeyDown={onKey} style={{ flex: 1 }} />
         <button type="button" className="ask-picker-cancel" onClick={onClose} aria-label="Cancel">
           Cancel
         </button>
@@ -60,6 +78,7 @@ function ChipPicker({ onPick, onClose }: { onPick: (c: AskChip) => void; onClose
               <Icon size={14} className="ask-picker-icon" data-kind={kind ?? undefined} />
               <span className="ask-picker-title">{h.sectionTitle ?? h.docTitle}</span>
               {h.sectionTitle && <span className="ask-picker-sub">{h.docTitle}</span>}
+              {h.sub && <span className="ask-picker-sub">{h.sub}</span>}
               <span className="ask-picker-kind">{(kind && KIND_NAME[kind]) ?? ''}</span>
             </button>
           );

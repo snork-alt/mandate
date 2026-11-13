@@ -1,6 +1,7 @@
+import { EmptyView } from '../components/ListStates';
 import { ActionIcon, Alert, Box, Button, Group, Skeleton, Text, Tooltip, useComputedColorScheme, useMantineColorScheme } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import { IconAlertTriangle, IconArrowRight, IconBrandGithub, IconFolder, IconGitBranch, IconMoon, IconPlus, IconSun } from '@tabler/icons-react';
+import { IconAlertTriangle, IconArrowRight, IconBrandGithub, IconClock, IconCode, IconFolder, IconGitBranch, IconMoon, IconPlus, IconStar, IconSun } from '@tabler/icons-react';
 import { NewProjectModal } from '../connect/NewProjectModal';
 import { AccessBadge } from '../connect/AccessBadge';
 import { UserMenu } from '../connect/UserFooter';
@@ -11,8 +12,11 @@ import { APP_NAME, Logo } from '../components/Logo';
 import { TimeAgo } from '../components/TimeAgo';
 import { useProjects, type ProjectSummary } from '../connect/projects';
 import { goTo, lastProject, projectBase } from '../project';
+import { AgentMark } from '../connect/AgentMark';
+import { AGENT_DEFS } from '../connect/agentCatalog';
+import { stripActor } from '../lib/activity';
 
-const COUNTS: { key: keyof ProjectSummary['counts']; label: string }[] = [
+const COUNTS: { key: 'specs' | 'standards' | 'components' | 'workOrders'; label: string }[] = [
   { key: 'specs', label: 'specs' },
   { key: 'standards', label: 'standards' },
   { key: 'components', label: 'components' },
@@ -22,92 +26,193 @@ const COUNTS: { key: keyof ProjectSummary['counts']; label: string }[] = [
 /** `/Users/me/x/y` -> `~/x/y` when under a home dir. */
 const shortPath = (p: string) => p.replace(/^\/(Users|home)\/[^/]+/, '~');
 
-function ProjectCard({ p, isDefault, isLast }: { p: ProjectSummary; isDefault: boolean; isLast: boolean }) {
+/** A stable colour per project (band and avatar). */
+const TONES = ['lilac', 'indigo', 'teal', 'amber', 'rose', 'slate'] as const;
+export const projectTone = (id: string) => {
+  let h = 0;
+  for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return TONES[h % TONES.length]!;
+};
+
+/** "claude-code@mbp" → the Claude Code mark and label (null for people and unknown clients). */
+function agentOf(agent: string | undefined): { id: string; label: string } | null {
+  const id = agent?.split('@')[0]?.toLowerCase();
+  const a = id ? AGENT_DEFS.find((x) => x.id === id) : undefined;
+  return a ? { id: a.id, label: a.label } : null;
+}
+
+const stop = (e: React.SyntheticEvent) => {
+  e.preventDefault();
+  e.stopPropagation();
+};
+
+function ProjectCard({ p, isDefault, isLast, canAddRepos }: { p: ProjectSummary; isDefault: boolean; isLast: boolean; canAddRepos: boolean }) {
   const href = `${projectBase(p.id)}/`;
+  const active = p.counts?.activeWorkOrders;
+  const repos = p.codeRepos;
+  const actions = p.openActions ?? 0;
+  const reconnect = p.github?.status === 'reconnect';
+  const actor = agentOf(p.lastActivity?.agent);
   return (
     <a
       className="project-card"
       href={href}
       data-testid={`project-${p.id}`}
+      data-tone={projectTone(p.id)}
       onClick={(e) => {
         if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
         e.preventDefault();
         goTo(href);
       }}
     >
-      <Group justify="space-between" wrap="nowrap" gap={8}>
-        <Group gap={10} wrap="nowrap" style={{ minWidth: 0 }}>
-          <span className="project-avatar" aria-hidden="true">
-            {p.name.slice(0, 1).toUpperCase()}
-          </span>
-          <Box style={{ minWidth: 0 }}>
-            <Group gap={6} wrap="nowrap">
-              <Text fw={600} size="md" truncate>
-                {p.name}
-              </Text>
-              {isDefault && p.id !== 'default' && <span className="pill project-pill">default</span>}
-              <AccessBadge access={p.access} />
-              {isLast && !isDefault && <span className="pill project-pill">recent</span>}
-            </Group>
-            <Text size="xs" c="var(--app-text-faint)" ff="monospace">
+      <span className="project-card-band" aria-hidden="true" />
+      <div className="project-card-head">
+        <span className="project-avatar project-avatar-lg" aria-hidden="true">
+          {p.name.slice(0, 1).toUpperCase()}
+        </span>
+        <Box style={{ minWidth: 0, flex: 1 }}>
+          <Group gap={6} wrap="nowrap">
+            <Text fw={600} size="md" truncate className="project-card-name">
+              {p.name}
+            </Text>
+            {isDefault && p.id !== 'default' && (
+              <span className="pill project-pill">
+                <IconStar size={10} /> default
+              </span>
+            )}
+            {isLast && !isDefault && (
+              <span className="pill project-pill">
+                <IconClock size={10} /> recent
+              </span>
+            )}
+          </Group>
+          <Group gap={6} wrap="nowrap" mt={3}>
+            <Text size="xs" c="var(--app-text-faint)" ff="monospace" truncate>
               {p.id}
             </Text>
-          </Box>
-        </Group>
-        <IconArrowRight size={16} className="project-card-arrow" />
-      </Group>
-      {p.description && (
-        <Text size="sm" c="var(--app-text-muted)" mt={10} lineClamp={2} className="project-card-desc">
-          {p.description}
+            <AccessBadge access={p.access} />
+          </Group>
+        </Box>
+        <span className="project-card-arrow" aria-hidden="true">
+          <IconArrowRight size={15} />
+        </span>
+      </div>
+      <Text size="sm" c="var(--app-text-muted)" lineClamp={2} className="project-card-desc">
+        {p.description ?? ''}
+      </Text>
+      {p.counts ? (
+        <div className="project-card-stats" data-testid={`stats-${p.id}`}>
+          {COUNTS.map((c) => (
+            <div key={c.key} className="project-card-stat">
+              <b data-zero={!p.counts[c.key] || undefined}>{p.counts[c.key]}</b>
+              <span>{c.label}</span>
+              {c.key === 'workOrders' && active !== undefined && (
+                <span className="project-card-stat-sub" data-none={!active || undefined} data-testid={`active-${p.id}`}>
+                  {active ? `${active} active` : 'none active'}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <Text size="xs" c="var(--app-text-faint)" className="project-card-unavailable">
+          Counts unavailable: the project could not be opened.
         </Text>
       )}
-      <div className="project-card-counts">
-        {COUNTS.map((c) => (
-          <span key={c.key}>
-            <b>{p.counts[c.key]}</b> {c.label}
-          </span>
-        ))}
-      </div>
       <div className="project-card-meta">
         {p.github ? (
           <Tooltip label={`Stored in github.com/${repoLabel(p.github)} · local checkout ${p.dataDir}`}>
             <span className="project-meta-item">
-              <IconBrandGithub size={13} /> <span className="mono-trunc">{repoLabel(p.github)}</span>
+              <IconBrandGithub size={14} className="project-meta-ico" /> <span className="mono-trunc project-meta-strong">{repoLabel(p.github)}</span>
+              <span className="mono-trunc project-meta-at">@{p.branch}</span>
+              {p.remote ? <span className="project-meta-at">· remote</span> : null}
             </span>
           </Tooltip>
         ) : (
           <Tooltip label={p.dataDir}>
             <span className="project-meta-item">
-              <IconFolder size={13} /> <span className="mono-trunc">{shortPath(p.dataDir)}</span>
+              <IconFolder size={14} className="project-meta-ico" /> <span className="mono-trunc project-meta-strong">{shortPath(p.dataDir)}</span>
+              <span className="mono-trunc project-meta-at">
+                <IconGitBranch size={12} /> {p.branch}
+              </span>
+              {p.remote ? <span className="project-meta-at">· remote</span> : null}
             </span>
           </Tooltip>
         )}
-        <span className="project-meta-item">
-          <IconGitBranch size={13} /> {p.branch}
-          {p.remote ? ' · remote' : ''}
-        </span>
+        {repos && (
+          <span className="project-meta-item" data-testid={`code-repos-${p.id}`}>
+            <IconCode size={14} className="project-meta-ico" />
+            {repos.length ? (
+              <>
+                <span className="mono-trunc project-meta-strong">{repos.join(', ')}</span>
+                <span className="project-meta-at">
+                  · {repos.length} code repo{repos.length === 1 ? '' : 's'}
+                </span>
+              </>
+            ) : (
+              <span className="project-meta-at">
+                No code repositories
+                {canAddRepos && (
+                  <button
+                    type="button"
+                    className="project-meta-link"
+                    onClick={(e) => {
+                      stop(e);
+                      goTo('/settings#settings-code-repos');
+                    }}
+                  >
+                    Add
+                  </button>
+                )}
+              </span>
+            )}
+          </span>
+        )}
       </div>
-      {p.github?.status === 'reconnect' && (
-        <Tooltip label={`The GitHub grant of ${p.github.connectedBy} no longer works; the project keeps working locally.`}>
-          <button
-            type="button"
-            className="project-reconnect"
-            data-testid={`reconnect-${p.id}`}
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              window.location.assign(githubLoginUrl('/'));
-            }}
-          >
-            <IconBrandGithub size={13} /> Reconnect GitHub
-          </button>
-        </Tooltip>
+      {(reconnect || actions > 0) && (
+        <div className="project-card-tags">
+          {reconnect && (
+            <Tooltip label={`The GitHub grant of ${p.github!.connectedBy} no longer works; the project keeps working locally.`}>
+              <button
+                type="button"
+                className="project-reconnect"
+                data-testid={`reconnect-${p.id}`}
+                onClick={(e) => {
+                  stop(e);
+                  window.location.assign(githubLoginUrl('/'));
+                }}
+              >
+                <IconBrandGithub size={13} /> Reconnect GitHub
+              </button>
+            </Tooltip>
+          )}
+          {actions > 0 && (
+            <button
+              type="button"
+              className="project-actions-chip"
+              data-testid={`actions-${p.id}`}
+              onClick={(e) => {
+                stop(e);
+                goTo(`${projectBase(p.id)}/actions`);
+              }}
+            >
+              <IconAlertTriangle size={12} /> {actions} open action{actions === 1 ? '' : 's'}
+            </button>
+          )}
+        </div>
       )}
       <div className="project-card-activity">
         {p.lastActivity ? (
           <>
-            <Text size="xs" c="var(--app-text-muted)" truncate>
-              {p.lastActivity.summary}
+            {actor && <AgentMark agent={actor.id} size={14} />}
+            <Text size="xs" c="var(--app-text-muted)" truncate style={{ flex: 1, minWidth: 0 }}>
+              {actor ? (
+                <>
+                  <b className="project-activity-who">{actor.label}</b> {stripActor(p.lastActivity.summary, { agent: p.lastActivity.agent })}
+                </>
+              ) : (
+                p.lastActivity.summary
+              )}
             </Text>
             <Text size="xs" c="var(--app-text-faint)" style={{ flexShrink: 0 }}>
               <TimeAgo iso={p.lastActivity.at} />
@@ -148,7 +253,7 @@ export function ProjectsPage() {
     <div className="projects-page">
       <header className="projects-header">
         <Group gap={10}>
-          <Logo size={24} />
+          <Logo size={30} />
           <Text fw={600} size="lg" style={{ letterSpacing: '-0.015em' }}>
             {APP_NAME}
           </Text>
@@ -185,25 +290,22 @@ export function ProjectsPage() {
         )}
         <div className="project-grid">
           {projects.isLoading && [0, 1].map((i) => <Skeleton key={i} height={196} radius="md" />)}
-          {projects.data && projects.data.items.length === 0 && (
-            <div className="project-empty">
-              <Text fw={600}>No projects yet</Text>
-              <Text size="sm" c="var(--app-text-muted)" mt={4} mb="md">
-                Create one backed by a GitHub repository; coding agents then connect to its MCP endpoint.
-              </Text>
-              {canCreate ? (
-                <Button size="xs" leftSection={<IconPlus size={14} />} onClick={newProject.open}>
-                  New project
-                </Button>
-              ) : (
-                <Text size="xs" c="var(--app-text-faint)">You see projects whose GitHub repository you can read. Ask an admin to add one.</Text>
-              )}
-            </div>
-          )}
           {projects.data?.items.map((p) => (
-            <ProjectCard key={p.id} p={p} isDefault={p.id === projects.data.defaultProject} isLast={p.id === last} />
+            <ProjectCard key={p.id} p={p} isDefault={p.id === projects.data.defaultProject} isLast={p.id === last} canAddRepos={canCreate} />
           ))}
         </div>
+        {projects.data && projects.data.items.length === 0 && (
+          <EmptyView
+            icon={<IconFolder size={22} stroke={1.5} />}
+            title="No projects yet"
+            description={canCreate ? 'Create one backed by a GitHub repository; coding agents then connect to its MCP endpoint.' : 'You see projects whose GitHub repository you can read. Ask an admin to add one.'}
+            action={canCreate ? (
+              <Button size="xs" mt="xs" leftSection={<IconPlus size={14} />} onClick={newProject.open}>
+                New project
+              </Button>
+            ) : undefined}
+          />
+        )}
       </main>
       <NewProjectModal opened={newOpened} onClose={newProject.close} />
     </div>

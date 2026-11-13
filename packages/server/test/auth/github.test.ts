@@ -294,6 +294,19 @@ describe('New project (GitHub storage)', () => {
     expect(r.statusCode).toBe(201);
   });
 
+  it('creates a project with code repositories (short names validated, not the specs repo, stored in projects.json)', async () => {
+    await inject({ method: 'POST', url: '/ui/github/repos', cookie: session, body: { name: 'mine-code' } });
+    const self = await inject({ method: 'POST', url: '/ui/projects', cookie: session, body: { name: 'Mine code', repo: 'octo/mine-code', codeRepos: [{ name: 'self', github: 'octo/mine-code' }] } });
+    expect(self.statusCode).toBe(400);
+    expect(self.json().error).toMatchObject({ code: 'invalid_code_repos', path: 'codeRepos' });
+    const dup = await inject({ method: 'POST', url: '/ui/projects', cookie: session, body: { name: 'Mine code', repo: 'octo/mine-code', codeRepos: [{ name: 'app', github: 'acme/specs' }, { name: 'app', github: 'octo/mine' }] } });
+    expect(dup.json().error).toMatchObject({ code: 'invalid_code_repos', message: 'app is already used by acme/specs. Short names must be unique.' });
+    const r = await inject({ method: 'POST', url: '/ui/projects', cookie: session, body: { name: 'Mine code', repo: 'octo/mine-code', codeRepos: [{ name: 'specs-app', github: 'acme/specs' }] } });
+    expect(r.statusCode).toBe(201);
+    const reg = JSON.parse(readFileSync(projectsPathOf(env), 'utf8'));
+    expect(reg.projects.find((x: { id: string }) => x.id === 'mine-code').codeRepos).toEqual([{ name: 'specs-app', github: 'acme/specs', defaultBranch: 'main' }]);
+  });
+
   it('refuses bearer keys and cross-origin POSTs on admin routes', async () => {
     expect((await inject({ method: 'POST', url: '/ui/projects', headers: { authorization: `Bearer ${keys.list()[0]!.key}` }, body: {} })).statusCode).toBe(403);
     expect((await inject({ method: 'POST', url: '/ui/projects', cookie: session, headers: { origin: 'http://evil.example' }, body: {} })).statusCode).toBe(403);

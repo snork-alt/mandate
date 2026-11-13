@@ -206,8 +206,17 @@ async function connectRemote(rt: Runtime, a: Args, repo: string, url: string): P
   for (const line of wiringSummary(ctx, agents, wired)) out.log(`  ${line}`);
   if (wireRepo) out.log(info(`repo ${repo}: project MCP entries and the Mandate section (safe to commit: no key)`));
   if (key && !ctx.env[v]) out.log(info(`load the token in this terminal: ${c.cyan(`. ${envFile(ctx)}`)} ${c.dim('(new terminals load it automatically)')}`));
+  if (oauth && agents.length) {
+    // One sign-in per project and agent: without it the server shows "needs authentication".
+    out.log(`\n${c.bold('Next: sign in (once)')}`);
+    for (const ag of agents) {
+      if (ag.id === 'claude-code') out.log(`  ${ag.label}: run ${c.cyan('/mcp')} → ${c.bold(server.name)} → ${c.bold('Authenticate')}, then ${c.bold('Allow')} in the browser`);
+      else if (ag.id === 'codex') out.log(`  ${ag.label}: run ${c.cyan(`codex mcp login ${server.name}`)}, then ${c.bold('Allow')} in the browser`);
+      else out.log(`  ${ag.label}: it opens the sign-in page on first use of ${c.bold(server.name)}; choose ${c.bold('Allow')}`);
+    }
+  }
   out.log(`\n${c.bold('Verify')}`);
-  if (agents.some((x) => x.id === 'claude-code')) out.log(`  ${c.cyan('claude mcp list')}   ${c.dim(`shows ${server.name} as connected${oauth ? ' (after /mcp → authenticate)' : ''}`)}`);
+  if (agents.some((x) => x.id === 'claude-code')) out.log(`  ${c.cyan('claude mcp list')}   ${c.dim(`shows ${server.name} as connected${oauth ? ' (after signing in)' : ''}`)}`);
   if (agents.some((x) => x.id === 'codex')) out.log(`  ${c.cyan(oauth ? `codex mcp login ${server.name}` : 'codex mcp list')}`);
   out.log(`  ask your agent: ${c.dim('"use Mandate: project_info"')}`);
   out.log(c.dim(`  undo: ${BIN} connect --url ${base} --project ${project} --remove`));

@@ -41,6 +41,8 @@ export function useAsk(): AskState {
   if (!v) throw new Error('useAsk outside AskProvider');
   return v;
 }
+/** The Ask state when inside an AskProvider (components that also render outside the app shell). */
+export const useAskOptional = (): AskState | null => useContext(Ctx);
 
 /** Ask state lives above the pages, so the draft, chips and hint survive navigation. */
 const realDeps: AskDeps = { callTool, onNotification };

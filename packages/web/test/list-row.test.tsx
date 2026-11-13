@@ -14,8 +14,11 @@ import { compactTime } from '../src/lib/time';
 
 installDom();
 let contributors: Record<string, Contributor[]> = {};
+/** Refs whose `contributors` call never answers (a busy server). */
+const HANG = 'mandate://specs/slow-spec';
 vi.mock('../src/mcp/client', () => ({
   callTool: vi.fn(async (name: string, args: { refs?: string[]; logins?: string[] }) => {
+    if (name === 'contributors' && args.refs?.includes('mandate://specs/slow-spec')) return new Promise(() => undefined);
     if (name === 'contributors') return { contributors: Object.fromEntries((args.refs ?? []).map((r) => [r, contributors[r] ?? []])) };
     if (name === 'users_resolve') return { users: [] };
     return {};
@@ -122,6 +125,14 @@ describe('people column: never empty', () => {
     wrap('computer', <RowPeople refUri={REF} fallback={{ agent: 'claude-code' }} />);
     const a = await screen.findByTestId('agent-avatar');
     expect(a.getAttribute('data-legacy')).toBe('true');
+  });
+  it('the recorded user shows while contributors are still loading (slow index)', async () => {
+    wrap('server', <RowPeople refUri={HANG} fallback={{ user: 'snork-alt', agent: 'claude-code', verb: 'Created' }} />);
+    await waitFor(() => expect(screen.getByTestId('row-people').querySelector('[data-user="snork-alt"]')).toBeTruthy());
+    expect(screen.queryByTestId('agent-avatar')).toBeNull();
+    // Let the (hanging) batched call go out on its own so it does not swallow the next test's refs.
+    await new Promise((r) => setTimeout(r, 40));
+    expect(screen.getByTestId('row-people').querySelector('[data-user="snork-alt"]')).toBeTruthy();
   });
   it('feedback: the filer leads the stack', async () => {
     contributors[REF] = [c('bob'), c('alice')];

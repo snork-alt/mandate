@@ -220,6 +220,24 @@
   flex: none;
   padding: 10px 14px;
 }
+.pj-owner-add {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px;
+  margin-left: 4px;
+  font-size: var(--mantine-font-size-sm);
+  color: var(--app-text-muted);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.pj-owner-add:hover {
+  color: var(--mantine-primary-color-filled);
+}
+.pj-owner-add-ext {
+  opacity: 0.6;
+}
 .pj-owners .mantine-Tabs-tab[data-restricted] .mantine-Tabs-tabLabel {
   color: var(--app-text-muted);
 }
@@ -404,4 +422,191 @@
 }
 .pj-modal .mantine-Input-section {
   color: var(--app-text-muted);
+}
+
+/* ---------------------------------------------------------------- code repositories (new project step 3, settings) */
+.cr-notice {
+  align-items: center;
+}
+.cr-notice .np-notice-body {
+  margin: 0;
+}
+.cr-table {
+  border: 1px solid var(--app-border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.cr-head,
+.cr-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(120px, 240px) 28px;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 10px 14px;
+}
+.cr-head {
+  padding: 8px 14px;
+  font-size: var(--mantine-font-size-sm);
+  color: var(--app-text-muted);
+  background: var(--app-sidebar-bg);
+}
+.cr-row {
+  border-top: 1px solid var(--app-border);
+}
+.cr-repo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.cr-repo-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.cr-repo-main .np-repo-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cr-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  font-size: var(--mantine-font-size-xs);
+  color: var(--app-text-muted);
+}
+.cr-meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.cr-ro {
+  height: 18px;
+  font-size: 11px;
+}
+.cr-error {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding-left: 36px;
+  font-size: var(--mantine-font-size-sm);
+  color: var(--mantine-color-red-6);
+}
+.cr-error > span {
+  flex: 1;
+}
+.cr-actions,
+.cr-picker-head,
+.cr-picker-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  flex-wrap: wrap;
+}
+.cr-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--app-border);
+  border-radius: 10px;
+}
+.cr-picker-foot {
+  justify-content: flex-end;
+  padding-top: 10px;
+  border-top: 1px solid var(--app-border);
+}
+.cr-picker-foot > :first-child {
+  margin-right: auto;
+}
+.cr-picker-list {
+  min-height: 0;
+}
+.cr-pick[data-disabled] {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.cr-specs {
+  color: var(--mantine-primary-color-filled);
+  border-color: color-mix(in srgb, var(--mantine-primary-color-filled) 35%, transparent);
+}
+.cr-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 40px 20px;
+  text-align: center;
+  border: 1px solid var(--app-border);
+  border-radius: 10px;
+  background: var(--app-sidebar-bg);
+}
+.cr-empty .mantine-Text-root {
+  max-width: 46ch;
+}
+.cr-example {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  border: 1px dashed var(--app-border-strong);
+  border-radius: 8px;
+  font-size: var(--mantine-font-size-sm);
+}
+.cr-example code {
+  background: none;
+  padding: 0;
+}
+.cr-example-name {
+  color: var(--mantine-primary-color-filled);
+}
+.cr-sub {
+  display: block;
+  font-size: var(--mantine-font-size-xs);
+  color: var(--app-text-faint);
+}
+.cr-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cr-summary-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.cr-tag {
+  padding: 1px 8px;
+  border-radius: 6px;
+  color: var(--mantine-primary-color-filled);
+  background: color-mix(in srgb, var(--mantine-primary-color-filled) 12%, transparent);
+}
+@media (max-width: 36em) {
+  .cr-head {
+    display: none;
+  }
+  .cr-row {
+    grid-template-columns: minmax(0, 1fr) 28px;
+  }
+  .cr-name {
+    grid-column: 1;
+  }
+  .cr-error {
+    padding-left: 0;
+  }
+  .cr-foot-note {
+    display: none;
+  }
+}
+.cr-unlinked {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }

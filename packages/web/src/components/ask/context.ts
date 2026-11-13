@@ -1,4 +1,4 @@
-import { buildRef, type RefKind } from '@mandate/shared/refs';
+import { buildQuestionRef, buildRef, type RefKind } from '@mandate/shared/refs';
 import type { AskChip } from './types';
 
 export interface PageSelection {
@@ -15,9 +15,16 @@ const KINDS: Record<string, { ref: RefKind; kind: AskChip['kind'] }> = {
 
 /**
  * Context chips for the page at this location: the document (pinned to `?version=<sha>` when viewing a version)
- * and the selected section: a text selection, else the `#section-<id>` anchor (with `?lines=a-b` as `#L`).
+ * and the selected section: a text selection, else the `#section-<id>` anchor (with `?lines=a-b` as `#L`); on a question
+ * page (/questions/:id), the question.
  */
 export function chipsFromLocation(loc: { pathname: string; search: string; hash: string }, selection?: PageSelection | null): AskChip[] {
+  // A question a coding agent asked (/questions/:id): ask about it in the Ask pane.
+  const qm = /^\/questions\/([^/]+)$/.exec(loc.pathname);
+  if (qm) {
+    const id = decodeURIComponent(qm[1]!);
+    return [{ uri: buildQuestionRef(id), kind: 'question', label: id }];
+  }
   const m = /^\/(specs|standards|work-orders|feedback)\/([^/@]+)/.exec(loc.pathname);
   if (!m) return [];
   const { ref, kind } = KINDS[m[1]!]!;

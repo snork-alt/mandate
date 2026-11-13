@@ -47,6 +47,27 @@ export class FeedbackClosedError extends Error {
   }
 }
 
+/** approval_override_confirm refused (409): no override, already confirmed, or the overriding person confirming. */
+export class OverrideConfirmError extends Error {
+  readonly statusCode = 409;
+  constructor(
+    message: string,
+    readonly code: 'no_override' | 'already_confirmed' | 'same_person',
+  ) {
+    super(`${code}: ${message}`);
+  }
+}
+
+/** The one change allowed on a closed item: confirming its approval override (nothing else differs). */
+function onlyConfirmsOverride(current: StoredFeedback, next: StoredFeedback): boolean {
+  const o = current.approvalOverride;
+  const n = next.approvalOverride;
+  if (!o || o.confirmedAt || !n?.confirmedAt) return false;
+  const strip = (f: StoredFeedback) => JSON.stringify({ ...f, updatedAt: undefined, approvalOverride: undefined });
+  const { confirmedBy: _b, confirmedAt: _a, confirmNote: _n, ...rest } = n;
+  return strip(current) === strip(next) && JSON.stringify(rest) === JSON.stringify(o);
+}
+
 type Docs = { specs: MarkdownDirRepository<StoredSpec>; standards: MarkdownDirRepository<StoredStandard>; components?: MarkdownDirRepository<StoredComponent> };
 type Kind = 'specs' | 'standards' | 'components';
 const DIRS: Kind[] = ['specs', 'standards', 'components'];
@@ -306,7 +327,7 @@ export class FeedbackService {
 
   /** Storage hook (inside the write lock): targets, references and status transitions. */
   async check(next: StoredFeedback, current: StoredFeedback | undefined): Promise<void> {
-    if (current?.status === 'closed') throw new FeedbackClosedError(next.id, 'modified');
+    if (current?.status === 'closed' && !onlyConfirmsOverride(current, next)) throw new FeedbackClosedError(next.id, 'modified');
     if (current && current.status !== next.status && !FEEDBACK_TRANSITIONS[current.status].includes(next.status)) {
       throw new ConflictError(`feedback ${next.id}: ${current.status} -> ${next.status} is not allowed`);
     }
@@ -383,6 +404,23 @@ export class FeedbackService {
     const m = opts.override ? { ...meta, trailers: { ...meta.trailers, 'Approval-Override': opts.override.replace(/[\r\n]+/g, ' ') } } : meta;
     await this.repo.update(id, stamped as never, m);
     if (accepting) this.acceptors.set(id, who);
+    return this.get(id);
+  }
+
+  /**
+   * A second person confirms a self-approval override (`approval_override_confirm`): stamps `confirmedBy / confirmedAt
+   * / confirmNote` on `approvalOverride` (also on closed items: the only change allowed there) with an
+   * `Approval-Override-Confirmed:` trailer. The overriding person cannot confirm their own override.
+   */
+  async confirmOverride(id: string, input: { by: string; note: string }, meta: CommitMeta = {}): Promise<Feedback> {
+    const current = await this.repo.get(id);
+    const o = current.approvalOverride;
+    if (!o) throw new OverrideConfirmError(`${id} was not accepted with an approval override`, 'no_override');
+    if (o.confirmedAt) throw new OverrideConfirmError(`${id}: the override was already confirmed by ${o.confirmedBy}`, 'already_confirmed');
+    if (input.by.trim().toLowerCase() === o.by.trim().toLowerCase()) throw new OverrideConfirmError(`${id}: ${o.by} made the override; a second person must confirm it`, 'same_person');
+    const note = input.note.replace(/[\r\n]+/g, ' ').trim();
+    const approvalOverride = { ...o, confirmedBy: input.by, confirmedAt: (meta.date ?? new Date()).toISOString(), confirmNote: note };
+    await this.repo.update(id, { approvalOverride } as never, { ...meta, message: meta.message ?? `feedback: confirm approval override of ${id}`, trailers: { ...meta.trailers, 'Approval-Override-Confirmed': note } });
     return this.get(id);
   }
 

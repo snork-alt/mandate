@@ -1,3 +1,5 @@
+import { mkdir, rm, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import type { z } from 'zod';
 import { idFromTitle, uniqueId } from '@mandate/shared';
 import type { GitStore } from '../git/GitStore.js';
@@ -41,6 +43,11 @@ export interface CommitMeta {
   trailers?: Record<string, string>;
   /** Called with the sha of each commit this write makes (MCP write tools report it); not called when nothing changed. */
   onCommit?: (sha: string) => void;
+  /**
+   * Extra files written (data) or removed (null) in the SAME commit as the entity (e.g. an image section's binary next
+   * to its document). Repo-relative paths; written after the integrity gate, inside the write lock.
+   */
+  files?: { path: string; data: Buffer | null }[];
 }
 
 export type CreateInput<T extends BaseEntity> = Omit<T, 'id' | 'createdAt' | 'updatedAt'> & { id?: string };
@@ -281,7 +288,17 @@ export abstract class GitBackedRepository<T extends BaseEntity> implements Entit
   /** The integrity gate (may reject: nothing is written), then write + commit, then the incremental report update. */
   private async commitChecked(entity: T, current: T | undefined, message: string, meta: CommitMeta): Promise<void> {
     const token = await this.integrity?.check(entity, current);
-    const sha = await this.commit(await this.persist(entity), message, meta);
+    const paths = await this.persist(entity);
+    for (const f of meta.files ?? []) {
+      if (f.path.split('/').some((p) => p === '..' || p === '' || p === '.')) throw new Error(`invalid file path '${f.path}'`);
+      const abs = path.join(this.git.dir, f.path);
+      if (f.data) {
+        await mkdir(path.dirname(abs), { recursive: true });
+        await writeFile(abs, f.data);
+      } else await rm(abs, { force: true });
+      paths.push(f.path);
+    }
+    const sha = await this.commit(paths, message, meta);
     this.integrity?.committed(token, sha);
   }
 

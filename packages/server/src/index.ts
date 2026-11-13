@@ -1,7 +1,7 @@
 import { loadSecrets, refreshSecrets } from './secrets.js';
 import path from 'node:path';
 import { setUserDirectory, UserDirectory } from './auth/users.js';
-import { loadConfig } from './config.js';
+import { loadConfig, mandateHome } from './config.js';
 import { buildApp } from './app.js';
 import { registerMcp } from './mcp/index.js';
 import { UploadService } from './mcp/uploads.js';
@@ -18,10 +18,12 @@ import { ConfigFile, preconfigured, SetupState } from './setup/files.js';
 import { FolderBrowser } from './setup/fs.js';
 import { adminClaimHook, registerSetupRoutes, setupStatus } from './setup/routes.js';
 import { registerInstallRoutes } from './install/routes.js';
+import { CliTarball, findCliPackage } from './install/cli-package.js';
 import { githubRemote, registerAdminRoutes, TokenChecker } from './projects/admin.js';
 import { registerStaticUi, resolveWebDir } from './static.js';
 import { DbClientStore, migrateFlowPolicies, projectSettings } from './projects/settings.js';
 import { registerFlowRoutes } from './projects/flow-routes.js';
+import { registerCodeRepoRoutes } from './projects/code-repos-routes.js';
 import { openConfiguredState, switchServerDatabase } from './db/state.js';
 import { redactUrl, type ResolvedDatabase } from './db/config.js';
 import { openServerDb } from './db/index.js';
@@ -164,9 +166,20 @@ registerAuthRoutes(app, {
 });
 registerSetupRoutes(app, setupDeps);
 // One-line installer for developer machines: `curl -fsSL <url>/p/<project>/install.sh | sh` (no secrets in it).
-registerInstallRoutes(app, { url: config.publicUrl, version: process.env.MANDATE_VERSION ?? '0.1.0', trustProxy: config.trustProxy, hostOk, hasProject: (id) => !!projects.config(id) });
+// The installer installs this server's own CLI package, served as /getmandate.tgz (packed once into ~/.mandate/cache/cli).
+const cliPackage = findCliPackage();
+if (!cliPackage) app.log.info('install: no built CLI package found; /getmandate.tgz is unavailable (npm run build)');
+registerInstallRoutes(app, {
+  url: config.publicUrl,
+  version: process.env.MANDATE_VERSION ?? '0.1.0',
+  trustProxy: config.trustProxy,
+  hostOk,
+  hasProject: (id) => !!projects.config(id),
+  cli: cliPackage ? new CliTarball(cliPackage, path.join(mandateHome(), 'cache', 'cli')) : null,
+});
 // Agent flow: project policy (projects.json) + per-client preferences (server-state database).
 registerFlowRoutes(app, { auth, hostOk, registry: projects, settings: flowSettings, access: (login, p) => perms.access(login, p) as Promise<'none' | 'read' | 'write'> });
+registerCodeRepoRoutes(app, { auth, hostOk, registry: projects, settings: flowSettings, access: (login, p) => perms.access(login, p) as Promise<'none' | 'read' | 'write'> });
 function resolveProject(id: string) {
   const p = loadConfig().projects.find((x) => x.id === id);
   if (!p) throw new Error(`project '${id}' not found in ${config.projectsPath}`);

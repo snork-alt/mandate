@@ -26,12 +26,31 @@ const label = z.string().trim().min(1).max(60);
 export const questionOptionSchema = z.object({ label, description: z.string().trim().min(1).max(300) }).strict();
 export type QuestionOption = z.infer<typeof questionOptionSchema>;
 
+/** Code a question cites: `mandate://code/<repo>/<path>[#Lx-Ly]` or `repo:path#Lx-Ly`. */
+export const QUESTION_EVIDENCE_REF_RE = /^(?:mandate:\/\/code\/\S+|[A-Za-z0-9_.-]+:[^#\s:/][^#\s]*(?:#L\d+(?:-L?\d+)?)?)$/;
+const evidenceCount = z.number().int().min(0).max(1_000_000);
+/** One evidence file of a question (e.g. a standard to confirm): the code and how many places conform / violate. */
+export const questionEvidenceSchema = z
+  .object({
+    ref: z.string().trim().min(3).max(300).regex(QUESTION_EVIDENCE_REF_RE, 'mandate://code/<repo>/<path>[#Lx-Ly] or repo:path#Lx-Ly'),
+    conforming: evidenceCount.optional(),
+    violating: evidenceCount.optional(),
+  })
+  .strict();
+export type QuestionEvidence = z.infer<typeof questionEvidenceSchema>;
+
 /** One question as the agent sends it (AskUserQuestion shape + recommended). */
 export const questionInputItemSchema = z
   .object({
     /** Short chip label, at most 12 characters (e.g. "Auth method"). */
     header: z.string().trim().min(1).max(12),
+    /** Optional short title shown above the question (e.g. the standard's name); without it the header is the title. */
+    title: z.string().trim().min(1).max(80).optional(),
+    /** Optional short badge next to the title (e.g. MUST, SHOULD). */
+    badge: z.string().trim().min(1).max(12).optional(),
     question: z.string().trim().min(3).max(500),
+    /** Optional code evidence (files with conforming / violating counts), shown as chips. */
+    evidence: z.array(questionEvidenceSchema).max(6).optional(),
     options: z.array(questionOptionSchema).min(2).max(4),
     /** The option label you recommend (multiSelect: one or more labels). */
     recommended: z.union([label, z.array(label).min(1).max(4)]),
@@ -100,7 +119,10 @@ export type QuestionActor = z.infer<typeof who>;
 export const questionItemSchema = z.object({
   id: z.string().min(1).max(32),
   header: z.string().min(1).max(12),
+  title: z.string().min(1).max(80).optional(),
+  badge: z.string().min(1).max(12).optional(),
   question: z.string().min(1),
+  evidence: z.array(z.object({ ref: z.string().min(1).max(300), conforming: z.number().int().min(0).optional(), violating: z.number().int().min(0).optional() })).max(6).optional(),
   options: z.array(questionOptionSchema).min(2).max(4),
   recommended: z.union([z.string(), z.array(z.string())]),
   multiSelect: z.boolean(),

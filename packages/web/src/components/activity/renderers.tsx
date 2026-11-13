@@ -296,5 +296,6 @@ export const activityRenderers: ActivityRendererRegistry = {
   'git.push_failed': pushFailed,
   commit,
   'approval.override': override,
+  'approval.override_confirmed': override,
   'question.*': question,
 };

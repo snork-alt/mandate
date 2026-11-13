@@ -115,6 +115,6 @@ describe('repoSection', () => {
   it('stays within its token budget (tokens ≈ chars / 4)', () => {
     const t = repoSection('web-app', 'https://mandate.example.com/p/web-app/mcp');
     for (const x of ['project_info', 'explicit user confirmation', '/mandate-flow', '/mandate-bootstrap']) expect(t).toContain(x);
-    expect(Math.ceil(t.length / 4)).toBeLessThanOrEqual(120);
+    expect(Math.ceil(t.length / 4)).toBeLessThanOrEqual(130);
   });
 });

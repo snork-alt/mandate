@@ -109,6 +109,9 @@ export function FeedbackListPage() {
       { replace: true },
     );
 
+  // One URL update for all keys: separate `set` calls each start from the same render's params and overwrite each other.
+  const clearFilters = () => setParams((p) => (KEYS.forEach((k) => p.delete(k)), p), { replace: true });
+
   const titles = useMemo(
     () =>
       new Map([
@@ -185,7 +188,7 @@ export function FeedbackListPage() {
           }))}
         />
         {active && (
-          <Button variant="subtle" color="gray" leftSection={<IconX size={12} />} onClick={() => KEYS.forEach((k) => set(k, ''))}>
+          <Button variant="subtle" color="gray" leftSection={<IconX size={12} />} onClick={clearFilters}>
             Clear
           </Button>
         )}

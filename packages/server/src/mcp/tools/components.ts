@@ -18,6 +18,7 @@ import {
 } from '@mandate/shared';
 import { z } from 'zod';
 import { defineTool } from '../define.js';
+import { sectionGetWithImage, withImageMeta } from '../images.js';
 
 const line = (max: number) => z.string().trim().min(1).max(max).regex(/^[^\r\n]*$/, 'single line');
 const list = <T extends z.ZodType>(item: T, max = 20) => z.array(item).min(1).max(max);
@@ -52,6 +53,7 @@ export const componentSectionGetInputSchema = z
     doc: docRefSchema(['components'], { sections: false }).optional(),
     section: slugSchema.optional(),
     at: commitRefSchema.optional(),
+    includeImage: z.boolean().optional(),
   })
   .strict()
   .refine((v) => !!v.ref !== !!(v.doc && v.section), { message: 'give either ref, or doc and section' });
@@ -118,7 +120,10 @@ Example: {"kind":["service"]}`,
     description: `Get one component: frontmatter, sections (responsibility, interfaces, context, ...) and, at HEAD, derived facts (dependsOn / dependents, specs affecting it, open work orders, rules that apply, empty owns globs) and section links. ${REF_NOTE}
 Example: {"ref":"auth-service","metadataOnly":true}`,
     input: componentGetInputSchema,
-    run: (a, ctx) => ctx.reads.componentGet(componentGetInputSchema.parse(a)),
+    run: async (a, ctx) => {
+      const r = await ctx.reads.componentGet(componentGetInputSchema.parse(a));
+      return withImageMeta(r, ctx, 'components', (r as { id: string }).id);
+    },
   }),
   defineTool({
     name: 'component_section_get',
@@ -127,7 +132,10 @@ Example: {"ref":"auth-service","metadataOnly":true}`,
     description: `Get one component section (body, type, metadata incl. links, lines; #Lx-Ly excerpt). ${REF_NOTE}
 Example: {"ref":"mandate://components/auth-service/sections/responsibility"}`,
     input: componentSectionGetInputSchema,
-    run: (a, ctx) => ctx.reads.componentSectionGet(componentSectionGetInputSchema.parse(a)),
+    run: async (a, ctx) => {
+      const inp = componentSectionGetInputSchema.parse(a);
+      return sectionGetWithImage(await ctx.reads.componentSectionGet(inp), ctx, inp.includeImage);
+    },
   }),
   defineTool({
     name: 'architecture_get',

@@ -90,7 +90,8 @@ describe('upload tokens', () => {
     expect(typeOfContentType('text/html; charset=utf-8')).toBe('html');
     expect(typeOfContentType('text/x-mermaid')).toBe('mermaid');
     expect(typeOfContentType('application/x-www-form-urlencoded')).toBeNull();
-    expect(err(() => typeOfContentType('image/png'))).toMatchObject({ status: 415, code: 'unsupported_media_type' });
+    expect(typeOfContentType('image/png')).toBe('image');
+    expect(err(() => typeOfContentType('application/pdf'))).toMatchObject({ status: 415, code: 'unsupported_media_type' });
     expect(err(() => typeOfContentType('text/html; charset=latin1'))).toMatchObject({ status: 415, code: 'unsupported_charset' });
   });
 

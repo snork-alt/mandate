@@ -2,6 +2,8 @@
 import { Skeleton } from '@mantine/core';
 import { useParams } from 'react-router';
 import { TopBar } from '../components/TopBar';
+import { CopyMenu } from '../components/copy';
+import { questionTarget } from '../lib/refs';
 import { NO_ACCESS, QuestionCard, QuestionSummary } from '../components/questions/QuestionCard';
 import { useDecisionAccess } from '../lib/decisions';
 import { useQuestion } from '../lib/questions';
@@ -14,7 +16,9 @@ export function QuestionPage() {
   const question = q.data?.question;
   return (
     <>
-      <TopBar crumbs={[{ label: 'Overview', to: '/?tab=action' }, { label: id }]} />
+      <TopBar crumbs={[{ label: 'Questions', to: '/questions' }, { label: id }]}>
+        <CopyMenu target={questionTarget(id)} visible />
+      </TopBar>
       <div className="ov-page" style={{ maxWidth: 720 }}>
         {q.isPending ? (
           <Skeleton height={200} radius="md" />

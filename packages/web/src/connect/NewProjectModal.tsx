@@ -1,4 +1,4 @@
-import { ActionIcon, Anchor, Autocomplete, Avatar, Button, CloseButton, Loader, Modal, Select, Skeleton, Switch, Tabs, Text, TextInput, Textarea, Tooltip, UnstyledButton } from '@mantine/core';
+import { ActionIcon, Anchor, Autocomplete, Button, Group, CloseButton, Loader, Modal, Select, Skeleton, Switch, Text, TextInput, Textarea, UnstyledButton } from '@mantine/core';
 import { useDebouncedValue, useMediaQuery } from '@mantine/hooks';
 import {
   IconAlertTriangle,
@@ -7,8 +7,9 @@ import {
   IconBrandGithub,
   IconBuilding,
   IconCheck,
+  IconCode,
   IconExternalLink,
-  IconFolder,
+  IconFileText,
   IconFolderPlus,
   IconGitBranch,
   IconHash,
@@ -25,10 +26,13 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { relativeTime } from '../lib/time';
 import { goTo, projectBase } from '../project';
-import { CREATE_STEPS, githubApi, normalizeSubpath, slugify, UiApiError, type CreateStep, type GithubOwner, type GithubRepo, type NewProjectInput, type RepoList } from './github';
+import { CREATE_STEPS, githubApi, slugify, UiApiError, type CreateStep, type GithubRepo, type NewProjectInput, type RepoList } from './github';
 import { devApiPort } from './snippets';
 import { Notice, SummaryRow } from './parts';
+import { OwnerAvatar, OwnerTabs, ownerLabel } from './ownerTabs';
+import { codeRepoErrors, CodeReposEditor, toEntry, type CodeRepoDraft } from './CodeRepos';
 import { PostCreateConnect } from './PostCreateConnect';
+import { buildCodeRef } from '@mandate/shared';
 import './newProject.css';
 
 interface Draft {
@@ -38,17 +42,20 @@ interface Draft {
   description: string;
   repo: GithubRepo | null;
   branch: string;
-  path: string;
   owner: string;
+  /** Code repositories (read-only), by short name. */
+  codeRepos: CodeRepoDraft[];
 }
 
-const EMPTY: Draft = { name: '', id: '', idTouched: false, description: '', repo: null, branch: '', path: '', owner: 'all' };
+const EMPTY: Draft = { name: '', id: '', idTouched: false, description: '', repo: null, branch: '', owner: 'all', codeRepos: [] };
 const DRAFT_KEY = 'mandate.newProject';
 
 function loadDraft(): Draft {
   try {
     const raw = sessionStorage.getItem(DRAFT_KEY);
-    return raw ? { ...EMPTY, ...(JSON.parse(raw) as Partial<Draft>) } : EMPTY;
+    if (!raw) return EMPTY;
+    const d = { ...EMPTY, ...(JSON.parse(raw) as Partial<Draft>) };
+    return { ...d, codeRepos: Array.isArray(d.codeRepos) ? d.codeRepos : [] };
   } catch {
     return EMPTY;
   }
@@ -65,13 +72,13 @@ function saveDraft(d: Draft | null) {
 /** One line per step, shown above its fields. */
 const STEPS = [
   { label: 'Details', lead: 'Give the project a name. Coding agents connect to it by its id.' },
-  { label: 'Repository', lead: 'Choose an account or organization, then the repository for the specs.' },
-  { label: 'Branch', lead: 'Choose the branch to use and, if you like, a folder inside the repository.' },
-  { label: 'Confirm', lead: 'Check the setup. Mandate prepares the repository when you create the project.' },
+  { label: 'Specs repository', lead: 'Choose the repository for the specs, then its branch.' },
+  { label: 'Code repositories', lead: null },
+  { label: 'Confirm', lead: 'Check the setup. Mandate prepares the specs repository when you create the project.' },
 ] as const;
 
 /** Which step a server error's `path` belongs to. */
-const STEP_OF: Record<string, number> = { id: 0, name: 0, description: 0, repo: 1, owner: 1, branch: 2, path: 2 };
+const STEP_OF: Record<string, number> = { id: 0, name: 0, description: 0, repo: 1, owner: 1, branch: 1, path: 1, codeRepos: 2 };
 
 const PROGRESS: Record<CreateStep, string> = { clone: 'Cloning the repository', init: 'Initialising the project', push: 'Pushing the first commit', key: 'Creating an agent key' };
 
@@ -84,16 +91,6 @@ function apiHost(): string {
 
 
 /* ---------------------------------------------------------------- pieces */
-
-const ownerLabel = (o: GithubOwner) => o.name || o.login;
-
-function OwnerAvatar({ url, login, size = 20 }: { url?: string | null; login: string; size?: number }) {
-  return (
-    <Avatar src={url ?? undefined} size={size} radius={size >= 20 ? 6 : 5} className="np-avatar" alt="">
-      {login.slice(0, 1).toUpperCase()}
-    </Avatar>
-  );
-}
 
 function Stepper({ step, onStep }: { step: number; onStep: (i: number) => void }) {
   return (
@@ -111,32 +108,6 @@ function Stepper({ step, onStep }: { step: number; onStep: (i: number) => void }
         return i < STEPS.length - 1 ? [item, <li key={`${s.label}-line`} className="pj-line" data-done={i < step || undefined} aria-hidden="true" />] : [item];
       })}
     </ol>
-  );
-}
-
-/** Account / organization picker: the app's underline tabs, with avatars. */
-function OwnerTabs({ owners, value, onChange }: { owners: GithubOwner[]; value: string; onChange: (v: string) => void }) {
-  return (
-    <Tabs value={value} onChange={(v) => v && onChange(v)} className="pj-owners" data-testid="owner-switcher" aria-label="Repository owner">
-      <Tabs.List>
-        <Tabs.Tab value="all" data-testid="owner-all">
-          All
-        </Tabs.Tab>
-        {owners.map((o) => (
-          <Tooltip key={o.login} label={o.restricted ? `${ownerLabel(o)} has not approved Mandate yet` : o.type === 'user' ? 'Your own repositories' : ownerLabel(o)}>
-            <Tabs.Tab
-              value={o.login}
-              data-restricted={o.restricted || undefined}
-              data-testid={`owner-${o.login}`}
-              leftSection={<OwnerAvatar url={o.avatarUrl} login={o.login} size={18} />}
-              rightSection={o.restricted ? <IconLock size={12} className="np-owner-lock" /> : undefined}
-            >
-              {o.type === 'user' ? o.login : ownerLabel(o)}
-            </Tabs.Tab>
-          </Tooltip>
-        ))}
-      </Tabs.List>
-    </Tabs>
   );
 }
 
@@ -276,7 +247,7 @@ function RepoStep({ draft, setOwner, onPick, error }: { draft: Draft; setOwner: 
   const placeholder = owner === 'all' ? 'Search repositories' : selectedOwner?.type === 'user' ? 'Search your repositories' : `Search ${selectedOwner ? ownerLabel(selectedOwner) : owner} repositories`;
   return (
     <div className="pj-repo-step">
-      {owners.length > 0 && <OwnerTabs owners={owners} value={owner} onChange={(o) => (setOwner(o), setCreating(false))} />}
+      {owners.length > 0 && <OwnerTabs owners={owners} value={owner} onChange={(o) => (setOwner(o), setCreating(false))} addUrl={installUrl ?? data?.grantUrl} app={!!installUrl} />}
       {restricted ? (
         <Notice
           icon={<IconBuilding size={16} />}
@@ -370,8 +341,18 @@ function RepoStep({ draft, setOwner, onPick, error }: { draft: Draft; setOwner: 
                   {q ? `No repositories match “${q}”` : 'No repositories here yet'}
                 </Text>
                 <Text size="sm" className="np-muted">
-                  {installUrl ? 'Mandate only sees repositories where its GitHub App is installed.' : q ? 'Check the spelling, or create a new repository.' : 'Create a new repository to get started.'}
+                  {installUrl ? 'Mandate only sees repositories where its GitHub App is installed.' : q ? 'Check the spelling. If it belongs to an organization that isn’t listed, give Mandate access to it, then refresh.' : 'Create a new repository to get started.'}
                 </Text>
+                {!installUrl && q && data?.grantUrl && (
+                  <Group gap="xs" justify="center" mt={6}>
+                    <Button component="a" href={data.grantUrl} target="_blank" rel="noreferrer" size="sm" variant="default" leftSection={<IconBrandGithub size={15} />} rightSection={<IconExternalLink size={13} />}>
+                      Give access to an organization
+                    </Button>
+                    <Button type="button" size="sm" variant="subtle" color="gray" leftSection={<IconRefresh size={14} />} loading={repos.isFetching} onClick={() => void repos.refetch()}>
+                      Refresh
+                    </Button>
+                  </Group>
+                )}
                 {installUrl && (
                   <Button component="a" href={installUrl} target="_blank" rel="noreferrer" size="sm" variant="default" leftSection={<IconBrandGithub size={15} />} rightSection={<IconExternalLink size={13} />} mt={6}>
                     Install the GitHub App
@@ -426,8 +407,10 @@ export function NewProjectModal({ opened, onClose }: { opened: boolean; onClose:
   }, [opened]);
 
   const set = (patch: Partial<Draft>) => setDraft((d) => ({ ...d, ...patch }));
-  const subpath = normalizeSubpath(draft.path);
-  const canNext = [!!draft.name.trim(), !!draft.repo, !!draft.branch.trim() && subpath !== null, true][step]!;
+  const specsRepo = draft.repo?.fullName ?? null;
+  const codeErrors = codeRepoErrors(draft.codeRepos, specsRepo);
+  const codeOk = Object.keys(codeErrors).length === 0;
+  const canNext = [!!draft.name.trim(), !!draft.repo && !!draft.branch.trim(), draft.codeRepos.length > 0 && codeOk, true][step]!;
   const mcpUrl = `${apiHost()}/p/${draft.id || '…'}/mcp`;
 
   const create = useMutation({
@@ -438,7 +421,7 @@ export function NewProjectModal({ opened, onClose }: { opened: boolean; onClose:
         ...(draft.description.trim() ? { description: draft.description.trim() } : {}),
         repo: draft.repo!.fullName,
         ...(draft.branch.trim() ? { branch: draft.branch.trim() } : {}),
-        ...(subpath ? { path: subpath } : {}),
+        ...(draft.codeRepos.length ? { codeRepos: draft.codeRepos.map(toEntry) } : {}),
       };
       return githubApi.createProjectStreaming(body, (e) => setProgress((p) => ({ ...p, [e.step]: e.status })));
     },
@@ -478,7 +461,6 @@ export function NewProjectModal({ opened, onClose }: { opened: boolean; onClose:
   const shown = tried[step];
   const nameErr = fieldErrors.name || (shown && !draft.name.trim() ? 'Give the project a name' : null);
   const branchErr = fieldErrors.branch || (shown && !draft.branch.trim() ? 'Enter a branch name' : null);
-  const pathErr = fieldErrors.path || (subpath === null ? 'Use a relative path, without “..”' : null);
   const repoErr = fieldErrors.repo || fieldErrors.owner || (shown && !draft.repo ? 'Pick a repository to continue' : undefined);
 
   return (
@@ -516,7 +498,7 @@ export function NewProjectModal({ opened, onClose }: { opened: boolean; onClose:
                 New project
               </Text>
               <Text size="sm" className="np-muted">
-                A project is a GitHub repository where Mandate stores your specs.
+                A project keeps your specs in a GitHub repository and links the code they describe.
               </Text>
             </div>
             <ActionIcon type="button" variant="subtle" color="gray" size="md" onClick={onClose} aria-label="Close" style={busy ? { visibility: 'hidden' } : undefined}>
@@ -527,7 +509,11 @@ export function NewProjectModal({ opened, onClose }: { opened: boolean; onClose:
 
           <div className="pj-body">
             <Text size="sm" className="pj-lead">
-              {STEPS[step]!.lead}
+              {STEPS[step]!.lead ?? (
+                <>
+                  The repositories where the code lives. Coding agents reference them by short name, like <code>{buildCodeRef({ repo: 'web-app', path: 'src/auth.ts' })}</code>, and record the commit they worked on.
+                </>
+              )}
             </Text>
 
             {step === 0 && (
@@ -584,56 +570,46 @@ export function NewProjectModal({ opened, onClose }: { opened: boolean; onClose:
             )}
 
             {step === 1 && (
-              <RepoStep
-                draft={draft}
-                setOwner={(o) => set({ owner: o })}
-                onPick={(r) => {
-                  pick(r);
-                  setFieldErrors((f) => ({ ...f, owner: '' }));
-                }}
-                error={repoErr || undefined}
-              />
+              <div className="pj-stack">
+                <Notice icon={<IconFileText size={16} />} title={<>Use a dedicated repository for specs.</>} testId="specs-dedicated">
+                  Mandate writes to it.
+                </Notice>
+                <RepoStep
+                  draft={draft}
+                  setOwner={(o) => set({ owner: o })}
+                  onPick={(r) => {
+                    pick(r);
+                    setFieldErrors((f) => ({ ...f, owner: '' }));
+                  }}
+                  error={repoErr || undefined}
+                />
+                {draft.repo && (
+                  <Autocomplete
+                    size="md"
+                    label="Branch"
+                    description={draft.repo.defaultBranch ? `The repository's default branch is ${draft.repo.defaultBranch}.` : 'The repository has no commits yet; Mandate creates this branch.'}
+                    data={branches}
+                    value={draft.branch}
+                    onChange={(v) => (set({ branch: v }), setFieldErrors((f) => ({ ...f, branch: '' })))}
+                    leftSection={<IconGitBranch size={16} />}
+                    className="np-mono-input pj-branch"
+                    comboboxProps={{ withinPortal: true }}
+                    error={branchErr}
+                    data-testid="specs-branch"
+                  />
+                )}
+              </div>
             )}
 
             {step === 2 && (
-              <div className="pj-stack">
-                <div className="pj-repo-pill" data-testid="path-preview">
-                  <OwnerAvatar url={draft.repo?.ownerAvatarUrl} login={draft.repo?.owner ?? '?'} size={22} />
-                  <span className="np-mono pj-repo-pill-path">
-                    {draft.repo?.fullName}
-                    <span className="np-faint">@</span>
-                    {draft.branch || '…'}
-                    <span className="np-faint">:</span>/{subpath ?? ''}
-                  </span>
-                  <Button type="button" size="compact-sm" variant="subtle" onClick={() => setStep(1)}>
-                    Change
-                  </Button>
-                </div>
-                <Autocomplete
-                  size="md"
-                  label="Branch"
-                  description={draft.repo?.defaultBranch ? `The repository's default branch is ${draft.repo.defaultBranch}.` : 'The repository has no commits yet; Mandate creates this branch.'}
-                  data={branches}
-                  value={draft.branch}
-                  onChange={(v) => (set({ branch: v }), setFieldErrors((f) => ({ ...f, branch: '' })))}
-                  leftSection={<IconGitBranch size={16} />}
-                  className="np-mono-input"
-                  comboboxProps={{ withinPortal: true }}
-                  error={branchErr}
-                  data-autofocus
-                />
-                <TextInput
-                  size="md"
-                  label="Folder"
-                  description="Optional. Lets several projects share one repository."
-                  placeholder="Repository root"
-                  value={draft.path}
-                  onChange={(e) => (set({ path: e.currentTarget.value }), setFieldErrors((f) => ({ ...f, path: '' })))}
-                  leftSection={<IconFolder size={16} />}
-                  className="np-mono-input"
-                  error={pathErr}
-                />
-              </div>
+              <>
+                <CodeReposEditor value={draft.codeRepos} onChange={(codeRepos) => (set({ codeRepos }), setFieldErrors((f) => ({ ...f, codeRepos: '' })))} specsRepo={specsRepo} />
+                {fieldErrors.codeRepos && (
+                  <Text size="sm" c="red" role="alert" mt="xs">
+                    {fieldErrors.codeRepos}
+                  </Text>
+                )}
+              </>
             )}
 
             {step === 3 && (
@@ -643,11 +619,13 @@ export function NewProjectModal({ opened, onClose }: { opened: boolean; onClose:
                   <SummaryRow icon={<IconHash size={14} />} label="Id" value={draft.id} mono />
                   <SummaryRow icon={<IconPlug size={14} />} label="MCP URL" value={`http://${mcpUrl}`} mono />
                   <SummaryRow
-                    icon={<IconBrandGithub size={14} />}
-                    label="Repository"
+                    icon={<IconFileText size={14} />}
+                    label="Specs repository"
                     value={
                       <>
                         {draft.repo?.fullName}
+                        <span className="np-faint">@</span>
+                        {draft.branch}
                         <span className="np-chip np-chip-inline">
                           {draft.repo?.private ? <IconLock size={11} /> : <IconWorld size={11} />}
                           {draft.repo?.private ? 'Private' : 'Public'}
@@ -656,12 +634,35 @@ export function NewProjectModal({ opened, onClose }: { opened: boolean; onClose:
                     }
                     mono
                   />
-                  <SummaryRow icon={<IconGitBranch size={14} />} label="Branch" value={draft.branch} mono />
-                  <SummaryRow icon={<IconFolder size={14} />} label="Folder" value={subpath ? `/${subpath}` : '/ (repository root)'} mono />
+                  <div className="np-summary-row" data-testid="summary-code-repos">
+                    <span className="np-summary-label">
+                      <IconCode size={14} />
+                      <span>
+                        Code repositories
+                        <span className="cr-sub">read-only</span>
+                      </span>
+                    </span>
+                    <span className="np-summary-value cr-summary">
+                      {draft.codeRepos.length ? (
+                        draft.codeRepos.map((c) => (
+                          <span key={c.github} className="cr-summary-row">
+                            <span className="cr-tag np-mono">{c.name}</span>
+                            <IconArrowRight size={13} className="np-faint" />
+                            <OwnerAvatar url={c.ownerAvatarUrl} login={c.github.split('/')[0]!} size={16} />
+                            <span className="np-mono">{c.github}</span>
+                            {c.defaultBranch && <span className="np-faint np-mono">@{c.defaultBranch}</span>}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="np-faint">None yet: add them later in Settings → Code repositories</span>
+                      )}
+                    </span>
+                  </div>
                 </div>
                 {!create.isPending && !create.isSuccess && !err && (
                   <Text size="sm" className="np-muted">
-                    Mandate clones the repository, sets up {subpath ? <code>{subpath}/</code> : 'its root'} on <code>{draft.branch}</code>, pushes the first commit and creates an agent key for this project.
+                    Mandate clones <code>{draft.repo?.fullName}</code>, sets it up on <code>{draft.branch}</code>, pushes the first commit
+                    {draft.codeRepos.length ? `, links ${draft.codeRepos.length} code ${draft.codeRepos.length === 1 ? 'repository' : 'repositories'} (read-only)` : ''} and creates an agent key for this project.
                   </Text>
                 )}
                 {(create.isPending || create.isSuccess || (err && Object.keys(progress).length > 0)) && (
@@ -707,10 +708,30 @@ export function NewProjectModal({ opened, onClose }: { opened: boolean; onClose:
                 Back
               </Button>
             )}
+            {step === 2 && !busy && (
+              <>
+                <Text size="sm" className="np-faint pj-foot-note cr-foot-note">
+                  You can add them later in project settings
+                </Text>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="default"
+                  ml="auto"
+                  onClick={() => {
+                    set({ codeRepos: [] });
+                    setStep(3);
+                  }}
+                  data-testid="code-repos-skip"
+                >
+                  Skip for now
+                </Button>
+              </>
+            )}
             <Button
               type="submit"
               size="sm"
-              disabled={busy}
+              disabled={busy || (step === 2 && !canNext)}
               data-busy={busy || undefined}
               data-testid={step < 3 ? 'new-project-next' : 'new-project-create'}
               leftSection={busy ? <Loader size={14} color="currentColor" /> : step === 3 && !err ? <IconBrandGithub size={15} /> : err && step === 3 ? <IconRefresh size={15} /> : null}

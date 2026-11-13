@@ -9,7 +9,9 @@ import { z } from 'zod';
 import { defineTool, type ToolContext } from '../define.js';
 import { ToolError } from '../errors.js';
 import { uploadInfo } from '../uploads.js';
-import { APPROVAL_POLICIES, QUESTIONS_VIA, type PrefPatch, clientIdentity, DEFAULT_POLICY, effective, FLOW_POLICIES, flowChangedEvent, refusal, type OnOff, type ProjectSettings } from '../../projects/settings.js';
+import { checkCodeRepos } from '../code-claims.js';
+import { codeContextLabel, codeContextSetInputSchema } from '@mandate/shared';
+import { APPROVAL_POLICIES, QUESTIONS_VIA, type PrefPatch, clientIdentity, DEFAULT_POLICY, effective, FLOW_POLICIES, flowInstructions, flowChangedEvent, refusal, type OnOff, type ProjectSettings } from '../../projects/settings.js';
 
 const onOff = z.enum(['on', 'off']);
 
@@ -30,7 +32,10 @@ async function info(ctx: ToolContext) {
     client: { id: c.id, label: c.label, flow: pref?.flow ?? null, approval: pref?.approval ?? null, questions: pref?.questions ?? null },
     effective: { flow: eff.flow, approval: eff.approval, questions: eff.questions },
     reason: eff.reason,
+    instructions: flowInstructions(eff),
     ...(upload ? { upload } : {}),
+    codeRepos: ctx.settings?.codeRepos?.() ?? [],
+    codeContext: ctx.session?.codeContext ?? null,
   };
 }
 
@@ -48,10 +53,10 @@ async function setPreference(a: PrefPatch, ctx: ToolContext) {
   const e = flowChangedEvent(s.project, fields, { agent: ctx.commit?.agent ?? c.client, ...(user ? { user } : {}), ...(ctx.principal?.kind === 'key' ? { source: ctx.principal.keyName } : {}) }, (await ctx.storage.git.head().catch(() => null)) ?? '');
   if (e) ctx.activity?.emit(e);
   const eff = effective(policy, rec);
-  return { policy, client: { id: c.id, label: c.label, flow: rec.flow, approval: rec.approval, questions: rec.questions }, effective: { flow: eff.flow, approval: eff.approval, questions: eff.questions }, reason: eff.reason, changed: fields };
+  return { policy, client: { id: c.id, label: c.label, flow: rec.flow, approval: rec.approval, questions: rec.questions }, effective: { flow: eff.flow, approval: eff.approval, questions: eff.questions }, reason: eff.reason, instructions: flowInstructions(eff), changed: fields };
 }
 
-const FLOW_SET_DESC = `Turn the Mandate flow or its approval checkpoint on / off, or questions mandate | chat, for THIS client only. Refused (policy_required / policy_off) when the project policy forbids it. Returns policy, preference and effective setting.
+const FLOW_SET_DESC = `Turn the Mandate flow or its approval checkpoint on / off, or questions mandate | chat, for THIS client only. Refused (policy_required / policy_off) when the project policy forbids it. Returns policy, preference, effective and instructions (follow them; save to memory). Works with the flow off.
 Example: {"flow":"off"}`;
 
 export const projectTools = [
@@ -59,11 +64,26 @@ export const projectTools = [
     name: 'project_info',
     title: 'Project info',
     kind: 'read',
-    description: `This project and the Mandate flow for your client: policy, client preference, effective { flow, approval, questions }, reason, and upload (the curl for large files).
-Call at the start of every task. flow off = read-only context; approval off = skip the approval checkpoint; questions chat = ask in chat, not question_ask.
+    description: `This project and the Mandate flow for your client: policy, client preference, effective { flow, approval, questions }, reason, instructions (follow them), upload (the curl for large files), codeRepos (code repo short names) and your codeContext.
+Call at the start of every task. flow off = read-only context (write tools refused: flow_off); approval off = skip the approval checkpoint; questions chat = ask in chat, not question_ask.
 Example: {}`,
     input: z.object({}).strict(),
     run: (_a, ctx) => info(ctx),
+  }),
+  defineTool({
+    name: 'code_context_set',
+    title: 'Set my code context',
+    kind: 'ops',
+    agentOnly: true,
+    description: `Declare the code this session works on: repo (your short name in project_info.codeRepos: match \`git remote get-url origin\` with codeRepos[].github), commit (HEAD sha), branch, dirty (uncommitted changes). Call at task start and after each commit or branch switch. Every write of this session is stamped with it (Code-Context trailer). Session state only (no commit; works with the flow off).
+Example: {"repo":"web-app","commit":"3f9c2a1","branch":"main","dirty":true}`,
+    input: codeContextSetInputSchema,
+    run: async (a, ctx) => {
+      if (!ctx.session) throw new ToolError('unavailable', 'code context is per MCP session; this call has none', 'call it over the project MCP endpoint');
+      const warnings = checkCodeRepos(ctx, [a.repo], 'repo');
+      ctx.session.codeContext = { ...a, at: new Date().toISOString() };
+      return { codeContext: ctx.session.codeContext, label: codeContextLabel(a), warnings };
+    },
   }),
   defineTool({
     name: 'flow_set',

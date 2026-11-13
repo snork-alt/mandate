@@ -163,6 +163,15 @@ describe('maturity is the one state (X1 / L5)', () => {
     expect(row.textContent).not.toMatch(/\bReady\b/);
   });
 
+  it('grouped by category: specs without a category are in the "General" group (last)', async () => {
+    wrap(<SpecListPage />, { specs: [spec('a'), spec('b', { category: undefined })] });
+    await waitFor(() => expect(document.querySelectorAll('.group-header')).toHaveLength(2));
+    const heads = [...document.querySelectorAll('.group-header')].map((e) => e.textContent ?? '');
+    expect(heads[0]).toContain('Auth');
+    expect(heads[1]).toContain('General');
+    expect(document.body.textContent).not.toContain('No category');
+  });
+
   it('one Maturity filter with Stage and Flags groups; no Status filter; legacy ?status= keeps an advanced filter', async () => {
     const specs = [spec('a'), spec('b', { maturity: mat('verified', { overlays: [{ kind: 'failing', reason: 'x', refs: [] }] }) })];
     wrap(<SpecListPage />, { specs });

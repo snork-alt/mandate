@@ -10,7 +10,11 @@ export interface ProjectSummary {
   branch: string;
   remote: string | null;
   mcpPath: string;
-  counts: { specs: number; standards: number; components: number; workOrders: number; feedback: number };
+  counts: { specs: number; standards: number; components: number; workOrders: number; feedback: number; activeWorkOrders?: number };
+  /** Items waiting for a human decision (the Actions page's decisions); absent on older servers. */
+  openActions?: number;
+  /** Short names of the linked code repositories (Settings → Code repositories). */
+  codeRepos?: string[];
   lastActivity: { at: string; summary: string; agent?: string } | null;
   /** GitHub storage (null for local-only projects); `reconnect` = the stored GitHub grant no longer works. */
   /** Team: what the signed-in user may do (from GitHub repo access). */

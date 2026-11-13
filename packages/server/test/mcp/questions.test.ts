@@ -69,6 +69,33 @@ describe('question_ask validation', () => {
     expect(r.isError, JSON.stringify(r.body)).toBe(false);
   });
 
+  it('takes optional title, badge and evidence per question, stores and returns them; the old shape has none', async () => {
+    const evidence = [{ ref: 'mandate://code/app/src/http/idempotency.ts', conforming: 13, violating: 0 }, { ref: 'app:src/app.ts#L127-L139', violating: 1 }, { ref: 'app:AGENTS.md' }];
+    const r = await ask({ purpose: 'standard_confirmation', questions: [q1({ title: 'Idempotent mutating routes', badge: 'MUST', evidence })] });
+    expect(r.isError, JSON.stringify(r.body)).toBe(false);
+    expect(r.body.question.questions[0]).toMatchObject({ title: 'Idempotent mutating routes', badge: 'MUST', evidence });
+    const got = (await run('question_get', { id: r.body.question.id }, agent())).body.question.questions[0];
+    expect(got).toMatchObject({ title: 'Idempotent mutating routes', badge: 'MUST', evidence });
+    const old = (await ask()).body.question.questions[0];
+    expect(old).not.toHaveProperty('title');
+    expect(old).not.toHaveProperty('badge');
+    expect(old).not.toHaveProperty('evidence');
+  });
+
+  it.each([
+    ['a title over 80 chars', { title: 'x'.repeat(81) }],
+    ['a badge over 12 chars', { badge: 'RECOMMENDATION' }],
+    ['an evidence ref that is not code', { evidence: [{ ref: 'mandate://specs/login-sso' }] }],
+    ['a negative count', { evidence: [{ ref: 'app:src/a.ts', conforming: -1 }] }],
+    ['a fractional count', { evidence: [{ ref: 'app:src/a.ts', violating: 1.5 }] }],
+    ['an unknown evidence key', { evidence: [{ ref: 'app:src/a.ts', files: 2 }] }],
+    ['more than 6 evidence files', { evidence: Array.from({ length: 7 }, (_, i) => ({ ref: `app:src/f${i}.ts` })) }],
+  ])('rejects %s', async (_n, over) => {
+    const r = await ask({ questions: [q1(over)] });
+    expect(r.isError).toBe(true);
+    expect(['validation', 'invalid_input']).toContain(r.body.error.code);
+  });
+
   it('the web UI cannot ask', async () => {
     expect((await run('question_ask', { purpose: 'decision', questions: [q1()] }, ui())).body.error.code).toBe('forbidden');
   });

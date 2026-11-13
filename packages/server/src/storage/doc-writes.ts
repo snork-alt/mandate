@@ -4,7 +4,7 @@
  * write-time rules (DocRules: transitions, identity, links, criteria shrink, done gate) run inside the write lock,
  * and the document is serialized and validated (round trip) before anything is written: never a partial write.
  */
-import { diffDocs, sectionAdvice, type DocFormat, type Section } from '@mandate/doc';
+import { diffDocs, IMAGE_EXT, IMAGE_FILE_FIELDS, imageBody, imageBodyProblems, parseImageBody, sectionAdvice, type DocFormat, type ImageMeta, type ImageMime, type Section } from '@mandate/doc';
 import { buildRef, idFromTitle, parseRef, slugify, type SectionCreate, type StoredComponent, type StoredSpec, type StoredStandard } from '@mandate/shared';
 import { componentCodec, componentFormat, specCodec, specFormat, standardCodec, standardFormat } from './codecs.js';
 import { NotFoundError, type CommitMeta } from './GitBackedRepository.js';
@@ -41,6 +41,23 @@ export interface WriteOutcome<T> {
   /** Non-blocking advice (summary missing / stale, section over the soft limit, ...). */
   warnings: string[];
 }
+
+/** An uploaded image (validated by the upload route: magic bytes, size, dimensions) for an `image` section. */
+export interface ImageUpload {
+  data: Buffer;
+  mime: ImageMime;
+  width?: number;
+  height?: number;
+  sha256: string;
+  /** Required for a new section; a replace keeps the current alt / caption when omitted. */
+  alt?: string;
+  caption?: string;
+}
+
+/** Repo-relative directory of a document's binary assets (`specs/x.md` → `specs/x.assets`). */
+export const assetDirOf = (docPath: string) => docPath.replace(/\.md$/, '.assets');
+
+const IMAGE_UPLOAD_HINT = "images are uploaded with curl: PUT /p/<project>/sections/<kind>/<docId>[/<sid>] with -H 'Content-Type: image/png' and ?alt=… (or upload_url_create sectionType image); alt / caption can be edited in the JSON body as long as the file fields stay";
 
 const SECTION_PATCH_KEYS = ['title', 'type', 'summary', 'body', 'refs', 'symbols', 'verifiedBy', 'method', 'threshold', 'level', 'rationale', 'scope', 'check', 'examples', 'provenance', 'confidence'] as const;
 
@@ -111,8 +128,9 @@ export class DocWriteService {
    * Read-modify-write of the sections INSIDE the write lock (no lost updates between concurrent section writes):
    * `edit` gets the current document and returns the new sections plus the touched section ids.
    */
-  private async editSections(kind: DocKind, ref: string, edit: (doc: Doc, sectionId: string | undefined) => Promise<{ sections: Section[]; touched: string[]; message: string; result?: string }> | { sections: Section[]; touched: string[]; message: string; result?: string }, meta: CommitMeta): Promise<WriteOutcome<Doc> & { result?: string }> {
+  private async editSections(kind: DocKind, ref: string, edit: (doc: Doc, sectionId: string | undefined) => Promise<{ sections: Section[]; touched: string[]; message: string; result?: string }> | { sections: Section[]; touched: string[]; message: string; result?: string }, meta: CommitMeta, opts: { image?: ImageUpload } = {}): Promise<WriteOutcome<Doc> & { result?: string }> {
     const { id, sectionId } = await this.resolveDoc(kind, ref);
+    const files: NonNullable<CommitMeta['files']> = [];
     let warnings: string[] = [];
     let result: string | undefined;
     let msg = '';
@@ -123,17 +141,55 @@ export class DocWriteService {
           async (current) => {
             const doc = current as Doc;
             const out = await edit(doc, sectionId);
-            const next = { ...doc, sections: out.sections } as Doc;
+            files.length = 0;
+            const sections = this.imageSections(kind, doc, out.sections, files, opts.image ? { sectionId: out.result ?? sectionId!, upload: opts.image } : undefined);
+            const next = { ...doc, sections } as Doc;
             warnings = this.check(kind, next, out.touched);
             result = out.result;
             msg = out.message;
             return next as never;
           },
-          { ...m, get message() { return m.message ?? msg; } } as CommitMeta,
+          { ...m, files, get message() { return m.message ?? msg; } } as CommitMeta,
         ) as Promise<Doc>,
       meta,
     );
     return { value, commits, warnings, ...(result ? { result } : {}) };
+  }
+
+  /**
+   * Image sections: the binary and its facts (file, mime, size, dimensions, sha256) change only through an upload,
+   * which writes the file next to the document in the same commit (`files`); alt / caption may be edited in the body.
+   * A section leaving the image type (or a replaced file with another extension) removes the old file.
+   */
+  private imageSections(kind: DocKind, doc: Doc, sections: Section[], files: NonNullable<CommitMeta['files']>, image?: { sectionId: string; upload: ImageUpload }): Section[] {
+    const dir = assetDirOf(this.repo(kind).pathOf(doc.id));
+    const before = new Map(doc.sections.map((s) => [s.id, s]));
+    const prevMeta = (s: Section | undefined) => (s?.type === 'image' ? parseImageBody(s.body) : null);
+    const out = sections.map((s) => {
+      const prev = before.get(s.id);
+      const old = prevMeta(prev);
+      if (image && s.id === image.sectionId) {
+        if (s.type !== 'image') throw new WriteError('type_mismatch', `section '${s.id}' is a ${s.type} section, not an image`, 415);
+        const u = image.upload;
+        const alt = u.alt?.trim() || old?.alt;
+        if (!alt) throw new WriteError('alt_required', 'an image section needs alt text (what the image shows: agents, search and Ask read it)', 400, 'add &alt=<description> (URL-encoded) to the upload');
+        const caption = u.caption !== undefined ? u.caption.trim() || undefined : old?.caption;
+        const meta: ImageMeta = { file: `${s.id}.${IMAGE_EXT[u.mime]}`, alt, ...(caption ? { caption } : {}), mime: u.mime, ...(u.width ? { width: u.width } : {}), ...(u.height ? { height: u.height } : {}), bytes: u.data.length, sha256: u.sha256 };
+        files.push({ path: `${dir}/${meta.file}`, data: u.data });
+        if (old && old.file !== meta.file) files.push({ path: `${dir}/${old.file}`, data: null });
+        return { ...s, body: imageBody(meta) };
+      }
+      if (old && s.type !== 'image') files.push({ path: `${dir}/${old.file}`, data: null });
+      if (s.type !== 'image' || (prev && prev.type === 'image' && prev.body === s.body)) return s;
+      const problems = imageBodyProblems(s.body);
+      const next = parseImageBody(s.body);
+      if (!old) throw new WriteError('image_upload_required', `section '${s.id}' cannot become an image section without an upload`, 400, IMAGE_UPLOAD_HINT);
+      if (!next) throw new WriteError('validation', problems.join('; '), 400, IMAGE_UPLOAD_HINT);
+      const changed = IMAGE_FILE_FIELDS.filter((k) => next[k] !== old[k]);
+      if (changed.length) throw new WriteError('image_upload_required', `the image file fields (${changed.join(', ')}) change only by uploading a new image`, 400, IMAGE_UPLOAD_HINT);
+      return { ...s, body: imageBody(next) };
+    });
+    return out;
   }
 
   /* ---------------------------------------------------------------- documents */
@@ -141,6 +197,7 @@ export class DocWriteService {
   async create(kind: DocKind, input: Record<string, unknown> & { sections?: SectionCreate[] }, meta: CommitMeta): Promise<WriteOutcome<Doc>> {
     const preset = presetIds();
     let sections = assignSectionIds(input.sections ?? [], new Set()).map((s) => ({ type: 'markdown', body: '', ...s }));
+    if (sections.some((s) => s.type === 'image')) throw new WriteError('image_upload_required', 'image sections are added by upload, not inline', 400, `create the ${SINGULAR[kind]} first, then ${IMAGE_UPLOAD_HINT}`);
     if (preset?.sections) sections = sections.map((s, i) => ({ ...s, id: preset.sections![i] ?? s.id }));
     if (preset?.doc) input = { ...input, id: preset.doc };
     const { value, commits } = await this.write((m) => this.repo(kind).create({ ...input, sections } as never, m) as Promise<Doc>, meta);
@@ -180,7 +237,7 @@ export class DocWriteService {
   /* ---------------------------------------------------------------- sections */
 
   /** Insert a section; Mandate assigns its id (slug of the title, de-duplicated against current and former ids) inside the lock. */
-  async sectionInsert(kind: DocKind, docRef: string, section: SectionCreate, place: Placement, meta: CommitMeta): Promise<WriteOutcome<Doc> & { sectionId: string }> {
+  async sectionInsert(kind: DocKind, docRef: string, section: SectionCreate, place: Placement, meta: CommitMeta, opts: { image?: ImageUpload } = {}): Promise<WriteOutcome<Doc> & { sectionId: string }> {
     const out = await this.editSections(
       kind,
       docRef,
@@ -200,11 +257,12 @@ export class DocWriteService {
         return { sections, touched: [sid], message: `${label(kind)}(${doc.id}): insert section ${sid}`, result: sid };
       },
       meta,
+      opts,
     );
     return { ...out, sectionId: out.result! };
   }
 
-  async sectionUpdate(kind: DocKind, ref: string, patch: Partial<Record<(typeof SECTION_PATCH_KEYS)[number], unknown>>, meta: CommitMeta): Promise<WriteOutcome<Doc>> {
+  async sectionUpdate(kind: DocKind, ref: string, patch: Partial<Record<(typeof SECTION_PATCH_KEYS)[number], unknown>>, meta: CommitMeta, opts: { image?: ImageUpload } = {}): Promise<WriteOutcome<Doc>> {
     return this.editSections(
       kind,
       ref,
@@ -221,6 +279,7 @@ export class DocWriteService {
         return { sections, touched: [sectionId!], message: `${label(kind)}(${doc.id}): update section ${sectionId}` };
       },
       meta,
+      opts,
     );
   }
 

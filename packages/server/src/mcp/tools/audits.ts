@@ -27,6 +27,7 @@ import { slugSchema } from '@mandate/doc';
 import { z } from 'zod';
 import type { CommitMeta } from '../../storage/index.js';
 import { defineTool, type AnyToolDef, type ToolContext } from '../define.js';
+import { checkClaim, checkCodeRepos, repoOfLocation, requireCommit } from '../code-claims.js';
 
 function metaOf(ctx: ToolContext, commits: string[], extra: Record<string, string> = {}): CommitMeta {
   const c = ctx.commit!;
@@ -55,6 +56,14 @@ export const auditSectionGetInputSchema = z
   .strict()
   .refine((v) => !!v.ref !== !!(v.doc && v.section), { message: 'give either ref, or doc and section' });
 
+/** audit_record_item: finding code refs in registered repos; the audit itself names the audited code (repo + commit). */
+async function itemCodeWarnings(ctx: ToolContext, auditId: string, codeRefs: unknown[]): Promise<string[]> {
+  const warnings = checkCodeRepos(ctx, codeRefs.map(repoOfLocation).filter((r): r is string => !!r), 'findings.codeRefs');
+  const doc = await ctx.storage.audits.get(auditId).catch(() => null);
+  if (doc && !doc.code && ctx.settings) warnings.push('code_commit_missing: this audit was started without code { repo, commit }; its results are not tied to a code commit (start audits with code)');
+  return warnings;
+}
+
 export const auditTools: AnyToolDef[] = [
   defineTool({
     name: 'audit_plan',
@@ -74,8 +83,9 @@ Example: {"target":"mandate://specs/login-sso","code":{"repo":"app","commit":"3f
     input: auditStartInputSchema,
     run: async (a, ctx) => {
       const commits: string[] = [];
+      // The audited code is a claim about code: repo (registered) + commit.
+      const warnings: string[] = a.code ? checkClaim(ctx, a.code, 'code') : requireCommit(ctx, 'an audit asserts the state of code: pass code { repo, commit } (the code you audit)', 'code: { "repo": "<short name from project_info.codeRepos>", "commit": "<sha>" }', 'code');
       const doc = await ctx.storage.auditService.start(a, auditor(ctx), metaOf(ctx, commits));
-      const warnings: string[] = [];
       const plan = await ctx.storage.auditService.plan(a.target);
       if (plan.inProgress && plan.inProgress.id !== doc.id) warnings.push(`another audit of this target is in progress: ${plan.inProgress.uri}`);
       return { ...(await result(ctx, doc.id, commits)), warnings };
@@ -89,8 +99,9 @@ Example: {"target":"mandate://specs/login-sso","code":{"repo":"app","commit":"3f
     input: auditRecordItemInputSchema,
     run: async (a, ctx) => {
       const commits: string[] = [];
+      const warnings = await itemCodeWarnings(ctx, a.auditId, (a.findings ?? []).flatMap((f) => (f as { codeRefs?: unknown[] }).codeRefs ?? []));
       const { item } = await ctx.storage.auditService.recordItem(a, metaOf(ctx, commits));
-      return result(ctx, a.auditId, commits, { item: buildRef({ kind: 'audits', id: a.auditId, sectionId: item.id }), findings: (item.findings ?? []).map((f) => buildFindingRef({ audit: a.auditId, id: f.id })) });
+      return { ...(await result(ctx, a.auditId, commits, { item: buildRef({ kind: 'audits', id: a.auditId, sectionId: item.id }), findings: (item.findings ?? []).map((f) => buildFindingRef({ audit: a.auditId, id: f.id })) })), warnings };
     },
   }),
   defineTool({
@@ -138,12 +149,14 @@ Example: {"auditId":"2026-11-12-login-sso","findingId":"f2","result":"pass","com
     input: auditRecheckInputSchema,
     run: async (a, ctx) => {
       const commits: string[] = [];
+      // pass / fail / partial assert the state of code: the re-checked commit is required.
+      const cw = !a.commit && a.result !== 'wont_fix' && a.result !== 'n_a' ? requireCommit(ctx, `a ${a.result} re-check asserts the state of code: pass commit (the code commit you re-checked)`, 'commit: "<sha>" of the audited repo', 'commit') : [];
       if (a.item) {
         const { item } = await ctx.storage.auditService.recheckItem({ auditId: a.auditId, item: a.item, result: a.result as 'pass', notes: a.notes ?? '', ...(a.commit ? { commit: a.commit } : {}) }, ctx.commit!.agent, metaOf(ctx, commits));
-        return { ...(await result(ctx, a.auditId, commits)), item: buildRef({ kind: 'audits', id: a.auditId, sectionId: item.id }) };
+        return { ...(await result(ctx, a.auditId, commits)), item: buildRef({ kind: 'audits', id: a.auditId, sectionId: item.id }), warnings: cw };
       }
       const { warnings } = await ctx.storage.auditService.recheck({ ...a, findingId: a.findingId!, result: a.result as 'pass' }, ctx.commit!.agent, metaOf(ctx, commits));
-      return { ...(await result(ctx, a.auditId, commits)), finding: buildFindingRef({ audit: a.auditId, id: a.findingId! }), warnings };
+      return { ...(await result(ctx, a.auditId, commits)), finding: buildFindingRef({ audit: a.auditId, id: a.findingId! }), warnings: [...cw, ...warnings] };
     },
   }),
   defineTool({

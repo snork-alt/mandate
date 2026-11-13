@@ -63,7 +63,7 @@ export async function questionProof(ctx: ToolContext, purposes: QuestionPurpose[
 /** Commit metadata with extra trailers (proof of a confirmation / approval). */
 export const withTrailers = (ctx: ToolContext, extra: Record<string, string>): ToolContext => ({ ...ctx, commit: { ...(ctx.commit as WriteMeta), trailers: { ...ctx.commit!.trailers, ...extra } } });
 
-const ASK_DESC = `Ask the USER a question through Mandate instead of your harness's question tool: 1-4 questions, each with a header (max 12 chars), 2-4 options { label, description }, the recommended label and multiSelect. purpose: decision | standard_confirmation | approval | clarification | other; context: the refs it concerns; blocking: true if nothing can progress without it. Then keep working on what does not depend on it; the answer arrives as ${QUESTION_ANSWERED_NOTIFICATION} or via questions_list { mine: true, status: "answered" }. Cite the answered question as cause of the writes it decides.
+const ASK_DESC = `Ask the USER a question through Mandate instead of your harness's question tool: 1-4 questions, each with a header (max 12 chars), 2-4 options { label, description }, the recommended label and multiSelect; optional title (short, e.g. the standard's name), badge (e.g. MUST) and evidence [{ ref: repo:path#Lx-Ly, conforming, violating }]. purpose: decision | standard_confirmation | approval | clarification | other; context: the refs it concerns; blocking: true if nothing can progress without it. Then keep working on what does not depend on it; the answer arrives as ${QUESTION_ANSWERED_NOTIFICATION} or via questions_list { mine: true, status: "answered" }. Cite the answered question as cause of the writes it decides.
 Example: {"purpose":"decision","context":["mandate://specs/login-sso"],"questions":[{"header":"Session","question":"How long should remember-me last?","options":[{"label":"30 days","description":"Common default"},{"label":"7 days","description":"Safer"}],"recommended":"30 days"}]}`;
 
 export const questionTools = [
@@ -133,7 +133,7 @@ Example: {"id":"ask-0001","answers":{"q1":"30 days"}}`,
     input: questionAnswerInputSchema,
     run: async (a, ctx) => {
       const ui = ctx.principal?.kind === 'ui';
-      if (!ui && ctx.settings) throw new ToolError('forbidden', 'questions are answered by the user in the Mandate web UI', 'tell the user the question is waiting in Mandate (Action needed)');
+      if (!ui && ctx.settings) throw new ToolError('forbidden', 'questions are answered by the user in the Mandate web UI', 'tell the user the question is waiting in Mandate (Questions, or Actions)');
       const commits: string[] = [];
       const by = ui ? { agent: UI_AGENT, ...(principalUser(ctx) ? { user: principalUser(ctx)! } : {}) } : actor(ctx);
       return done(await ctx.storage.questionService.answer(a.id, a.answers, by, { ...(a.notes ? { notes: a.notes } : {}), via: ui ? 'ui' : 'chat' }, meta(ctx, commits)), commits);

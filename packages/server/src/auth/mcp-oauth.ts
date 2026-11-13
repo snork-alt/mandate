@@ -290,7 +290,18 @@ export function registerMcpOAuth(app: FastifyInstance, d: McpOAuthDeps): void {
         return c.q.redirect_uri;
       }
     })();
-    reply.header('Cache-Control', 'no-store').header('X-Frame-Options', 'DENY').header('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'");
+    // form-action also governs the redirect after the POST (Chrome): allow the client's registered redirect target,
+    // or "Allow" silently does nothing (e.g. Claude Code's http://localhost:<port>/callback).
+    const redirectSource = (() => {
+      try {
+        const u = new URL(c.q.redirect_uri);
+        const src = u.protocol === 'http:' || u.protocol === 'https:' ? u.origin : u.protocol;
+        return /^[A-Za-z][A-Za-z0-9+.-]*:(\/\/[A-Za-z0-9.[\]:-]+)?$/.test(src) ? ` ${src}` : '';
+      } catch {
+        return '';
+      }
+    })();
+    reply.header('Cache-Control', 'no-store').header('X-Frame-Options', 'DENY').header('Content-Security-Policy', `default-src 'none'; style-src 'unsafe-inline'; form-action 'self'${redirectSource}; frame-ancestors 'none'`);
     return reply.type('text/html').send(
       page(
         'Connect a coding agent',

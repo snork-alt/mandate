@@ -1,5 +1,5 @@
 import type { WorkOrder, ResolvedWorkOrder, Section } from '@mandate/shared';
-import { buildCodeRef, buildCommitRef, buildRef, buildSymbolRef, mentionOf, refMention, type MandateRef } from '@mandate/shared/refs';
+import { buildCodeRef, buildCommitRef, buildQuestionRef, buildRef, buildSymbolRef, mentionOf, refMention, type MandateRef } from '@mandate/shared/refs';
 import { sectionHref } from './links';
 import { api } from '../api';
 import { feedbackMarkdown } from './feedback';
@@ -37,6 +37,11 @@ export function symbolTarget(name: string): CopyTarget {
 /** Commit hash reference. */
 export function commitTarget(sha: string): CopyTarget {
   return { label: 'commit', ref: M(buildCommitRef(sha)), extras: [{ label: 'Copy hash', value: () => sha }] };
+}
+
+/** A question a coding agent asked through Mandate. */
+export function questionTarget(id: string): CopyTarget {
+  return { label: 'question', ref: M(buildQuestionRef(id)), link: `${origin()}/questions/${id}` };
 }
 
 /** Any section / doc URI (link and standard chips). */

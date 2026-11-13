@@ -103,7 +103,8 @@ export const STEP_COLOR: Record<string, string> = {
 
 /* ---------------------------------------------------------------- tabs */
 
-export const OVERVIEW_TABS = ['action', 'progress', 'health'] as const;
+/** Overview tabs ("Action needed" became its own page, /actions). */
+export const OVERVIEW_TABS = ['progress', 'health'] as const;
 export type OverviewTab = (typeof OVERVIEW_TABS)[number];
 /** What a header chip focuses inside a tab (`?focus=`). */
 export type AttentionFocus = 'failing' | 'drifted' | 'blocked' | 'stale' | 'findings' | 'claims' | 'failed' | 'errors' | 'warnings';
@@ -126,27 +127,26 @@ export function saveTab(projectId: string, tab: OverviewTab): void {
   }
 }
 
-/** Items in "Action needed": decisions, blocked items, specs needing attention, specs with open must findings. */
+/** Items on the Actions page: decisions, blocked items, specs needing attention, specs with open must findings. */
 export function actionCount(o: Pick<ProjectOverview, 'blockedTotal' | 'attention' | 'mustFindingSpecs'>, decisionsTotal: number): number {
   return decisionsTotal + o.blockedTotal + o.attention.specs.length + o.mustFindingSpecs.length;
 }
 
-/** The tab to show: the URL, else the one remembered for this project, else "Action needed" when anything is pending, else "In progress". */
-export function pickTab(url: string | null, remembered: OverviewTab | null, pending: number | null): OverviewTab {
+/** The tab to show: the URL, else the one remembered for this project, else "In progress". */
+export function pickTab(url: string | null, remembered: OverviewTab | null): OverviewTab {
   if (isTab(url)) return url;
-  if (remembered) return remembered;
-  return pending === null || pending > 0 ? 'action' : 'progress';
+  return remembered ?? 'progress';
 }
 
-/** Header chip → tab and focus. */
-export const CHIP_TARGET: Record<string, { tab: OverviewTab; focus: AttentionFocus; card: string }> = {
-  failing: { tab: 'action', focus: 'failing', card: 'attention' },
-  drifted: { tab: 'action', focus: 'drifted', card: 'attention' },
-  blocked: { tab: 'action', focus: 'blocked', card: 'attention' },
-  stale: { tab: 'action', focus: 'stale', card: 'attention' },
-  findings: { tab: 'action', focus: 'findings', card: 'findings' },
-  claims: { tab: 'action', focus: 'claims', card: 'decisions' },
+/** Header chip → Overview tab (or the Actions page, `actions`) and focus. */
+export const CHIP_TARGET: Record<string, { tab: OverviewTab | 'actions'; focus: AttentionFocus; card: string }> = {
+  failing: { tab: 'actions', focus: 'failing', card: 'attention' },
+  drifted: { tab: 'actions', focus: 'drifted', card: 'attention' },
+  blocked: { tab: 'actions', focus: 'blocked', card: 'attention' },
+  stale: { tab: 'actions', focus: 'stale', card: 'attention' },
+  findings: { tab: 'actions', focus: 'findings', card: 'findings' },
+  claims: { tab: 'actions', focus: 'claims', card: 'decisions' },
   failed: { tab: 'progress', focus: 'failed', card: 'in-progress' },
-  'integrity-errors': { tab: 'action', focus: 'errors', card: 'decisions' },
+  'integrity-errors': { tab: 'actions', focus: 'errors', card: 'decisions' },
   'integrity-warnings': { tab: 'health', focus: 'warnings', card: 'warnings' },
 };

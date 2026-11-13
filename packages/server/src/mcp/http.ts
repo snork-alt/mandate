@@ -22,6 +22,7 @@ import { maskKey } from '../auth/keys.js';
 import type { ProjectRegistry, ProjectRuntime } from '../projects/registry.js';
 import { callTool, defineTool, describeTool, type SessionState, type ToolContext } from './define.js';
 import { registerUploadRoutes, UploadService } from './uploads.js';
+import { listDecisions } from '../storage/decisions.js';
 import { createMcpServer, MCP_VERSION } from './server.js';
 
 export type { ActivityEvent };
@@ -133,11 +134,13 @@ export function registerMcp(app: FastifyInstance, opts: McpRouteOptions): McpHub
     const transport: StreamableHTTPServerTransport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
       onsessioninitialized: (id) => {
+        state.id = id;
         sessions.set(id, session);
       },
     });
     const session: Session = { transport, server, state, project, principal, access, uiAccess: 'none' };
     transport.onclose = () => {
+      state.closed = true;
       if (transport.sessionId) sessions.delete(transport.sessionId);
     };
     await server.connect(transport);
@@ -260,18 +263,31 @@ export async function projectSummary(rt: ProjectRuntime | null, info: NonNullabl
   if (!rt) return { ...info, counts: null, lastActivity: null, error: 'unavailable' };
   const safe = async <T>(f: () => Promise<T>, d: T) => f().catch(() => d);
   const s = rt.storage;
-  const [specs, standards, components, workOrders, feedback, act] = await Promise.all([
+  const [specs, standards, components, wos, feedback, act, openActions] = await Promise.all([
     safe(() => s.specs.list().then((x) => x.length), 0),
     safe(() => s.standards.list().then((x) => x.length), 0),
     safe(() => s.components.list().then((x) => x.length), 0),
-    safe(() => s.workOrders.list().then((x) => x.length), 0),
+    safe(() => s.workOrders.list(), [] as { status: string }[]),
     safe(() => s.feedback.list().then((x) => x.length), 0),
     safe(() => rt.activity.list({ limit: 1, includeHeartbeats: false }), null),
+    // Items waiting for a human decision (the Actions page's "Decisions" card).
+    safe(() => listDecisions(s, { limit: 1 }).then((d) => d.total), 0),
   ]);
+  const workOrders = wos.length;
+  const activeWorkOrders = wos.filter((w) => w.status === 'in_progress').length;
   const last = (act as { events?: ActivityEvent[] } | null)?.events?.[0];
   return {
     ...info,
-    counts: { specs, standards, components, workOrders, feedback },
+    counts: { specs, standards, components, workOrders, feedback, activeWorkOrders },
+    openActions,
+    /** Short names of the linked code repositories (Settings → Code repositories). */
+    codeRepos: (() => {
+      try {
+        return (rt.ctx.settings?.codeRepos?.() ?? []).map((r) => r.name);
+      } catch {
+        return [];
+      }
+    })(),
     lastActivity: last ? { at: last.at, summary: last.summary, ...(last.agent ? { agent: last.agent } : {}) } : null,
   };
 }

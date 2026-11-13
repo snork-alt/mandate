@@ -63,6 +63,8 @@ export interface GitStore {
   resolveCommit(ref: string): Promise<string | null>;
   /** UTF-8 content of `path` at `commit`, or null if the file does not exist there. Throws for unknown commits. */
   readFileAt(commit: string, path: string): Promise<string | null>;
+  /** Raw bytes of `path` at `commit` (binary files such as images), or null if the file does not exist there. Throws for unknown commits. */
+  readBlobAt(commit: string, path: string): Promise<Buffer | null>;
   /** Current HEAD commit id, or null in an empty repository. */
   head(): Promise<string | null>;
   /** First-parent chain from HEAD, newest first, stopping before `stopAt` (exclusive) or at the root. */

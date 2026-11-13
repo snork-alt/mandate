@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-/** Settings → Agent flow (policy, my agents' switches, locks, all clients) and the sidebar badge summary. */
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+/** Settings → Agent flow (policy, my agents' read-only state, locks, all clients) and the sidebar badge summary. */
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { AgentFlowSection } from '../src/setup/AgentFlowSection';
 import { flowSummary, type FlowClient, type FlowProject, type FlowState } from '../src/setup/flowApi';
@@ -14,7 +14,7 @@ afterEach(() => {
 
 const client = (o: Partial<FlowClient>): FlowClient => ({
   id: 'ada/claude-code', label: 'Claude Code', client: 'claude-code', user: 'ada', version: '2.1', flow: null, approval: null, updatedAt: null, updatedVia: null,
-  lastSeenAt: new Date().toISOString(), effective: { flow: 'on', approval: 'on' }, locked: { flow: false, approval: false }, editable: true, ...o,
+  lastSeenAt: new Date().toISOString(), effective: { flow: 'on', approval: 'on' }, locked: { flow: false, approval: false }, ...o,
 });
 
 function serve(state: FlowState) {
@@ -32,43 +32,46 @@ function serve(state: FlowState) {
 const mount = () => render(<AgentFlowSection state={{} as never} register={() => undefined} variant="settings" />, { wrapper: Wrap });
 
 describe('Settings → Agent flow', () => {
-  it('my agents: switches write my client preference; the policy is admin-only', async () => {
-    const calls = serve({ mode: 'server', admin: false, user: 'ada', projects: [{ id: 'web', name: 'Web', policy: { flowPolicy: 'optional', approvalPolicy: 'optional' }, mine: [client({})] }] });
+  it('my agents: read-only state (changed only from the agent); the policy is admin-only', async () => {
+    const calls = serve({ mode: 'server', admin: false, user: 'ada', projects: [{ id: 'web', name: 'Web', policy: { flowPolicy: 'optional', approvalPolicy: 'optional' }, mine: [client({ effective: { flow: 'off', approval: 'on' } })] }] });
     mount();
-    const sw = await screen.findByLabelText('Flow for Claude Code');
-    fireEvent.click(sw);
-    await waitFor(() => expect(calls.find((c) => c.method === 'PUT')).toEqual({ method: 'PUT', url: '/ui/flow/web/clients/ada%2Fclaude-code', body: { flow: 'off' } }));
+    const st = await screen.findByLabelText('Flow for Claude Code: off');
+    expect(st.textContent).toBe('Off');
+    expect(screen.getByLabelText('Approval for Claude Code: on')).toBeTruthy();
+    expect(screen.queryByRole('switch')).toBeNull();
+    expect(document.querySelector('input[type="checkbox"]')).toBeNull();
+    fireEvent.click(st);
+    expect(screen.getByTestId('flow-mine-hint-web').textContent).toContain('/mandate-flow on|off');
+    expect(calls.some((c) => c.method === 'PUT')).toBe(false);
     expect(screen.getByText('Only Mandate admins change the policy.')).toBeTruthy();
     expect(screen.queryByTestId('flow-all-web')).toBeNull();
   });
 
-  it('locked by policy: disabled switch with "enforced by policy"; admins see all clients', async () => {
+  it('locked by policy: state with "enforced by policy"; admins see all clients', async () => {
     serve({
       mode: 'server', admin: true, user: 'ada',
-      projects: [{ id: 'web', name: 'Web', policy: { flowPolicy: 'required', approvalPolicy: 'optional' }, mine: [client({ locked: { flow: true, approval: false } })], all: [client({ editable: true }), client({ id: 'bob/codex', label: 'Codex', client: 'codex', user: 'bob', editable: false })] }],
+      projects: [{ id: 'web', name: 'Web', policy: { flowPolicy: 'required', approvalPolicy: 'optional' }, mine: [client({ locked: { flow: true, approval: false } })], all: [client({}), client({ id: 'bob/codex', label: 'Codex', client: 'codex', user: 'bob' })] }],
     });
     mount();
-    const sw = (await screen.findByLabelText('Flow for Claude Code')) as HTMLInputElement;
-    expect(sw.disabled).toBe(true);
+    expect((await screen.findByLabelText('Flow for Claude Code: on')).textContent).toBe('On');
     expect(screen.getByText(/enforced by policy/)).toBeTruthy();
     expect(screen.getByTestId('flow-all-web').textContent).toContain('bob');
   });
 });
 
 describe('Settings → Agent flow: questions', () => {
-  it('per client: via Mandate (default) | in chat, saved through the client preference', async () => {
-    const calls = serve({ mode: 'server', admin: false, user: 'ada', projects: [{ id: 'web', name: 'Web', policy: { flowPolicy: 'optional', approvalPolicy: 'optional' }, mine: [client({ questions: null, effective: { flow: 'on', approval: 'on', questions: 'mandate' } })] }] });
+  it('per client: via Mandate (default) | in chat, shown read-only', async () => {
+    serve({ mode: 'server', admin: false, user: 'ada', projects: [{ id: 'web', name: 'Web', policy: { flowPolicy: 'optional', approvalPolicy: 'optional' }, mine: [client({ questions: null, effective: { flow: 'on', approval: 'on', questions: 'mandate' } }), client({ id: 'ada/codex', label: 'Codex', client: 'codex', questions: 'chat', effective: { flow: 'on', approval: 'on', questions: 'chat' } })] }] });
     mount();
-    const ctl = await screen.findByTestId('flow-questions-ada/claude-code');
-    expect((ctl.querySelector('input[value="mandate"]') as HTMLInputElement).checked).toBe(true);
-    fireEvent.click(ctl.querySelector('input[value="chat"]')!);
-    await waitFor(() => expect(calls.find((c) => c.method === 'PUT')).toEqual({ method: 'PUT', url: '/ui/flow/web/clients/ada%2Fclaude-code', body: { questions: 'chat' } }));
+    expect((await screen.findByTestId('flow-questions-ada/claude-code')).textContent).toBe('Via Mandate');
+    expect(screen.getByTestId('flow-questions-ada/codex').textContent).toBe('In chat');
+    expect(screen.getByTestId('flow-questions-ada/codex').querySelector('input')).toBeNull();
   });
 
   it('older servers without the field: no questions column', async () => {
     serve({ mode: 'server', admin: false, user: 'ada', projects: [{ id: 'web', name: 'Web', policy: { flowPolicy: 'optional', approvalPolicy: 'optional' }, mine: [client({})] }] });
     mount();
-    await screen.findByLabelText('Flow for Claude Code');
+    await screen.findByLabelText('Flow for Claude Code: on');
     expect(screen.queryByTestId('flow-questions-ada/claude-code')).toBeNull();
     expect(screen.queryByText('Questions')).toBeNull();
   });

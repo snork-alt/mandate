@@ -416,13 +416,17 @@ export class CliGitStore implements GitStore {
   }
 
   async readFileAt(commit: string, file: string): Promise<string | null> {
+    return (await this.readBlobAt(commit, file))?.toString('utf8') ?? null;
+  }
+
+  async readBlobAt(commit: string, file: string): Promise<Buffer | null> {
     const id = await this.resolveCommit(commit);
     if (!id) throw new Error(`unknown commit '${commit}'`);
     const c = await this.commitObject(id);
     const entry = await this.entryAt(c.tree, file);
     if (!entry || isTree(entry.mode) || entry.mode === '160000') return null;
     const blob = await this.readObject(entry.oid);
-    return blob?.type === 'blob' ? blob.content.toString('utf8') : null;
+    return blob?.type === 'blob' ? Buffer.from(blob.content) : null;
   }
 
   async commitInfo(commit: string): Promise<FileCommit> {

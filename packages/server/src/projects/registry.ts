@@ -7,6 +7,7 @@ import { mandateHome, type AppConfig, type GitBackendConfig, type ProjectConfig,
 import { ConversationStore } from '../ask/agent.js';
 import type { AskModelOverride } from '../ask/model.js';
 import { ActivityBus } from '../events/index.js';
+import { DbNewsStore, MemoryNewsStore, NewsService } from '../news/index.js';
 import { createGitStore, SubdirGitStore, type GitStore } from '../git/index.js';
 import { SwappableGitStore } from '../git/SwappableGitStore.js';
 import { AutoPusher, type PushGate } from '../git/autopush.js';
@@ -351,6 +352,8 @@ export function projectOpener(app: Pick<AppConfig, 'embedding' | 'ask'> & { publ
       views: new DocViewService(storage),
       ask: app.ask,
       activity,
+      // Per-client news (server-state database), fed by this project's activity events.
+      news: new NewsService(p.id, o.serverState ? new DbNewsStore(o.serverState.db) : new MemoryNewsStore(), activity),
       conversations: new ConversationStore(),
       autoPush,
       ...(idempotency ? { idempotency } : {}),

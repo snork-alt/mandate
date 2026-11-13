@@ -129,6 +129,23 @@ describe('MCP tools on seeded data', () => {
     expect(none.body.error.code).toBe('confirmation_required');
   });
 
+  it('inferred drafts need no confirmation (bootstrap); a confirmed section, activation or a non-inferred create still do', async () => {
+    const rule = (title: string, provenance: 'inferred' | 'confirmed' = 'inferred') => ({ title, type: 'rule', level: 'must', rationale: 'Consistency.', body: `${title}.`, provenance, confidence: 0.9 });
+    const c = await fx.call('standard_create', { title: 'Inferred draft standard', sections: [rule('Keys are kebab case')], agent: 'tester' });
+    expect(c.isError, JSON.stringify(c.body)).toBe(false);
+    const ref = c.body.ref as string;
+    expect(c.body.document.status).toBe('draft');
+    const ins = await fx.call('standard_section_insert', { doc: ref, section: rule('Ids are slugs'), agent: 'tester' });
+    expect(ins.isError, JSON.stringify(ins.body)).toBe(false);
+    const upd = await fx.call('standard_section_update', { ref: ins.body.ref, summary: 'Still inferred.', agent: 'tester' });
+    expect(upd.isError, JSON.stringify(upd.body)).toBe(false);
+    expect((await fx.call('standard_section_insert', { doc: ref, section: rule('Confirmed rule', 'confirmed'), agent: 'tester' })).body.error.code).toBe('confirmation_required');
+    expect((await fx.call('standard_section_update', { ref: ins.body.ref, provenance: 'confirmed', agent: 'tester' })).body.error.code).toBe('confirmation_required');
+    expect((await fx.call('standard_status_set', { ref, status: 'active', agent: 'tester' })).body.error.code).toBe('confirmation_required');
+    expect((await fx.call('standard_create', { title: 'Unmarked standard', sections: [{ title: 'No provenance', type: 'rule', level: 'must', rationale: 'Consistency.', body: 'x.' }], agent: 'tester' })).body.error.code).toBe('confirmation_required');
+    expect((await fx.call('standard_create', { title: 'Empty standard', agent: 'tester' })).body.error.code).toBe('confirmation_required');
+  });
+
   it('records User-Confirmed: yes on standard writes with confirmedByUser (questions in chat)', async () => {
     expect((await fx.call('flow_set', { questions: 'chat', agent: 'tester' })).isError).toBe(false);
     const std = await fx.call('standard_get', { ref: 'mandate://standards/api-conventions' });

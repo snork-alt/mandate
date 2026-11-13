@@ -105,6 +105,8 @@ const sectionGet = (kind: 'specs' | 'standards') =>
       doc: docRefSchema([kind], { sections: false }).optional(),
       section: slug.optional(),
       at: commitRefSchema.optional(),
+      /** Image sections: also return the image itself as an MCP image block (PNG / JPEG / GIF / WebP up to 2 MB). */
+      includeImage: z.boolean().optional(),
     })
     .strict()
     .refine((v) => !!v.ref !== !!(v.doc && v.section), { message: 'give either ref, or doc and section' });

@@ -52,6 +52,7 @@ describe('section type registry', () => {
       ['markdown', undefined],
       ['mermaid', 'mermaid'],
       ['html', 'html'],
+      ['image', 'image'],
       ['acceptance', undefined],
       ['rule', undefined],
       ['audit-item', undefined],

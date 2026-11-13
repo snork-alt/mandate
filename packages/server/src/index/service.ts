@@ -70,6 +70,12 @@ export interface IndexServiceOptions {
   /** Minimum cosine similarity for `similar_to` edges. */
   similarThreshold?: number;
   /**
+   * `similar_to` recompute after an embedding batch: waits this quiet period (ms, default 3000) after the last drain,
+   * at most `similarMaxDelayMs` (default 30000) after the first one, so a busy backfill recomputes rarely.
+   */
+  similarDebounceMs?: number;
+  similarMaxDelayMs?: number;
+  /**
    * Postgres index (database.driver = postgres): the project's index scope. The SQLite build is published there after
    * every sync / embedding batch (db/pg-index/mirror.ts) and graph_query runs on it.
    */
@@ -118,6 +124,8 @@ export class IndexService {
   /** Highest embedding priority among the commits waiting for the debounced sync. */
   private scheduled: number | null = null;
   private closed = false;
+  /** Coalesced `similar_to` recompute: a pending debounce timer, the run in flight, and whether another run is owed. */
+  private similar: { timer?: NodeJS.Timeout; firstAt: number | null; running: Promise<void> | null; dirty: boolean } = { firstAt: null, running: null, dirty: false };
   private runner?: CypherExec & { close(): Promise<void> };
   /** Postgres mirror of this index (null: SQLite only). */
   readonly mirror: IndexMirror | null;
@@ -274,7 +282,49 @@ export class IndexService {
         this.setServing(this.currentServing());
       }
     }
-    this.recomputeSimilar();
+    this.scheduleSimilar();
+  }
+
+  /**
+   * Debounced, coalesced `similar_to` recompute: drains during a busy backfill only push the deadline (bounded by
+   * `similarMaxDelayMs`); at most one run is in flight and a drain during a run owes one trailing run.
+   */
+  private scheduleSimilar(): void {
+    if (this.closed) return;
+    const sim = this.similar;
+    sim.dirty = true;
+    if (sim.running) return; // the trailing run is scheduled when this one ends
+    const now = Date.now();
+    sim.firstAt ??= now;
+    const quiet = this.opts.similarDebounceMs ?? 3000;
+    const max = this.opts.similarMaxDelayMs ?? 30_000;
+    clearTimeout(sim.timer);
+    sim.timer = setTimeout(() => void this.startSimilar(), Math.max(0, Math.min(quiet, sim.firstAt + max - now)));
+    sim.timer.unref?.();
+  }
+
+  private startSimilar(): Promise<void> {
+    const sim = this.similar;
+    clearTimeout(sim.timer);
+    sim.timer = undefined;
+    if (sim.running) return sim.running;
+    if (!sim.dirty || this.closed) return Promise.resolve();
+    sim.dirty = false;
+    sim.firstAt = null;
+    sim.running = this.recomputeSimilar()
+      .catch((e) => this.opts.log?.warn(`similar_to: recompute failed: ${(e as Error).message}`))
+      .finally(() => {
+        sim.running = null;
+        if (sim.dirty && !this.closed) this.scheduleSimilar();
+      });
+    return sim.running;
+  }
+
+  /** Run any owed `similar_to` recompute now (idle(), tests) and wait for it, including a trailing run. */
+  private async flushSimilar(): Promise<void> {
+    while (!this.closed && (this.similar.running || this.similar.dirty)) {
+      await (this.similar.running ?? this.startSimilar());
+    }
   }
 
   /** Embedding status for index_status / the UI: which model answers queries and why. */
@@ -440,6 +490,7 @@ export class IndexService {
   async idle(): Promise<void> {
     await this.chain;
     await this.queue?.idle();
+    await this.flushSimilar();
     if (this.mirror && !this.closed) await this.publishMirror();
   }
 
@@ -447,20 +498,35 @@ export class IndexService {
     this.closed = true;
     void this.runner?.close();
     clearTimeout(this.timer);
+    clearTimeout(this.similar.timer);
     clearInterval(this.reloadTimer);
     this.queue?.stop();
     void this.mirror?.db.close();
     this.db.close();
   }
 
-  /** `similar_to` edges: each section's top 5 semantic neighbours above the threshold (recomputed when vectors change). */
-  recomputeSimilar(): void {
+  /**
+   * `similar_to` edges: each section's top 5 semantic neighbours above the threshold (recomputed when vectors change).
+   * Runs in slices of ~`sliceMs` with a macrotask yield between them so requests keep being served; a model switch or
+   * close mid-run abandons it (a new run is owed). The edge diff is written in one transaction at the end.
+   */
+  async recomputeSimilar(sliceMs = 15): Promise<void> {
     if (!this.provider || this.closed) return;
     const threshold = this.opts.similarThreshold ?? 0.8;
-    const seq = this.indexer.state().seq;
+    const vecTable = this.ctx.vecTable;
     const sections = (this.db.prepare('SELECT uri FROM sections').all() as { uri: string }[]).map((r) => r.uri);
     const want = new Map<string, { from: string; to: string; score: number }>();
+    let t0 = performance.now();
     for (const uri of sections) {
+      if (performance.now() - t0 > sliceMs) {
+        await new Promise<void>((r) => setImmediate(r));
+        if (this.closed || !this.provider) return;
+        if (this.ctx.vecTable !== vecTable) {
+          this.similar.dirty = true;
+          return;
+        }
+        t0 = performance.now();
+      }
       for (const n of s.nearest(this.ctx, uri, 5, ['section'])) {
         if (n.score < threshold) continue;
         const [a, b] = uri < n.uri ? [uri, n.uri] : [n.uri, uri];
@@ -468,6 +534,7 @@ export class IndexService {
       }
     }
     const db = this.db;
+    const seq = this.indexer.state().seq;
     db.transaction(() => {
       const open = db.prepare("SELECT id, from_uri, to_uri FROM edges WHERE source = 'similar' AND valid_to IS NULL").all() as { id: number; from_uri: string; to_uri: string }[];
       for (const e of open) {
@@ -481,6 +548,7 @@ export class IndexService {
       const ins = db.prepare("INSERT INTO edges (from_uri, to_uri, kind, props, score, source, valid_from) VALUES (?, ?, 'similar_to', ?, ?, 'similar', ?)");
       for (const w of want.values()) ins.run(w.from, w.to, json({ model: this.provider!.modelId }), w.score, seq);
     })();
+    this.mirror?.schedule();
   }
 
   /* ---------------------------------------------------------------- search */

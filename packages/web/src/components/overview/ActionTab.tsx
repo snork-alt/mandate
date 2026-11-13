@@ -1,4 +1,4 @@
-/** Overview tab "Action needed": decisions, blocked items, specs needing attention, open must findings. */
+/** The Actions page (was the Overview tab "Action needed"): decisions, blocked items, specs needing attention, open must findings. */
 import { Button, Skeleton, Tooltip } from "@mantine/core";
 import { copyText } from "../../lib/copy";
 import {
@@ -84,6 +84,15 @@ export function decisionActions(d: Decision): ItemAction[] {
       },
     ];
   }
+  if (d.kind === "approval_override")
+    return [
+      {
+        id: "confirm",
+        label: "Confirm override",
+        primary: true,
+        dialog: { type: "confirm_override", ref: d.ref, title: d.ref.split("/").pop() ?? d.ref },
+      },
+    ];
   if (d.kind === "waiver_pending" && d.feedback) {
     const fb = buildRef({ kind: "feedback", id: d.feedback });
     const title = `${d.feedback} (waiver of ${d.title})`;
@@ -413,7 +422,7 @@ export function AttentionSpecs({
       action={
         <>
           {filter && (
-            <Link to="?tab=action" className="ov-more" replace>
+            <Link to="/actions" className="ov-more" replace>
               Show all
             </Link>
           )}

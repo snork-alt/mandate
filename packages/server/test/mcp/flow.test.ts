@@ -1,7 +1,8 @@
 /**
  * Mandate flow: project policy (projects.json, migrated from the old `flow` fields) + per-client preferences
  * (server-state database, both backends) → effective setting; tools (project_info, flow_set, project_flow_set alias,
- * flow_policy_set, flow_clients_list) and the UI endpoints (own clients only in server mode, Origin-checked).
+ * flow_policy_set, flow_clients_list), the server-enforced flow_off refusal, and the UI endpoints (own clients only,
+ * read-only; policy for admins, Origin-checked).
  */
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
@@ -136,6 +137,53 @@ describe('MCP tools (seeded project)', () => {
     expect(list.body.clients.find((c: { you: boolean }) => c.you)).toMatchObject({ flow: 'on', approval: 'off', effective: { flow: 'on', approval: 'off' } });
   });
 
+  it('flow_set and project_info return the instructions to follow and save to memory', async () => {
+    const off = await fx.call('flow_set', { flow: 'off' });
+    expect(off.body.instructions).toMatch(/OFF for this coding agent/);
+    expect(off.body.instructions).toMatch(/work directly in the code/);
+    expect(off.body.instructions).toMatch(/to your memory now, replacing any earlier Mandate-flow note/);
+    expect((await fx.call('project_info', {})).body.instructions).toMatch(/OFF/);
+    const on = await fx.call('flow_set', { flow: 'on', approval: 'on' });
+    expect(on.body.instructions).toMatch(/ON for this coding agent/);
+    expect(on.body.instructions).toMatch(/project_info at the start of each task/);
+    expect(on.body.instructions).toMatch(/approval checkpoint ON/);
+    expect(on.body.instructions).toMatch(/memory/);
+    expect((await fx.call('flow_set', { approval: 'off' })).body.instructions).toMatch(/approval checkpoint OFF/);
+    await fx.call('flow_set', { approval: 'on' });
+  });
+
+  it('flow off: every write tool is refused with flow_off; reads and flow_set still work', async () => {
+    await fx.call('flow_set', { flow: 'off' });
+    const fb = await fx.call('feedback_create', { kind: 'improvement', body: 'Refused while the flow is off.', agent: 't' });
+    expect(fb.isError).toBe(true);
+    expect(fb.body.error.code).toBe('flow_off');
+    expect(fb.body.error.message).toMatch(/Mandate flow is off for this agent .*Mandate does not accept requests from it\. Save this in your memory: do not use Mandate write tools; Mandate is read-only context until the user runs \/mandate-flow on/);
+    // Refused before input validation: the agent learns the flow is off, not a schema detail.
+    expect((await fx.call('work_order_claim', { ref: 'mandate://work-orders/nope', agent: 't' })).body.error.code).toBe('flow_off');
+    expect((await fx.call('question_ask', {})).body.error.code).toBe('flow_off');
+    for (const [n, a] of [['spec_get', { ref: 'mandate://specs/login-sso' }], ['spec_list', {}], ['project_info', {}], ['flow_clients_list', {}], ['git_status', {}]] as const) {
+      const r = await fx.call(n, a);
+      expect(r.isError, `${n} ${JSON.stringify(r.body)}`).toBe(false);
+    }
+    // Policy required wins over the client's off: writes accepted.
+    await settings.setPolicy({ flowPolicy: 'required' });
+    const ok = await fx.call('feedback_create', { kind: 'improvement', body: 'Accepted while the policy requires the flow.', agent: 't' });
+    expect(ok.isError, JSON.stringify(ok.body)).toBe(false);
+    // Policy off refuses even a client with the flow on; the message points to the admin.
+    await settings.setPolicy({ flowPolicy: 'optional' });
+    await fx.call('flow_set', { flow: 'on' });
+    expect((await fx.call('feedback_create', { kind: 'improvement', body: 'Accepted with the flow on.', agent: 't' })).isError).toBe(false);
+    await settings.setPolicy({ flowPolicy: 'off' });
+    const pol = await fx.call('feedback_create', { kind: 'improvement', body: 'Refused by the policy.', agent: 't' });
+    expect(pol.body.error).toMatchObject({ code: 'flow_off', message: expect.stringMatching(/project policy/) });
+    expect((await fx.call('project_info', {})).body.instructions).toMatch(/Only a Mandate admin can change this/);
+    // The web UI session is not affected by the flow switch (its own read-only rule applies).
+    const ui = { ...({ storage: fx.storage, settings } as unknown as ToolContext), principal: { kind: 'ui' as const, user: { login: 'ada', avatarUrl: '' } } };
+    const r = await callTool(tool('feedback_create'), { kind: 'improvement', body: 'From the UI.' }, ui as ToolContext);
+    expect((r.structuredContent as { error: { code: string } }).error.code).toBe('forbidden');
+    await settings.setPolicy({ flowPolicy: 'optional' });
+  });
+
   it('flow_policy_set: agents are refused; the UI admin may', async () => {
     const r = await fx.call('flow_policy_set', { flowPolicy: 'required' });
     expect(r.body.error).toMatchObject({ code: 'forbidden', message: expect.stringMatching(/agents cannot call it/) });
@@ -182,20 +230,20 @@ describe('UI endpoints', () => {
     return { app, req, clients, projects };
   }
 
-  it('team: my clients only; others are read-only for admins; Origin and policy enforced', async () => {
+  it('team: my clients only, read-only (the switch is changed only from the agent); admins set the policy', async () => {
     const s = await server('team');
     const ada = (await s.req('GET', '/ui/flow', 'ada')).json();
-    expect(ada).toMatchObject({ user: 'ada', admin: false, projects: [{ id: 'web', policy: P('optional'), mine: [{ id: 'ada/claude-code', editable: true }] }] });
+    expect(ada).toMatchObject({ user: 'ada', admin: false, projects: [{ id: 'web', policy: P('optional'), mine: [{ id: 'ada/claude-code', effective: { flow: 'on' }, locked: { flow: false } }] }] });
+    expect(ada.projects[0].mine[0].editable).toBeUndefined();
     expect(ada.projects[0].all).toBeUndefined();
-    expect((await s.req('PUT', '/ui/flow/web/clients/bob%2Fcodex', 'ada', { flow: 'off' })).statusCode).toBe(403);
-    expect((await s.req('PUT', '/ui/flow/web/clients/ada%2Fclaude-code', 'ada', { flow: 'off' }, 'https://evil.example')).statusCode).toBe(403);
-    const ok = await s.req('PUT', '/ui/flow/web/clients/ada%2Fclaude-code', 'ada', { flow: 'off' });
-    expect(ok.json().client).toMatchObject({ flow: 'off', updatedVia: 'ui', effective: { flow: 'off' } });
+    // The per-client preference route is gone.
+    expect((await s.req('PUT', '/ui/flow/web/clients/ada%2Fclaude-code', 'ada', { flow: 'off' })).statusCode).toBe(404);
+    expect((await s.clients.get('web', 'ada/claude-code'))?.flow).toBeNull();
     expect((await s.req('PUT', '/ui/flow/web/policy', 'ada', { flowPolicy: 'required' })).statusCode).toBe(403);
+    expect((await s.req('PUT', '/ui/flow/web/policy', 'admin', { flowPolicy: 'required' }, 'https://evil.example')).statusCode).toBe(403);
     expect((await s.req('PUT', '/ui/flow/web/policy', 'admin', { flowPolicy: 'required' })).json().policy).toEqual(P('required'));
-    expect((await s.req('PUT', '/ui/flow/web/clients/ada%2Fclaude-code', 'ada', { flow: 'off' })).json().error.code).toBe('policy_required');
     const admin = (await s.req('GET', '/ui/flow?project=web', 'admin')).json();
-    expect(admin.projects[0].all.map((c: { id: string; editable: boolean; locked: { flow: boolean } }) => [c.id, c.editable, c.locked.flow]).sort()).toEqual([['ada/claude-code', false, true], ['bob/codex', false, true]]);
+    expect(admin.projects[0].all.map((c: { id: string; locked: { flow: boolean } }) => [c.id, c.locked.flow]).sort()).toEqual([['ada/claude-code', true], ['bob/codex', true]]);
   });
 
 });

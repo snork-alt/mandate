@@ -54,6 +54,7 @@ export function useSpecFilters() {
       { replace: true },
     );
   const activeCount = LIST_KEYS.reduce((n, k) => n + (filters[k].length ? 1 : 0), 0);
-  const clear = () => update(Object.fromEntries(LIST_KEYS.map((k) => [k, []])));
+  /** Clears the list filters (and the search text with `{ q: true }`) in one URL update: consecutive `update` calls each start from the same render's params and overwrite each other. */
+  const clear = (opts?: { q?: boolean }) => update(Object.fromEntries([...LIST_KEYS.map((k) => [k, []]), ...(opts?.q ? [['q', '']] : [])]));
   return { filters, update, activeCount, clear };
 }

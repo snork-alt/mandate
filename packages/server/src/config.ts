@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
+import { codeRepoSchema } from '@mandate/shared';
 import { refreshSecrets } from './secrets.js';
 import { AppInstallationTokens, githubRepoOf } from './auth/app-tokens.js';
 import { DEFAULT_DATABASE_CONFIG, databaseConfigSchema, resolveDatabase, type ResolvedDatabase } from './db/config.js';
@@ -583,6 +584,8 @@ export const projectEntrySchema = z
       })
       .strict()
       .optional(),
+    /** Code repositories (read-only for Mandate), by stable short name: code refs use the name (Settings → Code repositories). */
+    codeRepos: z.array(codeRepoSchema).max(50).optional(),
     /** GitHub login whose stored token pulls / pushes (GitHub projects). */
     connectedBy: z.string().regex(/^[A-Za-z0-9-]{1,39}$/).optional(),
     createdAt: z.string().min(1),

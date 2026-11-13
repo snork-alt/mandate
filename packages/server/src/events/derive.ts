@@ -206,11 +206,13 @@ function workOrderEvents(before: Map<string, Record<string, any>>, after: Map<st
       specific = true;
     }
     if (a.status !== b.status) {
+      // A review / verify work order finished: its outcome (verdict filled in by `reviewVerdicts`) for the implementer.
+      const review = REVIEW_KINDS.has(a.kind) && (a.status === 'done' || a.status === 'failed') ? { workOrder: id, kind: a.kind, failed: a.status === 'failed', note: oneLine(a.status === 'failed' ? String(a.note ?? '').replace(/^\s*failed:\s*/i, '') : a.outcome) } : null;
       out.push({
         type: a.status === 'done' ? 'work_order.completed' : 'work_order.status_changed',
         refs,
         summary: a.status === 'done' ? `${claimer} completed ${label(a)}` : `${who} moved ${label(a)} from ${b.status} to ${a.status}`,
-        details: { kind: a.kind, progress: progress(a), status: { from: b.status, to: a.status } },
+        details: { kind: a.kind, progress: progress(a), status: { from: b.status, to: a.status }, ...(review ? { review } : {}) },
       });
       specific = true;
     }
@@ -219,7 +221,7 @@ function workOrderEvents(before: Map<string, Record<string, any>>, after: Map<st
       specific = true;
     }
     // Document fields with their own events (plan, touched, git) or derived ones (claims, completedAt, hasPlan).
-    const own = ['claim', 'sections', 'status', 'claims', 'completedAt', 'hasPlan', 'touched', 'git', 'plan'];
+    const own = ['claim', 'sections', 'status', 'claims', 'completedAt', 'hasPlan', 'touched', 'git', 'plan', 'outcome'];
     if (a.plan !== b.plan) {
       out.push({ type: 'work_order.plan_set', refs, summary: `${who} ${b.plan ? 'updated' : 'wrote'} the plan of ${label(a)}`, details: { kind: a.kind, progress: progress(a), ...(a.plan ? { preview: [{ op: 'insert' as const, text: String(a.plan).slice(0, 200) }] } : {}) } });
       specific = true;
@@ -245,6 +247,28 @@ function workOrderEvents(before: Map<string, Record<string, any>>, after: Map<st
   return out;
 }
 
+const REVIEW_KINDS = new Set(['review', 'verify']);
+const oneLine = (t: unknown) => (typeof t === 'string' ? t.replace(/\s+/g, ' ').trim().slice(0, 300) : '') || undefined;
+const CHANGES_RE = /\b(changes? requested|request(?:ed|ing)? changes|needs? (?:changes|rework)|must[- ]fix|not approved|rejected)\b/i;
+const FINDINGS_RE = /\b(findings?|issues? found|nits?)\b/i;
+
+/**
+ * Verdicts of finished review / verify work orders (events carrying `details.review`): failed, a blocking comment or
+ * "changes requested" in the outcome -> changes_requested; other comments or "findings" -> findings; else approved.
+ */
+function reviewVerdicts(drafts: Draft[], comments: Map<string, Record<string, any>>) {
+  for (const d of drafts) {
+    const r = d.details?.review as { workOrder: string; kind: string; failed: boolean; note?: string } | undefined;
+    if (!r || 'verdict' in r) continue;
+    const base = `mandate://work-orders/${r.workOrder}`;
+    const roots = [...comments.values()].filter((c) => c.type !== 'resolve' && c.type !== 'reopen' && !c.parent && typeof c.target === 'string' && (c.target === base || c.target.startsWith(`${base}/`)));
+    const blocking = roots.filter((c) => c.blocking).length;
+    const verdict = r.failed || blocking || (r.note && CHANGES_RE.test(r.note)) ? 'changes_requested' : roots.length || (r.note && FINDINGS_RE.test(r.note)) ? 'findings' : 'approved';
+    const { failed: _f, ...rest } = r;
+    d.details = { ...d.details, review: { ...rest, verdict, ...(roots.length ? { comments: roots.length } : {}), ...(blocking ? { blocking } : {}) } };
+  }
+}
+
 /** A work-order document as the flat record the work-order events compare (plus its plan text). */
 function woFlat(id: string, text: string | null): Record<string, any> | null {
   if (!text) return null;
@@ -252,7 +276,7 @@ function woFlat(id: string, text: string | null): Record<string, any> | null {
     const d = workOrderCodec.decode(text, id);
     const { hasPlan: _h, ...flat } = projectWorkOrder(d);
     // The claim's startedAt is its heartbeat in git (heartbeats are runtime state).
-    return { ...flat, ...(flat.claim ? { claim: { ...flat.claim, heartbeatAt: undefined } } : {}), plan: d.sections.find((s) => s.id === 'plan')?.body ?? '' };
+    return { ...flat, ...(flat.claim ? { claim: { ...flat.claim, heartbeatAt: undefined } } : {}), plan: d.sections.find((s) => s.id === 'plan')?.body ?? '', outcome: d.sections.find((s) => s.id === 'outcome')?.body ?? '' };
   } catch {
     return null;
   }
@@ -323,8 +347,20 @@ function feedbackEvents(before: Map<string, Record<string, any>>, after: Map<str
       out.push({ type: 'feedback.created', refs: refsOf(a), summary: `${who} raised ${a.kind ?? 'feedback'} ${id}`, details: { kind: a.kind, status: { from: null, to: a.status ?? 'open' } } });
       continue;
     }
-    const keys = changedKeys(b, a);
+    let keys = changedKeys(b, a);
     if (!keys.length) continue;
+    // A second person confirmed the item's self-approval override (approval_override_confirm): its own event.
+    if (keys.includes('approvalOverride') && a.approvalOverride?.confirmedAt && !b.approvalOverride?.confirmedAt) {
+      const o = a.approvalOverride;
+      out.push({
+        type: 'approval.override_confirmed',
+        refs: refsOf(a),
+        summary: `${o.confirmedBy ?? who} confirmed the self-approval override of ${id}${o.confirmNote ? `: ${String(o.confirmNote).slice(0, 160)}` : ''}`,
+        details: { kind: a.kind, by: o.confirmedBy ?? who, overriddenBy: o.by, ...(o.confirmNote ? { reason: o.confirmNote } : {}) },
+      });
+      keys = keys.filter((k) => k !== 'approvalOverride');
+      if (!keys.length) continue;
+    }
     if (a.status === 'closed' && b.status !== 'closed') {
       out.push({ type: 'feedback.closed', refs: refsOf(a), summary: `${who} closed ${id} (${a.resolution ?? 'closed'})`, details: { kind: a.kind, resolution: a.resolution, status: { from: b.status, to: 'closed' } } });
     } else {
@@ -407,6 +443,7 @@ export async function deriveCommitEvents(git: GitStore, sha: string): Promise<Ac
     const a = await read(now, sha, [file]);
     drafts.push(...(file === 'feedback.jsonl' ? feedbackEvents(b, a, who) : file === 'comments.jsonl' ? commentEvents(b, a, who) : file === 'questions.jsonl' ? questionEvents(b, a, who) : verificationEvents(b, a, who)));
   }
+  if (drafts.some((d) => d.details?.review)) reviewVerdicts(drafts, await read(now, sha, ['comments.jsonl']));
   // An approval override (feedback_accept override: true): recorded prominently as its own event.
   const override = trailer(trailers, 'Approval-Override');
   if (override) {

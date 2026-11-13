@@ -129,9 +129,9 @@ export function checkIntegrity(
       }
     }
   }
-  // Approval overrides (self-approval by the sole active user / an admin) stay visible.
+  // Approval overrides (self-approval by the sole active user / an admin) stay visible until a second person confirms them.
   for (const f of m.feedback ?? []) {
-    if (f.approvalOverride) out.push(issue('self_approved_override', `mandate://feedback/${f.id}`, `${f.id} was accepted with an approval override by ${f.approvalOverride.by}: ${f.approvalOverride.reason}`));
+    if (f.approvalOverride && !f.approvalOverride.confirmedAt) out.push(issue('self_approved_override', `mandate://feedback/${f.id}`, `${f.id} was accepted with an approval override by ${f.approvalOverride.by}: ${f.approvalOverride.reason}`));
   }
   for (const [key, orders] of openChangingOrders(m.workOrders ?? [])) {
     if (orders.length > 1) out.push(issue('duplicate_open_work_order', `mandate://specs/${key.split('/')[0]}/sections/${key.split('/')[1]}`, `${orders.length} open implement/update work orders: ${orders.map((o) => o.id).join(', ')}`));
@@ -394,6 +394,15 @@ export class IntegrityService {
     }
     this.setReport(report);
     return report;
+  }
+
+  /**
+   * A global issue the feedback write that just committed resolved (feedback writes do not re-run the rules: hook(null)),
+   * e.g. a confirmed approval override: dropped from the cached report at once (a full run agrees).
+   */
+  resolveIssue(rule: string, uri: string): void {
+    if (!this.report || !this.report.issues.some((i) => i.rule === rule && i.uri === uri)) return;
+    this.setReport({ ...this.report, at: new Date().toISOString(), issues: this.report.issues.filter((i) => !(i.rule === rule && i.uri === uri)) });
   }
 
   /** The last report, re-run when HEAD moved. */

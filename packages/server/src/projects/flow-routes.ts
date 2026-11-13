@@ -3,14 +3,15 @@
  * writes, allowed hosts only):
  * - GET  /ui/flow[?project=<id>]                       policy, my clients, and (team admins) every client
  * - PUT  /ui/flow/:project/policy                      { flowPolicy?, approvalPolicy? }   admins only
- * - PUT  /ui/flow/:project/clients/:clientId           { flow?, approval? }  my own clients only
+ * Client preferences (flow, approval, questions) are read-only here: only the agent changes them (flow_set,
+ * /mandate-flow), so the user's switch and the agent's memory never disagree.
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { authenticate, originOk, type AuthOptions } from '../auth/http.js';
 import type { ProjectConfig } from '../config.js';
 import type { ProjectRegistry } from './registry.js';
-import { APPROVAL_POLICIES, QUESTIONS_VIA, effective, FLOW_POLICIES, flowChangedEvent, refusal, type ClientRecord, type Policy, type ProjectSettings } from './settings.js';
+import { APPROVAL_POLICIES, effective, FLOW_POLICIES, flowChangedEvent, type ClientRecord, type Policy, type ProjectSettings } from './settings.js';
 
 export interface FlowRouteDeps {
   auth: AuthOptions;
@@ -32,14 +33,13 @@ class HttpError extends Error {
   }
 }
 
-const row = (policy: Policy, r: ClientRecord, editable: boolean) => {
+const row = (policy: Policy, r: ClientRecord) => {
   const eff = effective(policy, r);
   return {
     ...r,
     effective: { flow: eff.flow, approval: eff.approval, questions: eff.questions },
-    // Locked = enforced by the project policy (the UI also disables approval while this client's flow is off).
+    // Locked = enforced by the project policy (the client preference has no effect).
     locked: { flow: policy.flowPolicy !== 'optional', approval: policy.approvalPolicy === 'required' },
-    editable,
   };
 };
 
@@ -97,8 +97,8 @@ export function registerFlowRoutes(app: FastifyInstance, d: FlowRouteDeps): void
         }
         const s = d.settings(id);
         const policy = s.policy();
-        const my = (await mine(s, who.login)).map((r) => row(policy, r, true));
-        const all = who.admin ? (await s.clients.list(id)).map((r) => row(policy, r, r.user?.toLowerCase() === who.login.toLowerCase())) : undefined;
+        const my = (await mine(s, who.login)).map((r) => row(policy, r));
+        const all = who.admin ? (await s.clients.list(id)).map((r) => row(policy, r)) : undefined;
         projects.push({ id, name: p.name, policy, mine: my, ...(all ? { all } : {}) });
       }
       return { admin: who.admin, user: who.login, projects };
@@ -118,27 +118,6 @@ export function registerFlowRoutes(app: FastifyInstance, d: FlowRouteDeps): void
       const policy = await s.setPolicy(b);
       await emit(project, (['flowPolicy', 'approvalPolicy'] as const).filter((k) => before[k] !== policy[k]).map((k) => `${k === 'flowPolicy' ? 'flow policy' : 'approval policy'} ${policy[k]}`), who.login);
       return { policy };
-    }),
-  );
-
-  app.put(
-    '/ui/flow/:project/clients/:clientId',
-    handle(async (req, who) => {
-      const { project, clientId } = req.params as { project: string; clientId: string };
-      await visible(who.login, project);
-      const b = z.object({ flow: z.enum(['on', 'off']).optional(), approval: z.enum(['on', 'off']).optional(), questions: z.enum(QUESTIONS_VIA).optional() }).strict().parse(req.body);
-      if (!b.flow && !b.approval && !b.questions) throw new HttpError(400, 'invalid_input', 'pass flow, approval and/or questions');
-      const s = d.settings(project);
-      const cur = await s.clients.get(project, clientId);
-      if (!cur) throw new HttpError(404, 'not_found', `no client '${clientId}' on '${project}'`);
-      // Team: only your own clients (an admin sees every client, read-only).
-      if (cur.user?.toLowerCase() !== who.login.toLowerCase()) throw new HttpError(403, 'forbidden', "you can only change your own agents' flow");
-      const policy = s.policy();
-      const no = refusal(policy, b);
-      if (no) throw new HttpError(409, no.code, no.message);
-      const rec = await s.clients.set(project, cur, b, 'ui');
-      await emit(project, (['flow', 'approval', 'questions'] as const).filter((k) => b[k] && (cur[k] ?? (k === 'questions' ? 'mandate' : 'on')) !== b[k]).map((k) => `${k} ${k === 'questions' ? `via ${b[k]}` : b[k]} for ${cur.label}`), who.login);
-      return { client: row(policy, rec, true) };
     }),
   );
 }

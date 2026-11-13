@@ -5,7 +5,7 @@
  */
 import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
 import { ActionIcon, Button, Group, Menu, Modal, SegmentedControl, Select, Text, Textarea, Tooltip } from '@mantine/core';
-import { IconCheck, IconCopy, IconDots, IconMoonStars, IconPlayerStop, IconX, IconCopyCheck } from '@tabler/icons-react';
+import { IconCheck, IconCopy, IconDots, IconMoonStars, IconPlayerStop, IconX, IconCopyCheck, IconUserCheck } from '@tabler/icons-react';
 import { copyText } from '../../lib/copy';
 import { useDecide, useDecisionAccess, type DecisionAccess } from '../../lib/decisions';
 import { useFeedback } from '../../lib/queries';
@@ -18,7 +18,8 @@ export type DialogRequest =
   | { type: 'reject'; ref: string; title: string }
   | { type: 'duplicate'; ref: string; title: string }
   | { type: 'release'; ref: string; title: string; agent?: string; heartbeat?: string }
-  | { type: 'snooze'; rule: string; uri: string; title: string };
+  | { type: 'snooze'; rule: string; uri: string; title: string }
+  | { type: 'confirm_override'; ref: string; title: string };
 
 interface DialogApi {
   open: (r: DialogRequest) => void;
@@ -97,6 +98,18 @@ function DialogBody({ req, onClose, access }: { req: DialogRequest; onClose: () 
       </>
     );
   }
+  if (req.type === 'confirm_override') {
+    return (
+      <>
+        <Text size="sm">
+          Confirm the self-approved acceptance of <strong>{req.title}</strong>: you are a second person and reviewed it. It leaves the integrity warnings, and the coding agent that self-approved it is told. The person who made the override cannot confirm it.
+        </Text>
+        <Textarea label="Review note" required mt="xs" autosize minRows={2} maxLength={500} value={note} onChange={(e) => setNote(e.currentTarget.value)} data-autofocus data-testid="confirm-override-note" />
+        {meta}
+        {footer('Confirm override', !note.trim() || busy, () => decide.mutate({ tool: 'approval_override_confirm', args: { ref: req.ref, note: note.trim().replace(/\s+/g, ' ') } }))}
+      </>
+    );
+  }
   if (req.type === 'release') {
     return (
       <>
@@ -130,6 +143,7 @@ const TITLE: Record<DialogRequest['type'], string> = {
   duplicate: 'Mark as duplicate',
   release: 'Release stale claim',
   snooze: 'Snooze integrity warning',
+  confirm_override: 'Confirm approval override',
 };
 
 /** Hosts the confirmation dialogs for everything below it. */
@@ -165,6 +179,7 @@ const ICON: Record<DialogRequest['type'], ReactNode> = {
   duplicate: <IconCopyCheck size={14} />,
   release: <IconPlayerStop size={14} />,
   snooze: <IconMoonStars size={14} />,
+  confirm_override: <IconUserCheck size={14} />,
 };
 
 /** Why direct actions are unavailable (no write access to the repository), or null. */

@@ -242,6 +242,8 @@ describe('MCP OAuth', () => {
 
   async function approve(login: string) {
     const { r, cookie } = await authorize(login);
+    // The redirect after "Allow" must be permitted by form-action, or the browser silently stays on the page.
+    expect(String(r.headers['content-security-policy'])).toContain(`form-action 'self' ${new URL(redirect).origin};`);
     const tx = /name="tx" value="([^"]+)"/.exec(r.payload)![1]!.replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)));
     const d = await app.inject({ method: 'POST', url: '/oauth/authorize', headers: { host: new URL(base).host, origin: base, cookie: cookie!, 'content-type': 'application/x-www-form-urlencoded' }, payload: new URLSearchParams({ tx, decision: 'allow' }).toString() });
     return new URL(d.headers.location as string);

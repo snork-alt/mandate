@@ -438,6 +438,7 @@ export function gateSummary(tool: string): string {
 
 /** Recommended action per structured error code (the `hint` when the error carries none). */
 export const ERROR_ACTIONS: Record<string, string> = {
+  flow_off: 'the Mandate flow is off for this coding agent: stop calling Mandate write tools, work directly in the code and use Mandate as read-only context; save this to your memory. Only the user turns it back on (/mandate-flow on)',
   transition_not_allowed: 'not allowed from the current status: lifecycle_get { kind } lists the allowed moves; go through the intermediate status (e.g. reopen done -> ready)',
   done_gate: 'never force it (no override passes it): verify (verification_record) each detail.failures criterion or ask the user whether to waive it, unblock sections, complete open implement/update work orders, then retry',
   plan_required: 'write the plan (work_order_plan_set), then claim',
@@ -501,6 +502,16 @@ export const ERROR_ACTIONS: Record<string, string> = {
   unknown_tool: 'call tools/list for the available tools',
   not_configured: 'Ask has no model configured: ask_status shows what is missing; tell the user',
   code_repo_unavailable: 'the server cannot read that code repo: pass touched files yourself (work_order_touch)',
+  alt_required: 'image sections need alt text: pass alt (what the image shows, for agents, search and Ask)',
+  type_mismatch: 'the uploaded bytes are not the declared image type: send the right Content-Type (or none) and a PNG, JPEG, GIF, WebP or SVG file',
+  image_upload_required: 'image files are uploaded with curl (project_info.upload.image / upload_url_create), not set in section bodies: only alt and caption can be edited',
+  no_override: 'this feedback item has no approval override to confirm: check decisions_list for open overrides',
+  already_confirmed: 'the override is already confirmed: nothing to do',
+  unknown_code_repo: 'use a registered code repository short name: project_info.codeRepos lists them (match your git remote); an admin adds repos in project settings',
+  code_commit_required: 'pass the code repository and commit (code { repo, commit, dirty? }): run git rev-parse HEAD; uncommitted changes: dirty: true',
+  invalid_code_repos: 'fix the code repository list: short names are lowercase letters, digits and dashes, unique, and not the specs repository',
+  not_available: 'this tool works only for coding agents on a project endpoint (agent key or personal token), not from the web UI or in-process callers',
+  wait_in_progress: 'another news_list wait is already running for this session: wait for it to return, then call again',
   internal: 'unexpected server error: retry once, then report it with the input',
 };
 

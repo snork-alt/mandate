@@ -10,6 +10,7 @@ import { SectionMeta } from '../SectionMeta';
 import { SectionTypeIcon } from '../SectionTypeIcon';
 import { getSectionRenderer } from '../types';
 import { TrackedMarkdown } from './TrackedMarkdown';
+import { ImageThumb } from '../types/ImageBody';
 import type { CopyTarget } from '../../../lib/refs';
 import { CopyRef, copyTargetProps, SectionTargetContext } from '../../copy';
 
@@ -28,6 +29,27 @@ function ChangedRendering({ diff }: { diff: SectionDiff }) {
   const [showSource, setShowSource] = useState(false);
   const shown = showOld ? diff.before! : diff.after!;
   const renderer = getSectionRenderer(shown.type);
+  // Images: before / after side by side (each pinned to its own content hash), metadata diff on demand.
+  if (diff.before?.type === 'image' && diff.after?.type === 'image') {
+    return (
+      <div className="tc-block tc-mod tc-mark">
+        <div className="tc-render-bar">
+          <span className="inline-icon">
+            <IconHistory size={13} />
+            Image changed
+          </span>
+          <UnstyledButton className="tc-toggle" onClick={() => setShowSource((s) => !s)}>
+            <IconChevronRight size={11} style={{ transform: showSource ? 'rotate(90deg)' : undefined }} /> Metadata diff
+          </UnstyledButton>
+        </div>
+        <div className="image-change">
+          <ImageThumb section={diff.before} label="Before" />
+          <ImageThumb section={diff.after} label="After" />
+        </div>
+        {showSource && diff.body && <InlineDiff ops={diff.body.ops} mono />}
+      </div>
+    );
+  }
   return (
     <div className="tc-block tc-mod tc-mark">
       <div className="tc-render-bar">

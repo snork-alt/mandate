@@ -20,6 +20,7 @@ import {
   WORK_ORDER_STATUSES,
 } from '@mandate/shared';
 import { defineTool } from '../define.js';
+import { sectionGetWithImage, withImageMeta } from '../images.js';
 
 const REF_NOTE = '';
 
@@ -42,16 +43,19 @@ Example: {"status":["ready"],"blocked":true}`,
 metadataOnly: outline only; sections: only these ids; at: a commit. ${REF_NOTE}
 Example: {"ref":"login-sso","metadataOnly":true}`,
     input: specGetInputSchema,
-    run: (a, ctx) => ctx.reads.specGet(a),
+    run: async (a, ctx) => {
+      const r = await ctx.reads.specGet(a);
+      return withImageMeta(r, ctx, 'specs', (r as { id: string }).id);
+    },
   }),
   defineTool({
     name: 'spec_section_get',
     title: 'Get a spec section',
     kind: 'read',
-    description: `Get one spec section (body, type, summary, metadata, lines); #Lx-Ly in the ref also returns that excerpt. ${REF_NOTE}
+    description: `Get one spec section (body, type, summary, metadata, lines); #Lx-Ly in the ref also returns that excerpt; includeImage: the picture of an image section. ${REF_NOTE}
 Example: {"ref":"mandate://specs/login-sso/sections/auth-flow"}`,
     input: specSectionGetInputSchema,
-    run: (a, ctx) => ctx.reads.specSectionGet(a),
+    run: async (a, ctx) => sectionGetWithImage(await ctx.reads.specSectionGet(a), ctx, a.includeImage),
   }),
   defineTool({
     name: 'standard_list',
@@ -69,7 +73,10 @@ Example: {"tags":["security"]}`,
     description: `Get one standard: frontmatter, sections and, at HEAD, its acceptance checklist per spec and section links. Options as spec_get. ${REF_NOTE}
 Example: {"ref":"security-baseline","sections":["rules"]}`,
     input: standardGetInputSchema,
-    run: (a, ctx) => ctx.reads.standardGet(a),
+    run: async (a, ctx) => {
+      const r = await ctx.reads.standardGet(a);
+      return withImageMeta(r, ctx, 'standards', (r as { id: string }).id);
+    },
   }),
   defineTool({
     name: 'standard_section_get',
@@ -78,7 +85,7 @@ Example: {"ref":"security-baseline","sections":["rules"]}`,
     description: `Get one standard section (body, type, metadata, lines; #Lx-Ly excerpt). ${REF_NOTE}
 Example: {"ref":"mandate://standards/security-baseline/sections/rules"}`,
     input: standardSectionGetInputSchema,
-    run: (a, ctx) => ctx.reads.standardSectionGet(a),
+    run: async (a, ctx) => sectionGetWithImage(await ctx.reads.standardSectionGet(a), ctx, a.includeImage),
   }),
   defineTool({
     name: 'work_order_list',

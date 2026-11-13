@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /** Overview (tabs, sections, empty states, counts, URL state), activity titles / grouping, prompts, decision actions, work-order layout helpers. */
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, useLocation } from 'react-router';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MantineProvider } from '@mantine/core';
 import { Notifications } from '@mantine/notifications';
@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildRef, type DecisionsList, type ProjectOverview } from '@mandate/shared';
 import { installDom } from './dom';
 import { OverviewPage } from '../src/pages/OverviewPage';
+import { ActionsPage } from '../src/pages/ActionsPage';
 import { actionCount, groupRecent, pickTab } from '../src/lib/overview';
 import { eventTitle, groupEvents, groupTitle } from '../src/lib/activity';
 import { decisionPrompt, decisionsPrompt, itemPrompt } from '../src/lib/prompts';
@@ -104,7 +105,10 @@ function R({ path = '/', scheme = 'light' as 'light' | 'dark' }: { path?: string
       <Notifications />
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <MemoryRouter initialEntries={[path]}>
-          <OverviewPage />
+          <Routes>
+            <Route path="/" element={<OverviewPage />} />
+            <Route path="/actions" element={<ActionsPage />} />
+          </Routes>
           <Loc />
         </MemoryRouter>
       </QueryClientProvider>
@@ -124,12 +128,11 @@ afterEach(cleanup);
 /* ---------------------------------------------------------------- pure helpers */
 
 describe('overview helpers', () => {
-  it('pickTab: URL, then remembered, then Action needed when anything is pending, else In progress', () => {
-    expect(pickTab('health', 'progress', 3)).toBe('health');
-    expect(pickTab('nope', 'progress', 3)).toBe('progress');
-    expect(pickTab(null, null, 3)).toBe('action');
-    expect(pickTab(null, null, 0)).toBe('progress');
-    expect(pickTab(null, null, null)).toBe('action');
+  it('pickTab: URL, then remembered, else In progress ("Action needed" is the Actions page now)', () => {
+    expect(pickTab('health', 'progress')).toBe('health');
+    expect(pickTab('nope', 'progress')).toBe('progress');
+    expect(pickTab(null, null)).toBe('progress');
+    expect(pickTab('action', null)).toBe('progress');
   });
   it('actionCount sums decisions, blocked, attention specs and must-finding specs', () => {
     expect(actionCount(fullOverview(), 1)).toBe(1 + 1 + 1 + 1);
@@ -213,36 +216,42 @@ describe('work-order layout helpers and bare references', () => {
 /* ---------------------------------------------------------------- page */
 
 describe.each(['light', 'dark'] as const)('overview page (%s)', (scheme) => {
-  it('header, tab defaulting to Action needed, counts and the decisions copy button', async () => {
+  it('header, In progress by default (no Action tab), counts; Actions renders the decisions with the copy button', async () => {
     render(<R scheme={scheme} />);
     await screen.findByRole('heading', { level: 1 });
     expect(screen.getByTestId('ov-maturity')).toBeTruthy();
     const chips = screen.getByTestId('ov-chips');
     expect(within(chips).getByText('failing')).toBeTruthy();
-    // Action needed is selected (4 pending) and shows its badge.
-    const action = await screen.findByTestId('tab-action');
-    await waitFor(() => expect(action.getAttribute('aria-selected')).toBe('true'));
-    expect(action.textContent).toContain('4');
+    expect(screen.queryByTestId('tab-action')).toBeNull();
+    await waitFor(() => expect(screen.getByTestId('tab-progress').getAttribute('aria-selected')).toBe('true'));
     expect(screen.getByTestId('tab-progress').textContent).toContain('1');
+    expect(screen.queryByTestId('ov-decisions')).toBeNull();
+    cleanup();
+    render(<R scheme={scheme} path="/actions" />);
     expect(await screen.findByTestId('ov-decisions')).toBeTruthy();
+    expect(screen.getByText('4 pending')).toBeTruthy();
     fireEvent.click(screen.getByTestId('resolve-with-agent'));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(decisionsPrompt('')));
   });
 
-  it('chips switch tabs with focus in the URL; ?tab= is honoured and remembered', async () => {
+  it('chips open Actions with focus in the URL; ?tab= is honoured and remembered; the old action tab redirects', async () => {
     render(<R scheme={scheme} path="/?tab=health" />);
     await waitFor(() => expect(screen.getByTestId('tab-health').getAttribute('aria-selected')).toBe('true'));
     expect(await screen.findByTestId('ov-coverage')).toBeTruthy();
     expect(screen.getByTestId('ov-warnings')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('tab-progress'));
+    await waitFor(() => expect(localStorage.getItem('mandate.overview.tab.')).toBe('progress'));
     fireEvent.click(within(screen.getByTestId('ov-chips')).getByText('failing'));
-    await waitFor(() => expect(loc).toContain('tab=action'));
-    expect(loc).toContain('focus=failing');
+    await waitFor(() => expect(loc).toBe('/actions?focus=failing'));
     expect(await screen.findByText(/Specs needing attention: failing/)).toBeTruthy();
-    expect(localStorage.getItem('mandate.overview.tab.')).toBe('action');
+    cleanup();
+    render(<R scheme={scheme} path="/?tab=action&focus=stale" />);
+    await waitFor(() => expect(loc).toBe('/actions?focus=stale'));
+    expect(await screen.findByTestId('ov-decisions')).toBeTruthy();
   });
 
   it('item menu copies a one-item prompt; Accept opens a dialog and records it through feedback_accept', async () => {
-    render(<R scheme={scheme} />);
+    render(<R scheme={scheme} path="/actions" />);
     const card = await screen.findByTestId('ov-decisions');
     await within(card).findByText(/Which IdPs/);
     fireEvent.click(within(card).getByTestId('item-menu'));
@@ -253,9 +262,29 @@ describe.each(['light', 'dark'] as const)('overview page (%s)', (scheme) => {
     await waitFor(() => expect(calls.some((c) => c.name === 'feedback_accept' && c.args.ref === FB)).toBe(true));
   });
 
+  it('approval override: "Confirm override" asks for a review note and records it through approval_override_confirm', async () => {
+    // Mantine's autosize Textarea listens on document.fonts (missing in jsdom).
+    if (!(document as { fonts?: unknown }).fonts) Object.defineProperty(document, 'fonts', { configurable: true, value: { addEventListener: () => undefined, removeEventListener: () => undefined } });
+    const OV = buildRef({ kind: 'feedback', id: 'fb-0009' });
+    data.decisions = {
+      ...decisions(),
+      items: [{ ref: OV, kind: 'approval_override', title: 'Allow my deviation', question: 'Confirm this self-approved acceptance?', options: [{ id: 'confirm', label: 'Confirm (a second person reviewed it)', tool: 'approval_override_confirm' }] }],
+      counts: { ...decisions().counts, feedback_open: 0, approval_override: 1 },
+    };
+    render(<R scheme={scheme} path="/actions" />);
+    const card = await screen.findByTestId('ov-decisions');
+    await within(card).findByText(/Allow my deviation/);
+    fireEvent.click(within(card).getByTestId('item-primary'));
+    const confirm = (await screen.findByTestId('decision-confirm')) as HTMLButtonElement;
+    expect(confirm.disabled).toBe(true);
+    fireEvent.change(screen.getByTestId('confirm-override-note'), { target: { value: 'Reviewed with the team' } });
+    fireEvent.click(confirm);
+    await waitFor(() => expect(calls.some((c) => c.name === 'approval_override_confirm' && c.args.ref === OV && c.args.note === 'Reviewed with the team')).toBe(true));
+  });
+
   it('server mode without write access: direct decisions are disabled, prompts still copy', async () => {
     data.canDecide = false;
-    render(<R scheme={scheme} />);
+    render(<R scheme={scheme} path="/actions" />);
     const card = await screen.findByTestId('ov-decisions');
     await within(card).findByText(/Which IdPs/);
     await waitFor(() => expect((within(card).getByTestId('item-primary') as HTMLButtonElement).disabled).toBe(true));
@@ -298,12 +327,13 @@ describe.each(['light', 'dark'] as const)('overview page (%s)', (scheme) => {
     await waitFor(() => expect(screen.getByTestId('tab-progress').getAttribute('aria-selected')).toBe('true'));
     expect(await screen.findByText('No agent is working right now')).toBeTruthy();
     expect(screen.getByText(/Nothing needs attention/)).toBeTruthy();
-    fireEvent.click(screen.getByTestId('tab-action'));
-    expect(await screen.findByText('No decisions pending')).toBeTruthy();
-    expect(screen.getByText('Nothing is blocked')).toBeTruthy();
-    expect(screen.getByText('Every spec is on track')).toBeTruthy();
     fireEvent.click(screen.getByTestId('tab-health'));
     expect(await screen.findByText('No open integrity warnings ✓')).toBeTruthy();
     expect(screen.getByText('All criteria verified ✓')).toBeTruthy();
+    cleanup();
+    render(<R scheme={scheme} path="/actions" />);
+    expect(await screen.findByText('No decisions pending')).toBeTruthy();
+    expect(screen.getByText('Nothing is blocked')).toBeTruthy();
+    expect(screen.getByText('Every spec is on track')).toBeTruthy();
   });
 });

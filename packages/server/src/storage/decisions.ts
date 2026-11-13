@@ -176,7 +176,7 @@ export async function listDecisions(storage: Storage, input: DecisionsListInput 
         context: `${i.uri.split('/').pop()} · accepted with a self-approval override; a second person should review it`,
         question: `Confirm this self-approved acceptance? ${one(i.message, 110)}`,
         options: [
-          { id: 'confirm', label: 'Confirm (a second person reviewed it)' },
+          { id: 'confirm', label: 'Confirm (a second person reviewed it)', tool: 'approval_override_confirm' },
           { id: 'revisit', label: 'Revisit: reopen the decision with another reviewer', tool: 'feedback_update' },
         ],
       });

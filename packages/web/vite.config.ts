@@ -22,6 +22,8 @@ export default defineConfig({
       '/mcp': apiTarget,
       // Per-project MCP (Streamable HTTP + SSE notifications). Pages under /p/<id>/... stay with Vite.
       '^/p/[^/]+/mcp': apiTarget,
+      // Image section files (GET /p/<id>/images/<kind>/<docId>/<sid>).
+      '^/p/[^/]+/images/': apiTarget,
       // Connect-agent details (GET /ui/p/<id>/connect).
       '/ui': apiTarget,
       // GitHub sign-in: /auth/status, /auth/github/login, /auth/github/callback, /auth/logout.

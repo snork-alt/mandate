@@ -192,19 +192,27 @@ project has its own index, activity feed, Ask history and MCP endpoint (`<server
 
 ### 4. Connect your coding agents
 
-On each developer machine, one line wires every coding agent it finds to a project: the MCP server entry, the Mandate
-skills and the slash commands. The **Connect agent** dialog shows it with a copy button:
+On each developer machine, one line installs the Mandate CLI (`getmandate`) and wires every coding agent it finds to a
+project: the MCP server entry, the Mandate skills and the slash commands. The **Connect agent** dialog shows it with a
+copy button:
 
 ```sh
 curl -fsSL https://mandate.example.com/p/<project>/install.sh | sh
 # flags go to `getmandate connect`:  … | sh -s -- --agents claude-code,codex --dry-run
 # remove the wiring again:           … | sh -s -- --uninstall
+# remove the wiring AND the CLI:     curl -fsSL https://mandate.example.com/uninstall.sh | sh   (--dry-run, --purge)
 ```
 
-On Windows PowerShell: `irm https://mandate.example.com/p/<project>/install.ps1 | iex`. On the machine running Mandate,
-`mandate connect` in a code repository does the same.
+On Windows PowerShell: `irm https://mandate.example.com/p/<project>/install.ps1 | iex` (uninstall:
+`irm https://mandate.example.com/uninstall.ps1 | iex`). On the machine running Mandate, `mandate connect` in a code
+repository does the same.
 
-- The script holds no token and pins the server's exact Mandate version (`npx -y getmandate@<version> connect …`).
+- The CLI comes from the Mandate server itself, at the server's exact version (`<server>/getmandate.tgz`, checked
+  against its SHA-256, which is embedded in the script; npm is never asked for `getmandate`). It is installed with
+  `npm install -g`; without write access to npm's global folder it goes to `~/.mandate/cli` and the script prints the
+  `PATH` line to add (it never edits your shell files). Running the line again upgrades the CLI to the server's
+  version (`--reinstall` forces it), then runs `getmandate connect`.
+- The script holds no token and pins the server's exact Mandate version.
 - Agents sign in with GitHub on first use (MCP OAuth, with PKCE and short-lived, project-bound tokens), so nothing secret
   is written. Agents that can't sign in by themselves use a personal token (`--auth token`), kept only in
   `~/.mandate/env.sh` (0600).
@@ -252,7 +260,9 @@ MCP server's instructions carry the same rules for agents without it) runs the f
   it asks you (in chat or as a Mandate question) instead of guessing.
 - **`/mandate-flow on|off|status`** (and `approval on|off`) turns the flow on or off for your agent client, within the
   project policy an admin sets in Settings → Agent flow (*required*, *optional* or *off*; approval *required* or
-  *optional*).
+  *optional*). Only the agent changes it (Settings shows it read-only). With the flow off, the server refuses that
+  agent's write tools (`flow_off`) and Mandate is read-only context; the agent saves the returned instructions to its
+  memory.
 - **`/mandate-bootstrap`** reverse-engineers an existing codebase into Mandate in three stages, each by a fresh agent:
   **extract** typed notes (kept in `~/.mandate/bootstrap/`, never in the repo), **distill** them into components, standards
   and specs (with your confirmation for every standard), and **review** the result against the code. Everything it writes
@@ -342,7 +352,7 @@ in memory only, so no SSH key is needed. `git.auth.method: "ssh"` uses `sshKeyPa
 | `packages/shared` | Types, zod schemas and `mandate://` references shared by server and UI |
 | `packages/server` | Fastify + MCP server, git storage (embedded libgit2 or the git CLI), SQLite / Postgres index, Cypher compiler, Ask agent |
 | `packages/web` | React + Mantine UI, itself an MCP client |
-| `packages/cli` | The `getmandate` npm package: the `mandate` command, service, agent wiring; bundles the server and the built UI |
+| `packages/cli` | The `getmandate` npm package: the `mandate` command (also installed as `getmandate`), service, agent wiring; bundles the server and the built UI |
 
 ## Development
 

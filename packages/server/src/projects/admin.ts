@@ -13,7 +13,7 @@ import { rm } from 'node:fs/promises';
 import path from 'node:path';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { LEGACY_USER_TRAILER, USER_TRAILER } from '@mandate/shared';
+import { codeRepoProblems, codeRepoSchema, LEGACY_USER_TRAILER, USER_TRAILER, type CodeRepo } from '@mandate/shared';
 import { projectIdSchema, type ProjectConfig, type RemoteConfig } from '../config.js';
 import { idFromTitle, uniqueId } from '@mandate/shared';
 import type { ProjectsStore } from './store.js';
@@ -49,6 +49,8 @@ export const createProjectInputSchema = z
     repo: z.string().regex(/^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/, 'owner/name'),
     branch: z.string().trim().regex(/^(?!-)(?!.*\.\.)[A-Za-z0-9._/-]{1,100}$/, 'a branch name').optional(),
     path: folderSchema.optional(),
+    /** Code repositories (read-only for Mandate) by short name; can be added later in Settings → Code repositories. */
+    codeRepos: z.array(codeRepoSchema).max(50).optional(),
   })
   .strict();
 export type CreateProjectInput = z.input<typeof createProjectInputSchema>;
@@ -123,6 +125,27 @@ export function githubRemote(store: AuthStore, cloneUrl: (repo: string) => strin
 const needScope = (tok: { scopes: string[]; app?: boolean }, isPrivate: boolean) => !tok.app && needScopeOf(tok.scopes, isPrivate);
 const needScopeOf = (scopes: string[], isPrivate: boolean) => (isPrivate ? !scopes.includes('repo') : !scopes.includes('repo') && !scopes.includes('public_repo'));
 
+/**
+ * Code repositories of a new project: valid short names (unique), not the specs repo, readable with the user's GitHub
+ * access (the GitHub App installed on them in App mode); defaultBranch filled from GitHub when missing.
+ */
+async function checkNewCodeRepos(deps: AdminDeps, login: string, token: string, list: CodeRepo[], specsRepo: string): Promise<CodeRepo[]> {
+  const bad = codeRepoProblems(list, specsRepo)[0];
+  if (bad) throw new AdminError(400, 'invalid_code_repos', bad.message, `codeRepos`, bad.field === 'name' ? 'pick another short name' : 'remove it from the code repositories');
+  const out: CodeRepo[] = [];
+  for (const r of list) {
+    let gh;
+    try {
+      gh = await deps.github.repo(token, r.github);
+    } catch (e) {
+      if (e instanceof GithubError && e.status === 401) void deps.store.markRevoked(login);
+      throw new AdminError(e instanceof GithubError && e.status === 404 ? 404 : 502, 'github_error', `cannot read ${r.github}: ${(e as Error).message}`, 'codeRepos', 'install the GitHub App on that repository (or check your access), then retry');
+    }
+    out.push({ name: r.name, github: gh.fullName, ...(r.defaultBranch ?? gh.defaultBranch ? { defaultBranch: (r.defaultBranch ?? gh.defaultBranch)! } : {}) });
+  }
+  return out;
+}
+
 export type CreateStep = 'clone' | 'init' | 'push' | 'key';
 export type ProgressFn = (step: CreateStep, status: 'start' | 'done') => void;
 
@@ -152,6 +175,7 @@ export async function createProject(deps: AdminDeps, login: string, raw: unknown
   }
   if (!repo.canPush) throw new AdminError(403, 'github_error', `you cannot push to ${repo.fullName}`, 'repo', 'pick a repo you can write to');
   if (needScope(tok, repo.private)) throw new AdminError(403, 'needs_scope', `storing a project in ${repo.private ? 'a private' : 'a public'} repo needs the GitHub '${repo.private ? 'repo' : 'public_repo'}' scope`, 'repo', 'grant the scope (New project → consent step)');
+  const codeRepos = await checkNewCodeRepos(deps, login, tok.token, input.codeRepos ?? [], repo.fullName);
   const branch = input.branch ?? repo.defaultBranch ?? 'main';
   if (!repo.empty && repo.defaultBranch && branch !== repo.defaultBranch) {
     throw new AdminError(400, 'invalid_input', `only the default branch (${repo.defaultBranch}) is supported for an existing repo`, 'branch');
@@ -174,6 +198,7 @@ export async function createProject(deps: AdminDeps, login: string, raw: unknown
         ...(input.description ? { description: input.description } : {}),
         dataDir,
         github: { owner, repo: name, branch, ...(folder ? { path: folder } : {}) },
+        ...(codeRepos.length ? { codeRepos } : {}),
         connectedBy: login,
         createdAt: new Date().toISOString(),
       });

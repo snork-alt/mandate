@@ -26,8 +26,8 @@ const short = () => fx.older.slice(0, 7);
 /** Write tools have their own suite (write-tools.test.ts: happy paths, error codes, schema checks). */
 // project_flow_set is a write tool covered by test/mcp/guide.test.ts; upload_url_create by test/mcp/uploads.test.ts.
 // Audit write tools: test/mcp/audits.test.ts. Work-order document and comment write tools: test/mcp/work-orders.test.ts.
-// The flow tools need project settings: covered by test/mcp/flow.test.ts. Questions (and question_get): questions.test.ts.
-const WRITE_SUITE = new Set([...writeTools.map((t) => t.name), 'project_flow_set', 'flow_set', 'flow_policy_set', 'flow_clients_list', 'upload_url_create', 'integrity_snooze', ...auditTools.filter((t) => t.kind === 'write').map((t) => t.name), ...workOrderDocTools.filter((t) => t.kind === 'write').map((t) => t.name), ...lineageTools.filter((t) => t.kind === 'write').map((t) => t.name), ...questionTools.filter((t) => t.kind === 'write' || t.name === 'question_get').map((t) => t.name)]);
+// The flow and news tools need project settings: covered by test/mcp/flow.test.ts and news.test.ts. Questions (and question_get): questions.test.ts.
+const WRITE_SUITE = new Set([...writeTools.map((t) => t.name), 'project_flow_set', 'flow_set', 'flow_policy_set', 'flow_clients_list', 'news_list', 'news_ack', 'upload_url_create', 'integrity_snooze', 'approval_override_confirm', ...auditTools.filter((t) => t.kind === 'write').map((t) => t.name), ...workOrderDocTools.filter((t) => t.kind === 'write').map((t) => t.name), ...lineageTools.filter((t) => t.kind === 'write').map((t) => t.name), ...questionTools.filter((t) => t.kind === 'write' || t.name === 'question_get').map((t) => t.name)]);
 const READ_TOOLS = TOOLS.filter((t) => !WRITE_SUITE.has(t.name));
 const HAPPY: Record<string, { args: () => Record<string, unknown>; check: (b: Record<string, any>) => void }> = {
   // (the security-baseline rule "rotating refresh tokens" competes for the top spot since standards have rule sections)
@@ -153,6 +153,7 @@ const HAPPY: Record<string, { args: () => Record<string, unknown>; check: (b: Re
   ask_status: { args: () => ({}), check: (b) => expect(b).toMatchObject({ configured: false, missing: ['provider', 'model'] }) },
   lifecycle_get: { args: () => ({ kind: 'feedback' }), check: (b) => expect(b.steps.map((s: any) => s.to)).toContain('accepted') },
   project_info: { args: () => ({}), check: (b) => expect(b.effective).toEqual({ flow: 'on', approval: 'on', questions: 'mandate' }) },
+  code_context_set: { args: () => ({ repo: 'app', commit: 'ABC1234', dirty: true }), check: (b) => expect(b.label).toBe('app@abc1234+dirty') },
   questions_list: { args: () => ({ status: 'all', limit: 5 }), check: (b) => expect(b.total).toBeTypeOf('number') },
   audit_plan: { args: () => ({ target: 'mandate://specs/login-sso' }), check: (b) => expect(b.items.length).toBeGreaterThan(3) },
   audit_get: { args: () => ({ auditId: 'mandate://audits/2026-11-12-login-sso' }), check: (b) => expect(b.audit.outcome).toBe('fail') },

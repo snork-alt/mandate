@@ -15,6 +15,8 @@ import { LineagePage } from './pages/LineagePage';
 import { OverviewPage } from './pages/OverviewPage';
 import { IntegrityPage } from './pages/IntegrityPage';
 import { QuestionPage } from './pages/QuestionPage';
+import { QuestionsListPage } from './pages/QuestionsListPage';
+import { ActionsPage } from './pages/ActionsPage';
 
 /**
  * `/specs/<id>@<sha>#<section>` (a pasted versioned reference) opens that version read-only;
@@ -109,6 +111,8 @@ export const projectRoutes: RouteObject[] = [
       { path: 'feedback/:id', element: <FeedbackItemPage /> },
       { path: 'lineage', element: <LineagePage /> },
       { path: 'integrity', element: <IntegrityPage /> },
+      { path: 'actions', element: <ActionsPage /> },
+      { path: 'questions', element: <QuestionsListPage /> },
       { path: 'questions/:id', element: <QuestionPage /> },
       { path: '*', element: <Navigate to="/specs" replace /> },
     ],

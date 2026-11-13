@@ -39,6 +39,9 @@ import {
   workOrderSectionDoneInputSchema,
   type StoredSpec,
   ERROR_ACTIONS,
+  touchedFromInput,
+  type CodeLink,
+  type TouchedInput,
 } from '@mandate/shared';
 import { slugSchema } from '@mandate/doc';
 import { z } from 'zod';
@@ -49,6 +52,7 @@ import type { CommitMeta } from '../../storage/index.js';
 import { defineTool, type AnyToolDef, type ToolContext } from '../define.js';
 import { questionProof, withTrailers } from './questions.js';
 import { ToolError } from '../errors.js';
+import { checkClaim, checkCodeRepos, registeredCodeRepos, requireCommit, stampLocations, repoOfLocation } from '../code-claims.js';
 import { clientIdentity, effective } from '../../projects/settings.js';
 import { componentArchiveInputSchema, componentCreateInputSchema, componentStatusSetInputSchema, componentUpdateMetaInputSchema } from './components.js';
 
@@ -187,7 +191,7 @@ function docWriteTools(kind: DocKind): AnyToolDef[] {
       name: `${k}_create`,
       title: `Create a ${k}`,
       kind: 'write',
-      description: `Create a ${k} (Mandate assigns the id from the title: use the returned ref / ids; never pass id). ${kind === 'specs' ? 'Starts as draft; use spec_status_set to move it.' : kind === 'standards' ? 'appliesTo rules (repo:x, tag:x, category:x) make it apply to matching specs.' : 'kind service|module|library|datastore|external; owns: code path globs per repo (most specific glob wins in code_owner). layer (optional): ui|api|service|domain|data|infra or another slug; omitted, it is inherited from the parent or derived from depends_on. parent (optional): the containing component (a tree: one parent, no cycles, not archived). Typical sections: responsibility, interfaces, context (mermaid), rationale.'} Sections are optional here (${k}_section_insert).${COMMON}`,
+      description: `Create a ${k} (Mandate assigns the id from the title: use the returned ref / ids; never pass id). ${kind === 'specs' ? 'Starts as draft; use spec_status_set to move it.' : kind === 'standards' ? 'appliesTo rules (repo:x, tag:x, category:x) make it apply to matching specs.' : 'kind service|module|library|datastore|external; owns: code path globs per repo (most specific glob wins in code_owner). layer (optional): ui|api|service|domain|data|infra or another slug; omitted, it is inherited from the parent or derived from depends_on. parent (optional): the containing component (a tree: one parent, no cycles, not archived). Architecture level, few: not one per folder or class; reuse first (architecture_get). Typical sections: responsibility, interfaces, context (mermaid), rationale.'} Sections are optional here (${k}_section_insert).${COMMON}`,
       // DF-11: spec_create takes addresses / workOrder like the other doc writes (Feedback / Work-Order trailers).
       input: (kind === 'specs' ? withExtras(createSchema as unknown as z.ZodObject) : createSchema) as unknown as z.ZodObject,
       ...(kind === 'specs' ? { trailers: docEditTrailers } : {}),
@@ -299,7 +303,7 @@ function docWriteTools(kind: DocKind): AnyToolDef[] {
       name: `${k}_section_insert`,
       title: `Insert a ${k} section`,
       kind: 'write',
-      description: `Insert a section into a ${k} (after / before a section id, or position first | last; default last). Mandate assigns its id from the title (returned ref). Section types: markdown, mermaid, html, ${kind === 'specs' ? 'acceptance (a criterion: method test|manual|review|metric, threshold for metric)' : kind === 'components' ? 'responsibility, interfaces, context (mermaid diagram), rationale' : 'rule (a criterion of the standard: level must|should|may, rationale, scope {paths, languages}, check {kind, command}, examples as code refs; must rules block done, should only warns)'}, ... Links: ${k}_section_link_add.${kind === 'specs' ? ` Generated files (HTML mockups, large diagrams): upload with curl (project_info.upload or upload_url_create), never inline.${SECTION_GUIDE}` : ''}${COMMON}`,
+      description: `Insert a section into a ${k} (after / before a section id, or position first | last; default last). Mandate assigns its id from the title (returned ref). Section types: markdown, mermaid, html, ${kind === 'specs' ? 'acceptance (a criterion: method test|manual|review|metric, threshold for metric)' : kind === 'components' ? 'responsibility, interfaces, context (mermaid diagram), rationale' : 'rule (a criterion of the standard: level must|should|may, rationale, scope {paths, languages}, check {kind, command}, examples as code refs; must rules block done, should only warns)'}, ... Links: ${k}_section_link_add.${kind === 'specs' ? ` Generated files (HTML mockups, large diagrams, images with alt): upload with curl (project_info.upload or upload_url_create), never inline.${SECTION_GUIDE}` : ''}${COMMON}`,
       input: withExtras(S.insert as unknown as z.ZodObject),
       trailers: docEditTrailers,
       run: async (a, ctx) => {
@@ -402,6 +406,58 @@ async function overlapWarnings(ctx: ToolContext, id: string) {
   };
 }
 
+/** Repos for which a git input records a commit (headCommit / commits). */
+const committedRepos = (git: { repo: string; headCommit?: string; commits?: string[] }[] | undefined) => new Set((git ?? []).filter((g) => g.headCommit || g.commits?.length).map((g) => g.repo));
+
+/** Work order kinds that change code: completing them needs the commits that implemented them. */
+const CODE_KINDS = new Set(['implement', 'update', 'fix']);
+
+/**
+ * work_order_complete: the commits that implemented it (git[] now or recorded before: headCommit / commits per repo),
+ * repos registered; code locations without a commit get their repo's final commit, and dirty claims of this work order
+ * (touched entries, the claiming agent's dirty verifications of the spec since the claim) are linked to that commit.
+ */
+async function completionCode(ctx: ToolContext, id: string, git: { repo: string; headCommit?: string; commits?: string[] }[] | undefined, touched: TouchedInput[] | undefined) {
+  const warnings: string[] = [];
+  const wo = await ctx.storage.workOrderService.get(id);
+  const doc = await ctx.storage.workOrderDocs.get(id);
+  warnings.push(...checkCodeRepos(ctx, [...(git ?? []).map((g) => g.repo), ...(touched ?? []).map((t) => repoOfLocation(t) ?? '').filter(Boolean)], 'git'));
+  // Final commit per repo: this call's git, else what was recorded before.
+  const head = new Map<string, string>();
+  for (const g of doc.git ?? []) {
+    const c = g.headCommit ?? g.commits?.at(-1);
+    if (c) head.set(g.repo, c);
+  }
+  for (const g of git ?? []) {
+    const c = g.headCommit ?? g.commits?.at(-1);
+    if (c) head.set(g.repo, c);
+  }
+  const links: CodeLink[] = [];
+  if (CODE_KINDS.has(wo.kind) && !head.size && registeredCodeRepos(ctx)) {
+    warnings.push(...requireCommit(ctx, `work order ${id} (${wo.kind}) has no code commit recorded`, 'pass git: [{ repo, headCommit }] (the commit that implemented it; commit uncommitted work first), or record it with work_order_git_update', 'git'));
+  }
+  // Touched entries without a commit (incl. dirty claims): the repo's final commit.
+  const extra: TouchedInput[] = [];
+  for (const t of [...(doc.touched ?? []), ...(touched ?? []).map(touchedFromInput)]) {
+    const c = head.get(t.repo);
+    if (!t.commits?.length && c) extra.push({ ...t, commits: [c] } as TouchedInput);
+  }
+  const missing = [...new Set([...(doc.touched ?? []), ...(touched ?? []).map(touchedFromInput)].filter((t) => !t.commits?.length && !head.has(t.repo)).map((t) => t.repo))];
+  if (missing.length && registeredCodeRepos(ctx)) warnings.push(...requireCommit(ctx, `code locations in ${missing.join(', ')} have no commit`, 'pass git: [{ repo, headCommit }] for each repo you changed', 'git'));
+  // Dirty verifications recorded for this spec by the claiming agent since the claim.
+  const since = wo.claim?.startedAt ?? wo.createdAt;
+  const agent = wo.claim?.agent;
+  if (head.size && agent) {
+    const spec = buildRef({ kind: 'specs', id: wo.spec });
+    for (const r of await ctx.storage.verificationService.list()) {
+      const code = r.code as { repo: string; commit: string; dirty?: boolean };
+      const c = head.get(code.repo);
+      if (code.dirty && c && r.appliedTo === spec && r.by === agent && r.at >= since) links.push({ ref: buildNodeUri({ kind: 'verifications', id: r.id }), repo: code.repo, base: code.commit, commit: c });
+    }
+  }
+  return { touched: touched || extra.length ? [...(touched ?? []), ...extra] : undefined, links, warnings };
+}
+
 const WO_COMMON = COMMON;
 const GIT_NOTE = 'git (per repo, fields as work_order_git_update)';
 
@@ -469,9 +525,10 @@ const workOrderTools: AnyToolDef[] = [
     run: async (a, ctx) => {
       const commits: string[] = [];
       const id = idOf(a.ref);
+      const cw = checkCodeRepos(ctx, (a.git ?? []).map((g) => g.repo), 'git');
       await ctx.storage.workOrderService.claim({ id, agent: ctx.commit!.agent, ...(ctx.commit!.branch ? { branch: ctx.commit!.branch } : {}), ...(a.worktree ? { worktree: a.worktree } : {}), ...(a.git ? { git: a.git } : {}) }, metaOf(ctx, commits));
       const o = await overlapWarnings(ctx, id);
-      return woResult(ctx, id, commits, { overlaps: o.overlaps }, o.warnings);
+      return woResult(ctx, id, commits, { overlaps: o.overlaps }, [...cw, ...o.warnings]);
     },
   }),
   defineTool({
@@ -483,8 +540,9 @@ const workOrderTools: AnyToolDef[] = [
     run: async (a, ctx) => {
       const commits: string[] = [];
       const id = idOf(a.ref);
+      const cw = checkCodeRepos(ctx, (a.git ?? []).map((g) => g.repo), 'git');
       await ctx.storage.workOrderService.heartbeat({ id, agent: ctx.commit!.agent, ...(a.git ? { git: a.git } : {}) }, metaOf(ctx, commits));
-      return woResult(ctx, id, commits);
+      return woResult(ctx, id, commits, {}, cw);
     },
   }),
   defineTool({
@@ -513,17 +571,19 @@ const workOrderTools: AnyToolDef[] = [
     name: 'work_order_section_done',
     title: 'Mark work-order sections done',
     kind: 'write',
-    description: `Mark sections (spec section ids or work-order section refs) done or obsolete, writing notes (appended), codeRefs ("repo:path#Lx-Ly" or { repo, path, lines, symbols, change, from }; merged into touched), deviations and verifications into each. implement/update: records implementedCommit on the spec sections. Optional ${GIT_NOTE}, touched.${WO_COMMON}`,
+    description: `Mark sections (spec section ids or work-order section refs) done or obsolete, writing notes (appended), codeRefs ("repo:path#Lx-Ly" or { repo, path, lines, symbols, change, from }; merged into touched), deviations and verifications into each; code { repo, commit, dirty } for codeRefs / touched without commits. implement/update: records implementedCommit on the spec sections. Optional ${GIT_NOTE}, touched.${WO_COMMON}`,
     input: workOrderSectionDoneInputSchema,
     run: async (a, ctx) => {
       const commits: string[] = [];
       const id = idOf(a.ref);
       // MW-12: the caller must hold the claim (checked inside the write lock).
+      // Code locations carry repo + commit (code, per-file commits, or a commit recorded in git for that repo).
+      const stamped = stampLocations(ctx, [{ files: a.codeRefs, path: 'codeRefs' }, { files: a.touched, path: 'touched' }], a.code, committedRepos(a.git));
       const w = await ctx.storage.workOrderService.sectionDone(
-        { id, agent: ctx.commit!.agent, sections: a.sections, status: a.status, notes: a.notes, codeRefs: a.codeRefs, deviations: a.deviations, verifications: a.verifications, git: a.git, touched: a.touched },
+        { id, agent: ctx.commit!.agent, sections: a.sections, status: a.status, notes: a.notes, codeRefs: stamped.lists[0], deviations: a.deviations, verifications: a.verifications, git: a.git, touched: stamped.lists[1] },
         metaOf(ctx, commits),
       );
-      const warnings: string[] = [];
+      const warnings: string[] = [...checkCodeRepos(ctx, (a.git ?? []).map((g) => g.repo), 'git'), ...stamped.warnings];
       if (w.sections.every((s) => s.status !== 'pending')) warnings.push('every section is finished: reconcile specs / components with the code, then work_order_complete with the outcome');
       if (a.status === 'done' && !a.codeRefs?.length && !a.touched?.length) warnings.push('no code refs given for these sections: record the code you changed (codeRefs here, or work_order_touch with section)');
       return woResult(ctx, id, commits, {}, warnings);
@@ -533,13 +593,14 @@ const workOrderTools: AnyToolDef[] = [
     name: 'work_order_complete',
     title: 'Complete a work order',
     kind: 'write',
-    description: `Finish a work order: outcome (what was delivered; required), reconciliation (what you updated). Remaining pending sections are marked done; the work order is then frozen (only PR / merge fields change). Optional ${GIT_NOTE} (final headCommit, PR, merge), touched.${WO_COMMON}`,
+    description: `Finish a work order: outcome (what was delivered; required), reconciliation (what you updated). Remaining pending sections are marked done; the work order is then frozen (only PR / merge fields change). ${GIT_NOTE}: the final headCommit per repo (required for implement / update / fix unless recorded before; dirty claims are linked to it), PR, merge; touched.${WO_COMMON}`,
     input: workOrderCompleteInputSchema,
     run: async (a, ctx) => {
       const commits: string[] = [];
       const id = idOf(a.ref);
-      const { warnings } = await ctx.storage.workOrderService.complete(id, ctx.commit!.agent, { outcome: a.outcome, reconciliation: a.reconciliation, git: a.git, touched: a.touched }, metaOf(ctx, commits));
-      return woResult(ctx, id, commits, {}, warnings);
+      const pre = await completionCode(ctx, id, a.git, a.touched);
+      const { warnings } = await ctx.storage.workOrderService.complete(id, ctx.commit!.agent, { outcome: a.outcome, reconciliation: a.reconciliation, git: a.git, touched: pre.touched, codeLinks: pre.links }, metaOf(ctx, commits));
+      return woResult(ctx, id, commits, pre.links.length ? { codeLinks: pre.links } : {}, [...pre.warnings, ...warnings]);
     },
   }),
   defineTool({
@@ -679,11 +740,13 @@ const verificationTools: AnyToolDef[] = [
     name: 'verification_record',
     title: 'Record a verification result',
     kind: 'write',
-    description: `Append a verification result for an acceptance criterion (append-only; the server sets the time and the author = your agent identity): criterion (acceptance section ref), appliedTo (the spec; required for standard criteria), specCommit (default HEAD), code { repo, commit, branch }, result pass | fail | skipped (skipped verifies nothing), method test | manual | review | metric, evidence { test, ci, note }.${COMMON}`,
+    description: `Append a verification result for an acceptance criterion (append-only; the server sets the time and the author = your agent identity): criterion (acceptance section ref), appliedTo (the spec; required for standard criteria), specCommit (default HEAD), code { repo (short name), commit, branch, dirty: uncommitted on top of commit }, result pass | fail | skipped (skipped verifies nothing), method test | manual | review | metric, evidence { test, ci, note }.${COMMON}`,
     input: verificationRecordInputSchema,
     run: async (a, ctx) => {
       const commits: string[] = [];
       const c = parseRef(a.criterion)!;
+      // A claim about code: repo (registered) + commit; codeRefs in registered repos too.
+      const cw = [...checkClaim(ctx, a.code, 'code'), ...checkCodeRepos(ctx, (a.codeRefs ?? []).map((x) => repoOfLocation(x) ?? '').filter(Boolean), 'codeRefs')];
       const r = await ctx.storage.verificationService.record(
         {
           criterion: buildRef({ kind: c.kind, id: c.id, sectionId: c.sectionId }),
@@ -698,7 +761,7 @@ const verificationTools: AnyToolDef[] = [
         },
         metaOf(ctx, commits),
       );
-      return { ref: buildNodeUri({ kind: 'verifications', id: r.id }), ...commitsOf(commits), warnings: [], verification: r };
+      return { ref: buildNodeUri({ kind: 'verifications', id: r.id }), ...commitsOf(commits), warnings: cw, verification: r };
     },
   }),
   defineTool({
@@ -712,7 +775,7 @@ const verificationTools: AnyToolDef[] = [
 ];
 
 /** Standards are cross-cutting: every standard write needs the user's explicit confirmation first (recorded, not enforced). */
-export const STANDARD_CONFIRMATION = 'Needs the user\'s confirmation, even with approval off: cite an answered standard_confirmation question (question_ask) as cause (questions in chat: confirmedByUser: true).\n';
+export const STANDARD_CONFIRMATION = 'Needs the user\'s confirmation, even with approval off: cite an answered standard_confirmation question (question_ask) as cause (questions in chat: confirmedByUser: true). Drafts with only inferred sections: not until activation.\n';
 
 /**
  * Flow on (settings known): a standard write needs proof of the user's confirmation, an answered standard_confirmation
@@ -732,6 +795,30 @@ async function requireConfirmation(ctx: ToolContext, flag: boolean): Promise<voi
   );
 }
 
+/**
+ * Inferred drafts (e.g. /mandate-bootstrap) need no confirmation yet: creating a standard whose sections are all
+ * provenance "inferred", or editing a DRAFT standard whose live sections are all inferred (and stay so). The user
+ * reviews the drafts later; activating (standard_status_set) and any change to an active standard still need it.
+ */
+async function inferredDraftWrite(tool: string, a: Record<string, unknown>, ctx: ToolContext): Promise<boolean> {
+  if (tool === 'standard_status_set') return false;
+  const inferred = (s: unknown) => (s as { provenance?: unknown } | undefined)?.provenance === 'inferred';
+  if (tool === 'standard_create') {
+    const sections = (a.sections as unknown[] | undefined) ?? [];
+    return sections.length > 0 && sections.every(inferred);
+  }
+  if (tool === 'standard_section_insert' && !inferred(a.section)) return false;
+  if (tool === 'standard_section_update' && a.provenance !== undefined && a.provenance !== 'inferred') return false;
+  const ref = (a.doc ?? a.ref) as string | undefined;
+  if (!ref) return false;
+  try {
+    const std = (await ctx.storage.standards.get(idOf(ref))) as unknown as { status?: string; sections: { archived?: boolean; provenance?: string }[] };
+    return std.status === 'draft' && std.sections.filter((s) => !s.archived).every(inferred);
+  } catch {
+    return false;
+  }
+}
+
 /** Adds the confirmation note and the optional `confirmedByUser` flag (→ `User-Confirmed: yes` trailer) to a standard write tool. */
 export function withUserConfirmation(def: AnyToolDef): AnyToolDef {
   const input = def.input as unknown as z.ZodObject;
@@ -745,8 +832,14 @@ export function withUserConfirmation(def: AnyToolDef): AnyToolDef {
       const { confirmedByUser: _c, ...rest } = a;
       // An answered standard_confirmation question cited as cause: User-Confirmed names it and the answering user.
       const proof = await questionProof(ctx, ['standard_confirmation']);
-      if (!proof) await requireConfirmation(ctx, a.confirmedByUser === true);
-      return def.run(rest as never, proof ? withTrailers(ctx, { 'User-Confirmed': proof.id, 'Confirmed-By': proof.by }) : ctx);
+      let draft = false;
+      if (!proof)
+        await requireConfirmation(ctx, a.confirmedByUser === true).catch(async (e: unknown) => {
+          if (!(await inferredDraftWrite(def.name, rest, ctx))) throw e;
+          draft = true;
+        });
+      // An unconfirmed inferred standard is created as a draft (it applies nowhere until the user confirms it).
+      return def.run((draft && def.name === 'standard_create' ? { ...rest, status: 'draft' } : rest) as never, proof ? withTrailers(ctx, { 'User-Confirmed': proof.id, 'Confirmed-By': proof.by }) : ctx);
     },
   } as AnyToolDef;
 }

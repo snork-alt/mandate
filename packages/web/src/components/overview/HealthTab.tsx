@@ -154,7 +154,7 @@ export function Coverage({ o, projectId }: { o: ProjectOverview; projectId: stri
 const STEP_INDEX = new Map(MATURITY_STEPS.map((s, i) => [s, i]));
 type Cat = ProjectOverview['byCategory'][number];
 const avgStep = (c: Cat) => (c.total ? c.specs.reduce((n, s) => n + (STEP_INDEX.get(s.step) ?? 0), 0) / c.total : 0);
-const catName = (c: string) => (c === 'uncategorized' ? 'Uncategorized' : categoryLabel(c));
+const catName = (c: string) => (c === 'uncategorized' ? 'General' : categoryLabel(c));
 
 export function sortCategories(cats: Cat[], by: 'maturity' | 'name'): Cat[] {
   return [...cats].sort((a, b) => (by === 'name' ? catName(a.category).localeCompare(catName(b.category)) : avgStep(a) - avgStep(b) || catName(a.category).localeCompare(catName(b.category))));
