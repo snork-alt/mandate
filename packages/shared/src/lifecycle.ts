@@ -133,9 +133,9 @@ const sectionEntry = (kind: 'spec_section' | 'standard_section' | 'component_sec
   derived: [],
   table: SECTION_TRANSITIONS,
   enforced: true,
-  create: { tools: [`${prefix}_section_insert`], when: 'add a requirement / rule / description (Mandate assigns the id from the title; ids are never reused)', errors: ['invalid_section_type'] },
+  create: { tools: ['section_insert'], when: 'add a requirement / rule / description (Mandate assigns the id from the title; ids are never reused)', errors: ['invalid_section_type'] },
   steps: [
-    step('archived', [`${prefix}_section_archive`], 'the section is dropped or replaced: archive it (then insert a successor); never delete', {
+    step('archived', ['archive'], 'the section is dropped or replaced: archive it (then insert a successor); never delete', {
       ...(prefix === 'component' ? {} : { gate: prefix === 'spec' ? SHRINK : STD_CONFIRM }),
       enforcedBy: 'DocRules.beforeWrite: section_referenced, criteria_shrink; DocWrites.sectionArchive',
       errors: prefix === 'spec' ? ['criteria_shrink', 'validation'] : ['validation'],
@@ -149,21 +149,21 @@ const ENTRIES: LifecycleEntry[] = [
     kind: 'spec',
     states: ['draft', 'ready', 'in_progress', 'done', 'archived'],
     initial: 'draft',
-    create: { tools: ['spec_create'], when: 'INTAKE, a new feature with no fitting spec (starts draft; Mandate assigns the id)' },
+    create: { tools: ['create'], when: 'INTAKE, a new feature with no fitting spec (starts draft; Mandate assigns the id)' },
     terminal: [],
     frozen: [],
     derived: ['in_progress'],
     table: SPEC_TRANSITIONS,
     enforced: true,
     steps: [
-      step('draft', ['spec_status_set'], 'back to discussion; archived -> draft restores an archived spec'),
-      step('ready', ['spec_status_set'], 'once every section has acceptance criteria and the user approved them; done -> ready reopens a done spec before an update work order changes it', { gate: 'every live section has an acceptance criterion (own, verifiedBy or a followed rule)', enforcedBy: 'DocRules.beforeWrite (ready_gate)', errors: ['ready_gate', 'transition_not_allowed'] }),
-      step('done', ['spec_status_set'], 'when every implement/update work order on its sections is complete AND every must criterion is verified or waived; never force it', {
+      step('draft', ['status_set'], 'back to discussion; archived -> draft restores an archived spec'),
+      step('ready', ['status_set'], 'once every section has acceptance criteria and the user approved them; done -> ready reopens a done spec before an update work order changes it', { gate: 'every live section has an acceptance criterion (own, verifiedBy or a followed rule)', enforcedBy: 'DocRules.beforeWrite (ready_gate)', errors: ['ready_gate', 'transition_not_allowed'] }),
+      step('done', ['status_set'], 'when every implement/update work order on its sections is complete AND every must criterion is verified or waived; never force it', {
         gate: 'DONE GATE: every own and inherited criterion verified or waived (approved), no blocked / broken depends_on section, no open implement/update work order',
         enforcedBy: 'VerificationService.gate (storage/verification.ts), run by DocRules.beforeWrite',
         errors: ['done_gate', 'transition_not_allowed'],
       }),
-      step('archived', ['spec_archive', 'spec_status_set'], 'the feature is dropped or replaced (user decision); cancels its open work orders'),
+      step('archived', ['archive', 'status_set'], 'the feature is dropped or replaced (user decision); cancels its open work orders'),
     ],
     notes: [
       'in_progress is derived (an open work order on the spec is claimed): never set it.',
@@ -177,15 +177,15 @@ const ENTRIES: LifecycleEntry[] = [
     kind: 'standard',
     states: ['draft', 'active', 'deprecated'],
     initial: 'active',
-    create: { tools: ['standard_create'], when: 'a cross-cutting rule the user confirmed (starts active)' },
+    create: { tools: ['create'], when: 'a cross-cutting rule the user confirmed (starts active)' },
     terminal: [],
     frozen: [],
     derived: [],
     table: STANDARD_TRANSITIONS,
     enforced: true,
     steps: [
-      step('active', ['standard_status_set'], 'only after the user confirmed the rules (drafts never apply); deprecated -> active revives it', { gate: STD_CONFIRM }),
-      step('deprecated', ['standard_status_set'], 'a successor standard replaces it (still applies; specs are told to move)', {
+      step('active', ['status_set'], 'only after the user confirmed the rules (drafts never apply); deprecated -> active revives it', { gate: STD_CONFIRM }),
+      step('deprecated', ['status_set'], 'a successor standard replaces it (still applies; specs are told to move)', {
         gate: 'supersededBy = another existing standard',
         enforcedBy: 'DocRules.beforeWrite (storage/doc-rules.ts)',
         errors: ['invalid_standard', 'transition_not_allowed'],
@@ -193,7 +193,7 @@ const ENTRIES: LifecycleEntry[] = [
     ],
     notes: [
       'Every standard_* write needs explicit user confirmation, even with approval off.',
-      'effectiveFrom (standard_update_meta: ISO date or commit): before it, rules are announced, not required.',
+      'effectiveFrom (update_meta: ISO date or commit): before it, rules are announced, not required.',
       'Standards are never archived: deprecate with supersededBy.',
     ],
   },
@@ -202,16 +202,16 @@ const ENTRIES: LifecycleEntry[] = [
     kind: 'component',
     states: [...COMPONENT_STATUSES],
     initial: 'active',
-    create: { tools: ['component_create'], when: 'INTAKE step 5, a new part of the architecture (owns globs, layer, parent)', errors: ['archived_parent', 'invalid_parent'] },
+    create: { tools: ['create'], when: 'INTAKE step 5, a new part of the architecture (owns globs, layer, parent)', errors: ['archived_parent', 'invalid_parent'] },
     terminal: ['archived'],
     frozen: ['archived'],
     derived: [],
     table: COMPONENT_TRANSITIONS,
     enforced: true,
     steps: [
-      step('active', ['component_status_set'], 'deprecated -> active revives it', { errors: ['archived_parent'] }),
-      step('deprecated', ['component_status_set'], 'being phased out: deprecate BEFORE archiving, so dependants see it'),
-      step('archived', ['component_archive', 'component_status_set'], 'gone from the code: archive bottom-up (children first)', {
+      step('active', ['status_set'], 'deprecated -> active revives it', { errors: ['archived_parent'] }),
+      step('deprecated', ['status_set'], 'being phased out: deprecate BEFORE archiving, so dependants see it'),
+      step('archived', ['archive', 'status_set'], 'gone from the code: archive bottom-up (children first)', {
         gate: 'no non-archived children; a live child cannot sit under an archived parent',
         enforcedBy: 'DocRules.beforeWrite (storage/doc-rules.ts)',
         errors: ['has_children', 'archived_parent', 'transition_not_allowed'],
@@ -336,7 +336,7 @@ const ENTRIES: LifecycleEntry[] = [
       step('superseded', ['question_ask'], 'question_ask with supersedes: <id> replaces an open question', { errors: ['question_frozen'] }),
     ],
     notes: [
-      'After asking: continue with work that does not depend on the answer. Answers arrive as a notifications/mandate/question_answered notification while your session is connected; else poll questions_list { mine: true, status: "answered", since } at checkpoints (after each section or step). If everything is blocked, tell the user and stop. If the user is chatting with you and the question blocks all progress, you may ask in chat as well.',
+      'After asking: continue with work that does not depend on the answer. Answers arrive as a notifications/mandate/question_answered notification while your session is connected; else poll list { of: "questions", mine: true, status: "answered", since } at checkpoints (after each section or step). If everything is blocked, tell the user and stop. If the user is chatting with you and the question blocks all progress, you may ask in chat as well.',
       'Proof: cite an answered question as cause. standard_* writes citing a standard_confirmation question record User-Confirmed: <id> (the answering user); feedback_accept citing an approval question records User-Approved: <id> and, with override, checks the answering user\'s eligibility. Unanswered, or answered by someone not allowed to confirm: question_not_answered / question_ineligible.',
     ],
   },
@@ -431,7 +431,7 @@ export function gateSummary(tool: string): string {
   if (!parts.length) return '';
   const kinds = [...new Set(parts.map(([k]) => k))];
   const text = parts.map(([k, p]) => (kinds.length > 1 ? `${k} ${p}` : p)).join('; ');
-  return `Lifecycle: ${text}. Rules: lifecycle_get { kind: "${kinds[0]}" }.`;
+  return `Lifecycle: ${text}. Rules: lifecycle_get { kind${kinds.length > 1 ? '' : `: "${kinds[0]}"`} }.`;
 }
 
 /* ---------------------------------------------------------------- error playbook */
@@ -458,7 +458,7 @@ export const ERROR_ACTIONS: Record<string, string> = {
   feedback_closed: 'closed feedback is immutable and cannot be addressed: file a new item (relatedTo the closed one)',
   applied_without_changes: 'applied needs a linked change: pass addresses: [the feedback] (or cause) on the writes that applied it, or relatedTo the commit (mandate://commits/<sha>); else close it rejected / duplicate',
   append_only: 'records are append-only: record a new result instead',
-  archive_only: 'nothing is deleted: archive it (spec_archive, *_section_archive, component_archive)',
+  archive_only: 'nothing is deleted: archive it (archive: a spec, component or section)',
   section_referenced: 'the section is referenced: archive it instead of removing it',
   id_reused: 'ids are never reused (Mandate assigns new ones)',
   integrity_violation: 'the write would break an integrity rule (detail.issues): fix the cause the hint names, then retry',
@@ -467,11 +467,11 @@ export const ERROR_ACTIONS: Record<string, string> = {
   audit_frozen: 'the audit is completed or abandoned: audit_recheck findings, or audit_start a new audit',
   audit_incomplete: 'record every must item in detail.missing (notes on fail / partial) and the overview, then retry',
   audit_not_completed: 'audit_complete it first',
-  not_in_plan: 'record only items of the audit plan (detail.items or audit_get)',
+  not_in_plan: 'record only items of the audit plan (detail.items or get on the audit)',
   notes_required: 'explain in notes how the code was checked and why it fails, then retry',
   finding_closed: 'the finding is already resolved or wont_fix: nothing to re-check',
   finding_linked: 'the finding is linked to a live work order: cancel it (work_order_cancel) before relinking',
-  has_children: 'archive or move (component_update_meta parent) the listed children first (bottom-up)',
+  has_children: 'archive or move (update_meta parent) the listed children first (bottom-up)',
   archived_parent: 'pick a live parent, or archive this component too',
   invalid_parent: 'parent must be an existing component other than itself (or a reply on the same document)',
   invalid_section_type: 'specs take acceptance sections, standards rule sections, components neither: use the right type',
@@ -480,8 +480,8 @@ export const ERROR_ACTIONS: Record<string, string> = {
   policy_required: 'the project policy requires it; tell the user an admin can change Settings → Agent flow',
   policy_off: 'the project policy turns the flow off; use Mandate read-only; an admin can change it',
   confirmation_required: 'question_ask purpose standard_confirmation (the exact change and why), wait for the answer, then retry with cause: the answered question (questions in chat: ask in chat, then confirmedByUser: true)',
-  question_frozen: 'the question is already answered, cancelled, superseded or expired: question_get it, or ask a new one',
-  question_not_answered: 'wait for the answer (questions_list { mine: true, status: "answered" }) before citing the question',
+  question_frozen: 'the question is already answered, cancelled, superseded or expired: get it, or ask a new one',
+  question_not_answered: 'wait for the answer (list { of: "questions", mine: true, status: "answered" }) before citing the question',
   question_ineligible: 'the question was answered by someone who may not confirm / approve this: ask again for an eligible user',
   question_purpose: 'cite a question of the right purpose (standard_confirmation for standards, approval for approvals)',
   invalid_cause: 'cause must reference existing items (feedback, finding, work order, section)',
@@ -505,7 +505,7 @@ export const ERROR_ACTIONS: Record<string, string> = {
   alt_required: 'image sections need alt text: pass alt (what the image shows, for agents, search and Ask)',
   type_mismatch: 'the uploaded bytes are not the declared image type: send the right Content-Type (or none) and a PNG, JPEG, GIF, WebP or SVG file',
   image_upload_required: 'image files are uploaded with curl (project_info.upload.image / upload_url_create), not set in section bodies: only alt and caption can be edited',
-  no_override: 'this feedback item has no approval override to confirm: check decisions_list for open overrides',
+  no_override: 'this feedback item has no approval override to confirm: check list { of: "decisions" } for open overrides',
   already_confirmed: 'the override is already confirmed: nothing to do',
   unknown_code_repo: 'use a registered code repository short name: project_info.codeRepos lists them (match your git remote); an admin adds repos in project settings',
   code_commit_required: 'pass the code repository and commit (code { repo, commit, dirty? }): run git rev-parse HEAD; uncommitted changes: dirty: true',
@@ -559,9 +559,9 @@ export const INTEGRITY_RULES: IntegrityRule[] = [
   rule('unowned_code_ref', 'warning', 'global', 'a code ref no component owns', 'add an owns glob to the component that holds the file'),
   rule('owns_matches_nothing', 'warning', 'global', 'an owns glob that matches no referenced code', 'fix the glob, or add refs to the code it owns'),
   rule('spec_ready_without_criteria', 'error', 'element', 'a spec moving to ready while a live section has no acceptance criterion', 'add an acceptance criterion for each listed section (or verifiedBy one), then set ready', 'DocRules.beforeWrite (ready_gate)'),
-  rule('spec_section_without_criteria', 'warning', 'element', 'a section of a ready / done spec without an acceptance criterion (own acceptance, verifiedBy or a followed rule)', 'add an acceptance criterion that verifies it (spec_section_insert type acceptance, verifiedBy)'),
+  rule('spec_section_without_criteria', 'warning', 'element', 'a section of a ready / done spec without an acceptance criterion (own acceptance, verifiedBy or a followed rule)', 'add an acceptance criterion that verifies it (section_insert type acceptance, verifiedBy)'),
   rule('self_approved_override', 'warning', 'global', 'a feedback item accepted with an approval override (it may approve its accepter\'s own waivers / exemptions / criteria removals)', 'have another person review it; the override reason is on the item and its Approval-Override commit'),
-  rule('spec_done_without_criteria', 'warning', 'element', 'a done spec without any live acceptance criterion', 'add acceptance criteria (spec_section_insert type acceptance) and verify them'),
+  rule('spec_done_without_criteria', 'warning', 'element', 'a done spec without any live acceptance criterion', 'add acceptance criteria (section_insert type acceptance) and verify them'),
   rule('external_follows_internal', 'warning', 'element', 'an external component that follows internal code rules (rules with a code scope or check)', 'move the follows link to the internal component that calls the service'),
   rule('audit_pass_contradicted', 'warning', 'global', 'an audit item recorded pass while an open must / critical finding of the same audit contradicts it (its own, or one on the code it verifies)', 'record a failing verification and re-audit the item'),
   rule('fix_misses_finding_code', 'warning', 'global', 'an open fix work order whose sections miss the spec section owning a finding\'s code', 'create the fix on the section whose code refs contain the finding\'s code'),

@@ -506,7 +506,7 @@ export class DocReadService {
         },
       });
     }
-    if (!seen) throw new ReadError(`no section '${sectionId}' in the history of ${kind}/${id}`, 'unknown_section', 'list sections with spec_get metadataOnly', 'ref', 404);
+    if (!seen) throw new ReadError(`no section '${sectionId}' in the history of ${kind}/${id}`, 'unknown_section', 'list sections with get metadataOnly', 'ref', 404);
     return { uri: buildRef({ kind, id, sectionId }), total: entries.length, entries: entries.slice(0, limit) };
   }
 

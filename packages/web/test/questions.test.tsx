@@ -215,7 +215,7 @@ describe('question cards', () => {
       ]),
     );
     // The confirmation carries the line to tell the coding agent to continue (every id answered), with a copy button.
-    const line = 'Your Mandate questions ask-0001, ask-0002 were answered — read them with question_get and continue.';
+    const line = 'Your Mandate questions ask-0001, ask-0002 were answered — read them with get and continue.';
     await waitFor(() => expect(screen.getAllByTestId('q-continue').some((n) => n.textContent?.includes(line))).toBe(true));
     const note = screen.getAllByTestId('q-continue').find((n) => n.textContent?.includes(line))!;
     expect(note.textContent).toContain('Tell your coding agent to continue');
@@ -236,7 +236,7 @@ describe('question cards', () => {
     const card = await screen.findByTestId('question-ask-0001');
     await waitFor(() => expect((within(card).getByTestId('q-submit') as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(within(card).getByTestId('q-submit'));
-    await waitFor(() => expect(screen.getAllByTestId('q-continue').some((n) => n.textContent?.includes('Your Mandate question ask-0001 was answered — read it with question_get and continue.'))).toBe(true));
+    await waitFor(() => expect(screen.getAllByTestId('q-continue').some((n) => n.textContent?.includes('Your Mandate question ask-0001 was answered — read it with get and continue.'))).toBe(true));
   });
 
   it('without write access: read-only with the reason', async () => {

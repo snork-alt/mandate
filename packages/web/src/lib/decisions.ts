@@ -15,7 +15,7 @@ export interface DecisionAccess {
 }
 
 export function useDecisions(limit = 50) {
-  return useQuery({ queryKey: ['overview', 'decisions', limit], queryFn: ({ signal }) => callTool<DecisionsList>('decisions_list', { limit }, signal), staleTime: 10_000 });
+  return useQuery({ queryKey: ['overview', 'decisions', limit], queryFn: ({ signal }) => callTool<DecisionsList>('list', { of: 'decisions', limit }, signal), staleTime: 10_000 });
 }
 
 export function useDecisionAccess() {

@@ -678,7 +678,7 @@ export function ArchitectureView({ initialFocus }: { initialFocus?: string | nul
         <EmptyView
           icon={<IconBox size={22} stroke={1.5} />}
           title="No components yet"
-          description="Components describe the architecture: coding agents add them with component_create as they document the system."
+          description="Components describe the architecture: coding agents add them with create as they document the system."
         />
       )}
     </div>

@@ -344,7 +344,7 @@ export class NewsService {
     const more = unread.length - shown.length;
     const lines = shown.map((i) => `- #${i.seq} ${i.kind}: ${i.summary} (${i.ref})`);
     const message = [
-      `Mandate news about your work (${unread.length} unread). Act on it before continuing: answered question → question_get it and continue the blocked work; work order cancelled / taken over → stop that work; findings / changes → address them; flow changed → follow the new instructions and update your memory. Each item stays until you read its ref or news_ack it.`,
+      `Mandate news about your work (${unread.length} unread). Act on it before continuing: answered question → get it and continue the blocked work; work order cancelled / taken over → stop that work; findings / changes → address them; flow changed → follow the new instructions and update your memory. Each item stays until you read its ref or news_ack it.`,
       ...lines,
       ...(more ? [`…and ${more} more: news_list {"unread":true}`] : []),
     ].join('\n');

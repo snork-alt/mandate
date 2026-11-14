@@ -12,14 +12,16 @@ import { SKILL_BODY } from '../../src/mcp/guide.js';
 import type { ToolContext } from '../../src/mcp/define.js';
 
 const names = new Set(TOOLS.map((t) => t.name));
-const PREFIX = /^(project|spec|standard|component|work_order|feedback|verification|graph|rule|rules|search|symbol|code|text|architecture|audit|comment)_/;
+const PREFIX = /^(project|spec|standard|component|work_order|feedback|verification|graph|rule|rules|search|symbol|code|text|architecture|audit|comment|tools)_/;
 
 describe('bootstrap skill', () => {
   it('names only real MCP tools (the dry-run review)', () => {
     const texts = [BOOTSTRAP_SKILL_BODY, BOOTSTRAP_COMMAND.render('--resume')];
     const mentioned = new Set(texts.flatMap((t) => [...t.matchAll(/\b([a-z]+(?:_[a-z]+)+)\b/g)].map((m) => m[1]!)).filter((n) => (PREFIX.test(n) || n === 'rules_for_code') && !(NOTE_TYPES as readonly string[]).includes(n) && n !== 'standard_confirmation'));
     expect([...mentioned].filter((n) => !names.has(n))).toEqual([]);
-    for (const n of ['project_info', 'spec_match', 'spec_create', 'component_create', 'standard_create', 'verification_record', 'feedback_create', 'code_context_set']) expect(mentioned.has(n), n).toBe(true);
+    for (const n of ['project_info', 'spec_match', 'tools_enable', 'verification_record', 'feedback_create', 'code_context_set']) expect(mentioned.has(n), n).toBe(true);
+    for (const of of ['specs', 'components', 'standards']) expect(BOOTSTRAP_SKILL_BODY).toContain(`create { of: "${of}" }`);
+    expect(BOOTSTRAP_SKILL_BODY).toContain('tools_enable { sets: ["bootstrap"] }');
   });
 
   it('covers the stages, resume, notes schema, asking rules and the standards rule', () => {

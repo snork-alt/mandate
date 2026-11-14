@@ -50,13 +50,13 @@ export function recommendedAnswers(q: Pick<Question, 'questions'>): Answers {
 export function useQuestions(context: string | undefined, status: 'open' | 'answered' | 'closed' | 'all' = 'all', limit = 20) {
   return useQuery({
     queryKey: ['questions', context ?? '*', status, limit],
-    queryFn: ({ signal }) => callTool<{ items: Question[]; total: number }>('questions_list', { status, limit, ...(context ? { context } : {}) }, signal),
+    queryFn: ({ signal }) => callTool<{ items: Question[]; total: number }>('list', { of: 'questions', status, limit, ...(context ? { context } : {}) }, signal),
     staleTime: 15_000,
   });
 }
 
 export function useQuestion(id: string) {
-  return useQuery({ queryKey: ['questions', 'one', id], queryFn: ({ signal }) => callTool<{ question: Question }>('question_get', { id }, signal), enabled: !!id });
+  return useQuery({ queryKey: ['questions', 'one', id], queryFn: ({ signal }) => callTool<{ question: Question }>('get', { of: 'questions', ref: id }, signal), enabled: !!id });
 }
 
 const errorText = (e: unknown) => {

@@ -47,7 +47,7 @@ export interface McpFixture {
 /** Bearer key per endpoint URL (set by `serveProjects`), so `connect(url)` authenticates like an agent. */
 const keyByUrl = new Map<string, string>();
 
-export async function connect(url: URL, name = 'mandate-test', key: string | null | undefined = keyByUrl.get(url.href)): Promise<Client> {
+export async function connect(url: URL, name = 'mandate-test', key: string | null | undefined = keyByUrl.get(url.href) ?? keyByUrl.get(`${url.origin}${url.pathname}`)): Promise<Client> {
   const client = new Client({ name, version: '0.0.0' });
   await client.connect(new StreamableHTTPClientTransport(url, key ? { requestInit: { headers: { Authorization: `Bearer ${key}` } } } : undefined));
   return client;

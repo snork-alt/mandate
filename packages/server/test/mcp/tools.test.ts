@@ -9,6 +9,8 @@ import { lineageTools } from '../../src/mcp/tools/lineage.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { questionTools } from '../../src/mcp/tools/questions.js';
 import { AGENT_TOOLS, UI_ONLY_TOOL_NAMES, TOOLS } from '../../src/mcp/index.js';
+import { listedTools } from '../../src/mcp/server.js';
+import { DEFAULT_SETS, MERGED } from '../../src/mcp/tool-sets.js';
 import { connect, mcpFixture, type McpFixture } from './fixture.js';
 
 let fx: McpFixture;
@@ -29,7 +31,8 @@ const short = () => fx.older.slice(0, 7);
 // project_flow_set is a write tool covered by test/mcp/guide.test.ts; upload_url_create by test/mcp/uploads.test.ts.
 // Audit write tools: test/mcp/audits.test.ts. Work-order document and comment write tools: test/mcp/work-orders.test.ts.
 // The flow and news tools need project settings: covered by test/mcp/flow.test.ts and news.test.ts. Questions (and question_get): questions.test.ts.
-const WRITE_SUITE = new Set([...writeTools.map((t) => t.name), 'project_flow_set', 'flow_set', 'flow_policy_set', 'flow_clients_list', 'news_list', 'news_ack', 'upload_url_create', 'integrity_snooze', 'approval_override_confirm', ...auditTools.filter((t) => t.kind === 'write').map((t) => t.name), ...workOrderDocTools.filter((t) => t.kind === 'write').map((t) => t.name), ...lineageTools.filter((t) => t.kind === 'write').map((t) => t.name), ...questionTools.filter((t) => t.kind === 'write' || t.name === 'question_get').map((t) => t.name)]);
+// Merged tools and tools_enable: test/mcp/tool-sets.test.ts.
+const WRITE_SUITE = new Set([...MERGED.map((m) => m.name), 'tools_enable', ...writeTools.map((t) => t.name), 'project_flow_set', 'flow_set', 'flow_policy_set', 'flow_clients_list', 'news_list', 'news_ack', 'upload_url_create', 'integrity_snooze', 'approval_override_confirm', ...auditTools.filter((t) => t.kind === 'write').map((t) => t.name), ...workOrderDocTools.filter((t) => t.kind === 'write').map((t) => t.name), ...lineageTools.filter((t) => t.kind === 'write').map((t) => t.name), ...questionTools.filter((t) => t.kind === 'write' || t.name === 'question_get').map((t) => t.name)]);
 const READ_TOOLS = TOOLS.filter((t) => !WRITE_SUITE.has(t.name));
 const HAPPY: Record<string, { args: () => Record<string, unknown>; check: (b: Record<string, any>) => void }> = {
   // (the security-baseline rule "rotating refresh tokens" competes for the top spot since standards have rule sections)
@@ -169,7 +172,11 @@ const HAPPY: Record<string, { args: () => Record<string, unknown>; check: (b: Re
 
 describe('tools/list', () => {
   it('lists every tool with a description and an object JSON Schema', async () => {
-    const { tools } = await fx.client.listTools();
+    // The default list is the core set; ?tools=all lists every agent tool (tool-sets.ts).
+    expect((await fx.client.listTools()).tools.map((t) => t.name).sort()).toEqual(listedTools(new Set(DEFAULT_SETS)).map((t) => t.name).sort());
+    const all = await connect(new URL(`${fx.url.href}?tools=all`));
+    const { tools } = await all.listTools();
+    await all.close();
     // Agent sessions are not served the UI / ops tools (uiOnly, deprecated, web-UI views).
     expect(tools.map((t) => t.name).sort()).toEqual(AGENT_TOOLS.map((t) => t.name).sort());
     for (const n of UI_ONLY_TOOL_NAMES) expect(tools.some((t) => t.name === n), n).toBe(false);

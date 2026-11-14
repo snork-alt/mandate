@@ -34,9 +34,12 @@ describe('lifecycle registry', () => {
   });
 
   it('summarizes the gates of a status tool in one line', () => {
-    const s = gateSummary('spec_status_set');
-    expect(s).toContain('ready -> done (DONE GATE');
-    expect(s).toContain('lifecycle_get { kind: "spec" }');
+    // status_set serves specs, standards and components: each transition names its kind.
+    const s = gateSummary('status_set');
+    expect(s).toContain('spec ready -> done (DONE GATE');
+    expect(s).toContain('standard active -> deprecated');
+    expect(s).toContain('lifecycle_get { kind }');
+    expect(gateSummary('feedback_accept')).toContain('lifecycle_get { kind: "feedback" }');
     expect(s).not.toContain('\n');
     expect(gateSummary('search')).toBe('');
   });

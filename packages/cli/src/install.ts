@@ -53,13 +53,16 @@ export function pickAgents(ctx: Ctx, a: Args): AgentDef[] {
   return detectAgents(ctx);
 }
 
-/** User-scope wiring: the master skill, /mandate-flow, MCP entries for every project (env-var keys), env.sh, shell rc hook. */
+/** User-scope wiring: the master skill, /mandate-flow, the MCP entry of the project when there is exactly one, env.sh, shell rc hook. */
 export function userWiringChanges(ctx: Ctx, agents: AgentDef[], baseUrl: string): { changes: (Change | null)[]; skipped: string[] } {
   const changes: (Change | null)[] = [];
   const skipped: string[] = [];
   changes.push(...skillChanges(ctx, agents), ...commandChanges(ctx, agents));
   const projects = listProjects(ctx).map((p) => p.id);
-  if (projects.length) {
+  // One Mandate server per config file (agents would see Mandate's tools once per entry): with several projects, the
+  // user scope is left as it is and each repo gets its own project-scope entry (`mandate connect` inside the repo).
+  if (projects.length > 1) skipped.push(`${projects.length} projects: user-scope MCP entries not written (one Mandate server per config file); run ${BIN} connect inside each repo to wire its project`);
+  if (projects.length === 1) {
     for (const ag of agents) {
       const t = ag.userMcp?.(ctx);
       if (!t || !can(ag, 'mcp', ctx.force)) {
@@ -72,7 +75,7 @@ export function userWiringChanges(ctx: Ctx, agents: AgentDef[], baseUrl: string)
         continue;
       }
       try {
-        changes.push(mcpUpsert(ag, t, ...projects.map((id) => ({ ...makeServer(baseUrl, id), oauth: true }))));
+        changes.push(mcpUpsert(ag, t, { ...makeServer(baseUrl, projects[0]!), oauth: true }));
       } catch (e) {
         skipped.push(e instanceof JsoncError ? `${ag.label}: ${e.message}; add the mandate-<project> servers by hand (${BIN} connect prints them)` : `${ag.label}: ${(e as Error).message}`);
       }
@@ -222,7 +225,7 @@ export async function cmdInstall(rt: Runtime, a: Args): Promise<number> {
     if (!found.length) out.log(info(`no coding agents detected (${AGENTS.map((x) => x.label).join(', ')}); later: ${BIN} install --agents-only`));
     else {
       out.log(info(`detected: ${found.map((x) => c.bold(x.label)).join(', ')}`));
-      if (await rt.prompt.confirm('Add the Mandate skills and the /mandate-flow and /mandate-bootstrap commands to them (and MCP entries for existing projects)?', true)) wireAgents(rt, found, s.url);
+      if (await rt.prompt.confirm('Add the Mandate skills and the /mandate-flow and /mandate-bootstrap commands to them (and the MCP entry when there is a single project)?', true)) wireAgents(rt, found, s.url);
       else out.log(info(`skipped; later: ${BIN} install --agents-only`));
     }
   }

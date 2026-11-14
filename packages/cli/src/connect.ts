@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { bool, str, type Args } from './args.js';
-import { can, commandChanges, envVarFor, makeServer, mcpRemove, mcpUpsert, OAUTH_AGENTS, projectCommandChanges, skillChanges, type AgentDef } from './agents.js';
+import { can, commandChanges, envVarFor, makeServer, mcpRemove, mcpUpsert, OAUTH_AGENTS, projectCommandChanges, projectScopeOnly, skillChanges, type AgentDef } from './agents.js';
 import { BIN, envFile, type Ctx } from './context.js';
 import { applyChanges, JsoncError, type Change } from './edits.js';
 import { disconnectChanges, pickAgents, type Runtime } from './install.js';
@@ -173,6 +173,12 @@ async function connectRemote(rt: Runtime, a: Args, repo: string, url: string): P
     if (oauth && !OAUTH_AGENTS.has(ag.id)) {
       wired.set(ag.id, { mcp: 'needs a personal token' });
       skipped.push(`${ag.label}: cannot sign in by itself; create a personal token (web UI → Connect agent) and run again with --auth token`);
+      continue;
+    }
+    // --repo: the project-scope entry is the one; the user-scope entry of the same project would only repeat it.
+    if (wireRepo && projectScopeOnly(ag, !!ctx.force, repo, ctx)) {
+      changes.push(mcpRemove(ag, t, server.name));
+      wired.set(ag.id, { mcp: true });
       continue;
     }
     try {

@@ -99,7 +99,9 @@ describe('agent keys', () => {
   it('reads and writes its own project; the write records the key name, never the key', async () => {
     const c = await client('alpha', keyOf('alpha'));
     const tools = await c.listTools();
-    expect(tools.tools.some((t) => t.name === 'spec_create')).toBe(true);
+    // The default list is the core set; spec_create (a hidden alias of create) is still callable by name.
+    expect(tools.tools.some((t) => t.name === 'tools_enable')).toBe(true);
+    expect(tools.tools.some((t) => t.name === 'spec_create')).toBe(false);
     const w = await c.callTool({ name: 'spec_create', arguments: SPEC });
     expect(w.isError).toBeFalsy();
     const act = (await c.callTool({ name: 'activity_list', arguments: { limit: 5 } })).structuredContent as { events: { source?: string; agent?: string }[] };

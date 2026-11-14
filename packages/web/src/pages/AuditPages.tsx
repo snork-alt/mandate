@@ -333,7 +333,7 @@ function AuditSummaryBar({ audits, selected, onToggle }: { audits: AuditSummary[
 }
 
 export function AuditListPage() {
-  const q = useMcpTool<{ audits: AuditSummary[]; total: number }>('audit_list', { limit: 200 });
+  const q = useMcpTool<{ audits: AuditSummary[]; total: number }>('list', { of: 'audits', limit: 200 });
   const [search, setSearch] = useSearchQuery();
   const all = q.data?.audits ?? [];
   const [picked, setPicked] = useState<string[]>([]);

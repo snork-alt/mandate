@@ -29,12 +29,15 @@ describe('working agreement text', () => {
     const mentioned = new Set(texts.flatMap((t) => [...t.matchAll(/`?\b([a-z]+(?:_[a-z]+)+)\b`?/g)].map((m) => m[1]!)).filter((n) => /^(spec|standard|component|work_order|feedback|verification|project|graph|rule|rules|search|symbol|code|text|architecture)_/.test(n) || n === 'rules_for_code'));
     const unknown = [...mentioned].filter((n) => !byName.has(n) && !['spec_section', 'standard_section', 'flow_enabled', 'code_deviates', 'spec_wrong', 'standard_confirmation'].includes(n));
     expect(unknown).toEqual([]);
-    for (const n of ['project_info', 'spec_match', 'feedback_create', 'work_order_create', 'feedback_close', 'verification_record', 'work_order_complete', 'standard_section_insert']) expect(mentioned.has(n), n).toBe(true);
+    for (const n of ['project_info', 'spec_match', 'feedback_create', 'work_order_create', 'feedback_close', 'verification_record', 'work_order_complete']) expect(mentioned.has(n), n).toBe(true);
+    // Merged tools and tool sets (tool-sets.ts).
+    for (const n of ['section_insert', 'status_set', 'tools_enable']) expect(SKILL_BODY, n).toContain(`\`${n}`);
+    expect(CORE_RULES).toContain('tools_enable { sets }');
   });
 
   it('states the standards hard rule in the skill and the instructions', () => {
     for (const t of [SKILL_BODY, INSTRUCTIONS]) {
-      expect(t).toMatch(/standard_\*/);
+      expect(t).toMatch(/before ANY standard write/);
       expect(t).toMatch(/question tool/);
       expect(t).toMatch(/even (when\s+the approval checkpoint\s+is off|with approval off)/);
       expect(t).toContain('confirmedByUser');
@@ -47,7 +50,8 @@ describe('working agreement text', () => {
       expect(t).toContain('work_order_plan_set');
       expect(t).toMatch(/plans\/`?, `?PLAN\.md`?, `?docs\/plans\//);
       expect(t).toMatch(/flow (is )?off/i);
-      for (const n of ['work_order_touch', 'work_order_git_update', 'comments_list', 'comment_add', 'comment_resolve', 'outcome', 'blocking']) expect(t, n).toContain(n);
+      for (const n of ['work_order_touch', 'work_order_git_update', 'comment_add', 'comment_resolve', 'outcome', 'blocking']) expect(t, n).toContain(n);
+      expect(t).toMatch(/comments \(`?list`?\)/);
     }
     for (const n of ['comment_add', 'comment_resolve', 'comment_reopen', 'comments_list', 'work_order_touch_from_commits']) {
       if (SKILL_BODY.includes(n)) expect(byName.has(n), n).toBe(true);

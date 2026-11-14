@@ -24,6 +24,7 @@ import { callTool, defineTool, describeTool, type SessionState, type ToolContext
 import { registerUploadRoutes, UploadService } from './uploads.js';
 import { listDecisions } from '../storage/decisions.js';
 import { createMcpServer, MCP_VERSION } from './server.js';
+import { parseToolSets } from './tool-sets.js';
 
 export type { ActivityEvent };
 
@@ -74,6 +75,13 @@ export const samePrincipal = (a: Principal, b: Principal) =>
 /** The GitHub login a principal acts as (null for shared project keys). */
 export const loginOf = (p: Principal): string | null => (p.kind === 'ui' ? p.user.login : p.kind === 'user' ? p.login : null);
 
+/** The `tools` query parameter of the MCP URL (first value). */
+const toolsParam = (req: FastifyRequest): string | undefined => {
+  const v = (req.query as Record<string, unknown> | undefined)?.tools;
+  const s = Array.isArray(v) ? v[0] : v;
+  return typeof s === 'string' && s.length <= 200 ? s : undefined;
+};
+
 export function registerMcp(app: FastifyInstance, opts: McpRouteOptions): McpHub {
   const { projects } = opts;
   const sessions = new Map<string, Session>();
@@ -123,8 +131,9 @@ export function registerMcp(app: FastifyInstance, opts: McpRouteOptions): McpHub
   };
 
   const uploads = opts.uploads ?? new UploadService();
-  const newSession = async (project: string | null, principal: Principal, access: Access, baseUrl: string): Promise<Session> => {
-    const state: SessionState = { subscription: null, asked: new Set() };
+  const newSession = async (project: string | null, principal: Principal, access: Access, baseUrl: string, tools?: string): Promise<Session> => {
+    // `?tools=core,intake|all` on the MCP URL: the sets listed from the start (clients that ignore list_changed).
+    const state: SessionState = { subscription: null, asked: new Set(), ...(tools ? { toolSets: parseToolSets(tools).sets } : {}) };
     let server: McpServer;
     if (project === null) {
       server = createProjectListServer(projects, principal, opts.perms);
@@ -166,7 +175,7 @@ export function registerMcp(app: FastifyInstance, opts: McpRouteOptions): McpHub
       if (req.headers['mcp-session-id']) return rpcError(reply, 404, -32001, 'session not found; reinitialize');
       if (!isInitializeRequest(req.body)) return rpcError(reply, 400, -32000, 'no session: send an initialize request first');
       try {
-        session = await newSession(project, principal, access, opts.baseUrl ?? `${req.protocol}://${req.headers.host}`);
+        session = await newSession(project, principal, access, opts.baseUrl ?? `${req.protocol}://${req.headers.host}`, toolsParam(req));
       } catch (e) {
         req.log.error(`mcp: ${(e as Error).message}`);
         return rpcError(reply, 503, -32000, `project '${project}' is unavailable: ${(e as Error).message}`);
@@ -217,7 +226,7 @@ export function registerMcp(app: FastifyInstance, opts: McpRouteOptions): McpHub
               s.state.asked!.delete(id);
               return (s.server.server.notification as (n: { method: string; params: Record<string, unknown> }) => Promise<void>)({
                 method: QUESTION_ANSWERED_NOTIFICATION,
-                params: { id, ref: event.refs[0]!, summary: event.summary, answers: (event.details as Record<string, unknown> | undefined)?.answers ?? {}, hint: 'question_get for the full answer; cite it as cause of the writes it decides' },
+                params: { id, ref: event.refs[0]!, summary: event.summary, answers: (event.details as Record<string, unknown> | undefined)?.answers ?? {}, hint: 'get { ref } for the full answer; cite it as cause of the writes it decides' },
               }).catch(() => undefined);
             }),
         );

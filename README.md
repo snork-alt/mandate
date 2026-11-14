@@ -348,6 +348,11 @@ in memory only, so no SSH key is needed. `git.auth.method: "ssh"` uses `sshKeyPa
 - **MCP is the only interface**, for agents and for the web UI, which is itself an MCP client. The UI session is
   read-only except for human decisions (answering questions, accepting feedback, waivers, releasing stale claims), which
   go through the same write tools with the same gates and are attributed to you.
+- **Few tools by default.** Agents see the ~30 `core` tools (project info, `search` / `get` / `list`, the work-order
+  steps, feedback, verification, questions, `status_set`). `tools_enable { sets }` adds `intake`, `bootstrap`,
+  `review`, `lineage` or `admin` (the server sends `tools/list_changed`); clients that don't refresh their list can
+  use `…/p/<project>/mcp?tools=core,intake` or `?tools=all`. Any tool can be called by name even when it is not listed,
+  and the older per-type names (`spec_get`, `spec_status_set`, ...) still work.
 - **Strict by design.** Every call is validated: status transitions, the done gate on acceptance criteria, claim
   conflicts, link direction rules, append-only verifications. Errors carry codes an agent can act on.
 - **Indexes stay current.** Full-text, symbol and graph indexes update on every commit; embeddings are computed in the

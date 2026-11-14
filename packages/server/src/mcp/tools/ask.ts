@@ -1,4 +1,5 @@
 /** `ask`: built-in answering with the configured model over Mandate's read tools (streams notifications/mandate/ask). */
+import { ALIASES } from '../tool-sets.js';
 import { ASK_NOTIFICATION, askInputSchema, type AskEvent } from '@mandate/shared';
 import { DEFAULT_ASK_CONFIG } from '../../config.js';
 import { askLimits, askModelStatus, cachedAskModel, ConversationStore, liveAskConfig, runAsk, type AskModel } from '../../ask/index.js';
@@ -22,7 +23,8 @@ export const ASK_EXCLUDED_TOOLS: Readonly<Record<string, string>> = {
 };
 /** Tools the model may call: every read tool except ASK_EXCLUDED_TOOLS. */
 export function askToolset(all: AnyToolDef[]): AnyToolDef[] {
-  return all.filter((t) => t.kind === 'read' && t.annotations?.readOnlyHint !== false && !Object.hasOwn(ASK_EXCLUDED_TOOLS, t.name));
+  // Each tool once: the merged tools (get, list), not their hidden per-type aliases.
+  return all.filter((t) => t.kind === 'read' && t.annotations?.readOnlyHint !== false && !Object.hasOwn(ASK_EXCLUDED_TOOLS, t.name) && !ALIASES[t.name]);
 }
 
 /** Fallback when the context has no per-project store (tests building a bare ToolContext). */

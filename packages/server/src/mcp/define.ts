@@ -105,6 +105,8 @@ export interface SessionState {
   waiting?: boolean;
   /** The code the agent works on (`code_context_set`): stamped on every write of this session (Code-Context trailer). */
   codeContext?: CodeContext;
+  /** Tool sets listed to this session (tool-sets.ts; unset = the default `core`): `?tools=` and `tools_enable`. */
+  toolSets?: Set<string>;
 }
 
 export interface WriteMeta {
@@ -212,6 +214,10 @@ export interface ToolDef<S extends z.ZodType = z.ZodType> {
   /** Write tools: causes implied by the arguments (e.g. a work order's `reason`), recorded with `cause` (L-2). */
   causes?: (args: z.output<S>) => string[] | undefined;
   run(args: z.output<S>, ctx: ToolContext): Promise<unknown>;
+  /** Merged tools (tool-sets.ts): the listed input schema (the targets' schemas merged). */
+  jsonSchema?: Tool['inputSchema'];
+  /** Merged tools: the per-type tool and arguments a call runs (validation, errors and results are that tool's). */
+  route?: (args: unknown) => { def: AnyToolDef; args: unknown } | { error: ToolErrorBody };
 }
 
 export type AnyToolDef = ToolDef<z.ZodType>;
@@ -295,6 +301,9 @@ export function inputJsonSchema(schema: z.ZodType): Tool['inputSchema'] {
   if (js.type !== 'object') return { type: 'object', ...js } as Tool['inputSchema'];
   return js as Tool['inputSchema'];
 }
+
+/** The input schema a tool is listed with (merged tools: their merged schema). */
+export const toolJsonSchema = (def: AnyToolDef): Tool['inputSchema'] => def.jsonSchema ?? inputJsonSchema(def.input);
 
 /** Top-level keys of an object schema (for "allowed keys" hints). */
 function keysOf(schema: z.ZodType): string[] {
@@ -465,6 +474,11 @@ async function claimNews(ctx: ToolContext): Promise<void> {
 
 /** Validate and run one tool call (agent clients: with their news). Never throws. */
 export async function callTool(def: AnyToolDef, rawArgs: unknown, ctx: ToolContext): Promise<CallToolResult> {
+  // A merged tool runs the per-type tool its ref / `of` selects, exactly as a direct call of that tool.
+  if (def.route) {
+    const r = def.route(rawArgs);
+    return 'error' in r ? errorResult(r.error) : callTool(r.def, r.args, ctx);
+  }
   await flowNews(def, ctx);
   await claimNews(ctx);
   const res = await runCall(def, rawArgs, ctx);
@@ -599,7 +613,7 @@ export function describeTool(def: AnyToolDef, description: string): Tool {
     name: def.name,
     title: def.title,
     description,
-    inputSchema: inputJsonSchema(def.input),
+    inputSchema: toolJsonSchema(def),
     annotations: {
       title: def.title,
       readOnlyHint: def.kind === 'read',

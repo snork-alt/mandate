@@ -7,8 +7,8 @@ import './questions.css';
 /** The ready-made line for the coding agent, for the question ids answered in one action. */
 export function continueLine(ids: string[]): string {
   return ids.length === 1
-    ? `Your Mandate question ${ids[0]} was answered — read it with question_get and continue.`
-    : `Your Mandate questions ${ids.join(', ')} were answered — read them with question_get and continue.`;
+    ? `Your Mandate question ${ids[0]} was answered — read it with get and continue.`
+    : `Your Mandate questions ${ids.join(', ')} were answered — read them with get and continue.`;
 }
 
 export function ContinueNotice({ ids }: { ids: string[] }) {

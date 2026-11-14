@@ -21,7 +21,8 @@ describe('installer: connect --url (user scope)', () => {
     expect(await run(args, envOf(ctx), out, ctx.dir)).toBe(0);
     const entry = claudeJson(ctx).mcpServers['mandate-web'];
     expect(entry).toEqual({ type: 'http', url: 'https://mandate.example.com/p/web/mcp' });
-    expect(codexToml(ctx)).toContain('url = "https://mandate.example.com/p/web/mcp"');
+    // Codex does not refresh its list on tools/list_changed: every tool set from the start.
+    expect(codexToml(ctx)).toContain('url = "https://mandate.example.com/p/web/mcp?tools=all"');
     expect(codexToml(ctx)).not.toContain('bearer_token_env_var');
     expect(existsSync(path.join(ctx.home, '.claude', 'skills', 'mandate', 'SKILL.md'))).toBe(true);
     const text = out.text();
@@ -61,9 +62,56 @@ describe('installer: connect --url (user scope)', () => {
     write(path.join(repo, 'README.md'), 'x\n');
     const env = { ...envOf(ctx), MANDATE_KEY_NOTES: 'mnd_notes_should_not_be_used' };
     expect(await run(['connect', '--yes', '--repo', '--url', 'http://localhost:4391', '--project', 'notes', '--agents', 'claude-code'], env, capture(), repo)).toBe(0);
-    expect(claudeJson(ctx).mcpServers['mandate-notes']).toEqual({ type: 'http', url: 'http://localhost:4391/p/notes/mcp' });
+    // --repo: the project-scope entry only (the user scope would repeat it).
+    expect(existsSync(path.join(ctx.home, '.claude.json')) ? claudeJson(ctx).mcpServers?.['mandate-notes'] : undefined).toBeUndefined();
     const project = readFileSync(path.join(repo, '.mcp.json'), 'utf8');
+    expect(JSON.parse(project).mcpServers['mandate-notes']).toEqual({ type: 'http', url: 'http://localhost:4391/p/notes/mcp' });
     expect(project).not.toMatch(/Authorization|mnd_/);
     expect(existsSync(path.join(ctx.mandateHome, 'env.sh'))).toBe(false);
+  });
+});
+
+describe('one Mandate server per config file', () => {
+  const stacked = {
+    numStartups: 1,
+    mcpServers: {
+      github: { type: 'http', url: 'https://api.githubcopilot.com/mcp/' },
+      'mandate-wafrpay': { type: 'http', url: 'https://mandate.example.com/p/wafrpay/mcp' },
+      'mandate-wafrpay2': { type: 'http', url: 'https://mandate.example.com/p/wafrpay2/mcp' },
+      wafr3: { type: 'http', url: 'https://mandate.example.com/p/wafrpay3/mcp?tools=all' },
+      elsewhere: { type: 'http', url: 'https://other.example.com/p/x/mcp' },
+    },
+  };
+
+  it('connect replaces the other Mandate entries of the file (by name or URL), prints what it replaced, keeps the rest', async () => {
+    const ctx = tempCtx();
+    write(path.join(ctx.home, '.claude.json'), `${JSON.stringify(stacked, null, 2)}\n`);
+    const out = capture();
+    expect(await run(['connect', '--yes', '--no-repo', '--url', 'https://mandate.example.com', '--project', 'web', '--agents', 'claude-code'], envOf(ctx), out, ctx.dir)).toBe(0);
+    const j = claudeJson(ctx);
+    expect(Object.keys(j.mcpServers).sort()).toEqual(['elsewhere', 'github', 'mandate-web']);
+    expect(j.numStartups).toBe(1);
+    expect(out.text().split('\n').filter((l) => l.includes('replaced mandate-wafrpay, mandate-wafrpay2, wafr3'))).toHaveLength(1);
+  });
+
+  it('codex: managed blocks of other projects are replaced; its own tables stay', async () => {
+    const ctx = tempCtx();
+    const args = (p: string) => ['connect', '--yes', '--no-repo', '--url', 'https://mandate.example.com', '--project', p, '--agents', 'codex'];
+    expect(await run(args('one'), envOf(ctx), capture(), ctx.dir)).toBe(0);
+    expect(await run(args('two'), envOf(ctx), capture(), ctx.dir)).toBe(0);
+    expect(codexToml(ctx)).not.toContain('mandate-one');
+    expect(codexToml(ctx).match(/\[mcp_servers\.mandate-/g)).toHaveLength(1);
+  });
+
+  it('--repo: project scope replaces stacked project entries and the user-scope entry of the project (Codex keeps it: trusted projects only)', async () => {
+    const ctx = tempCtx();
+    const repo = path.join(ctx.dir, 'repo');
+    write(path.join(repo, 'README.md'), 'x\n');
+    write(path.join(repo, '.mcp.json'), `${JSON.stringify({ mcpServers: stacked.mcpServers }, null, 2)}\n`);
+    write(path.join(ctx.home, '.claude.json'), `${JSON.stringify({ mcpServers: { 'mandate-web': { type: 'http', url: 'https://mandate.example.com/p/web/mcp' }, github: { type: 'http', url: 'https://x' } } }, null, 2)}\n`);
+    expect(await run(['connect', '--yes', '--repo', '--url', 'https://mandate.example.com', '--project', 'web', '--agents', 'claude-code,codex'], envOf(ctx), capture(), repo)).toBe(0);
+    expect(Object.keys(JSON.parse(readFileSync(path.join(repo, '.mcp.json'), 'utf8')).mcpServers).sort()).toEqual(['elsewhere', 'github', 'mandate-web']);
+    expect(Object.keys(claudeJson(ctx).mcpServers)).toEqual(['github']);
+    expect(codexToml(ctx)).toContain('[mcp_servers.mandate-web]');
   });
 });

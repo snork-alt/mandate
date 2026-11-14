@@ -25,7 +25,7 @@ const historyOf = (kind: RefKind, id: string) => call<{ entries: HistoryEntry[] 
 export const api = {
   list: (kind: EntityKind) => call<{ items: Entity[] }>('doc_list', { kind }).then((r) => r.items),
   get: (kind: EntityKind, id: string): Promise<Entity> =>
-    (kind === 'work-orders' ? call<Entity>('work_order_get', { ref: id }) : kind === 'feedback' ? call<Entity>('feedback_get', { ref: id }) : call<Entity>('doc_get', { kind, id })).then(primed(kind, id)),
+    (kind === 'work-orders' ? call<Entity>('get', { of: 'work-orders', ref: id }) : kind === 'feedback' ? call<Entity>('get', { of: 'feedback', ref: id }) : call<Entity>('doc_get', { kind, id })).then(primed(kind, id)),
   history: (kind: DocKind, id: string) => historyOf(kind, id),
   version: (kind: DocKind, id: string, commit: string, against: 'parent' | 'head' = 'parent', base?: string) =>
     call<FileVersion>('version_get', compact({ kind, id, commit, against: against === 'head' ? 'head' : undefined, base })),
@@ -39,14 +39,14 @@ export const api = {
       throw e;
     }
   },
-  workOrder: (id: string, at?: string) => call<ResolvedWorkOrder>('work_order_get', compact({ ref: id, at })).then(at ? (r) => r : primed('work-orders', id)),
+  workOrder: (id: string, at?: string) => call<ResolvedWorkOrder>('get', compact({ of: 'work-orders', ref: id, at })).then(at ? (r) => r : primed('work-orders', id)),
   workOrderHistory: (id: string) => historyOf('work-orders', id),
   /** The work-order document (`doc_get`): stored doc + git meta + `workOrder` (the resolved view). */
   workOrderDoc: (id: string) => call<StoredWorkOrderDoc & { workOrder: ResolvedWorkOrder; lastCommit?: string | null; versionCount?: number; updatedBy?: string | null }>('doc_get', { kind: 'work-orders', id }),
-  /** Comment threads on a target and its sections (`comments_list`). */
-  comments: (target: string, includeResolved = true) => call<{ target: string; counts: CommentCounts; threads: CommentThread[] }>('comments_list', { target, includeResolved }),
+  /** Comment threads on a target and its sections (`list` of comments). */
+  comments: (target: string, includeResolved = true) => call<{ target: string; counts: CommentCounts; threads: CommentThread[] }>('list', { of: 'comments', target, includeResolved }),
   implementation: (specId: string) => call<{ sections: SectionImplementation }>('spec_implementation', { id: specId }).then((r) => r.sections),
-  feedbackItem: (id: string) => call<ResolvedFeedback>('feedback_get', { ref: id }).then(primed('feedback', id)),
+  feedbackItem: (id: string) => call<ResolvedFeedback>('get', { of: 'feedback', ref: id }).then(primed('feedback', id)),
   feedbackHistory: (id: string) => historyOf('feedback', id),
   docFeedback: (kind: 'specs' | 'standards', id: string) => call<DocFeedback>('doc_feedback', { kind, id }),
   sectionTypes: () => call<{ items: SectionTypeInfo[] }>('section_types').then((r) => r.items),

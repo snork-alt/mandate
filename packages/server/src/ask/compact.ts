@@ -10,6 +10,7 @@
  *   (facets, statuses, section ids, refs taken from the result itself) and offers paging second. After
  *   MAX_CONTINUATIONS paged calls of a tool the continuation is withheld and the hint insists on narrowing.
  */
+import { perTypeName } from '../mcp/tool-sets.js';
 import { estimateTokens } from '@mandate/doc';
 
 export const MAX_CONTINUATIONS = 2;
@@ -412,5 +413,7 @@ export function bound(name: string, c: Compacted, o: BoundOptions): BoundResult 
 
 /** Compact + bound in one call (what Ask sends to the model). */
 export function modelResult(name: string, body: Body, args: Args, o: BoundOptions): BoundResult {
-  return bound(name, toModel(name, body, args), o);
+  // Merged tools (get, list) compact like the per-type tool the call ran.
+  const n = perTypeName(name, args) ?? name;
+  return bound(n, toModel(n, body, args), o);
 }

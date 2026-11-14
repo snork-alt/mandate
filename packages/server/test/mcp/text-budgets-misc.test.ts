@@ -15,7 +15,7 @@ const TOOL_BUDGETS: Record<string, number> = {"project_info":130,"instructions_g
 
 describe('text budgets', () => {
   it('bootstrap skill, description and command', () => {
-    expect(tok(BOOTSTRAP_SKILL_BODY)).toBeLessThanOrEqual(1800); // +80: DISTILL continue rule (no stage word = run every stage in this session)
+    expect(tok(BOOTSTRAP_SKILL_BODY)).toBeLessThanOrEqual(1810); // +80: DISTILL continue rule (no stage word = run every stage in this session); +10: tools_enable bootstrap
     expect(tok(BOOTSTRAP_SKILL_DESCRIPTION)).toBeLessThanOrEqual(64);
     expect(tok(BOOTSTRAP_COMMAND.description)).toBeLessThanOrEqual(44);
     expect(tok(BOOTSTRAP_COMMAND.render('$ARGUMENTS'))).toBeLessThanOrEqual(145); // +11: start DISTILL / REVIEW yourself with sub-agents

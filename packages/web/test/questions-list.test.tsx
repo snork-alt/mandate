@@ -41,8 +41,8 @@ vi.mock('../src/mcp/client', () => ({
   callTool: vi.fn(async (name: string, args: Record<string, unknown>) => {
     calls.push({ name, args });
     if (name === 'decision_access') return { canDecide: true, mode: 'server', user: 'ada', override: { ok: false, why: '' } };
-    if (name === 'decisions_list') return { items: [], total: openCount, counts: { question: openCount } };
-    if (name === 'questions_list') {
+    if (name === 'list' && args.of === 'decisions') return { items: [], total: openCount, counts: { question: openCount } };
+    if (name === 'list' && args.of === 'questions') {
       const items = args.status === 'open' ? OPEN : args.status === 'all' ? [...OPEN, ...CLOSED] : CLOSED;
       return { items, total: items.length };
     }
@@ -292,7 +292,7 @@ describe('questions in the Ask pane', () => {
     expect(within(opt).getByText('Question')).toBeTruthy();
     fireEvent.click(opt);
     await waitFor(() => expect(screen.getByTestId('probe').textContent).toContain('question:mandate://questions/ask-0007'));
-    expect(calls.some((c) => c.name === 'questions_list' && c.args.status === 'all')).toBe(true);
+    expect(calls.some((c) => c.name === 'list' && c.args.of === 'questions' && c.args.status === 'all')).toBe(true);
   });
 
   it('"Ask about this" on a question adds its chip and opens the Ask tab', async () => {
@@ -334,7 +334,7 @@ describe('sidebar', () => {
     );
     const item = screen.getByTestId('nav-questions-item');
     expect(within(item).getByText('Questions')).toBeTruthy();
-    await waitFor(() => expect(calls.map((c) => c.name)).toContain('decisions_list'));
+    await waitFor(() => expect(calls.some((c) => c.name === 'list' && c.args.of === 'decisions')).toBe(true));
     expect((await within(item).findByTestId('nav-questions')).textContent).toBe('3');
     expect(within(screen.getByTestId('nav-overview')).queryByTestId('nav-questions')).toBeNull();
     // Actions (right below Overview): the open decisions total; Overview has no badge.

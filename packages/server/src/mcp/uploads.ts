@@ -163,7 +163,7 @@ export async function checkTarget(ctx: ToolContext, t: { kind: DocKind; docId: s
   try {
     doc = await repoOf(ctx, t.kind).get(t.docId);
   } catch {
-    throw new UploadError(404, 'not_found', `${t.kind}/${t.docId} does not exist`, `check the id (${t.kind === 'specs' ? 'spec_list' : t.kind === 'standards' ? 'standard_list' : 'component_list'})`);
+    throw new UploadError(404, 'not_found', `${t.kind}/${t.docId} does not exist`, `check the id (list { of: "${t.kind}" })`);
   }
   if (doc.status && FROZEN[t.kind].includes(doc.status)) {
     throw new UploadError(409, 'target_frozen', `${t.kind}/${t.docId} is ${doc.status}; it takes no new content`, t.kind === 'standards' ? 'write to its successor (supersededBy)' : 'restore it first (status draft / active) or write to another document');

@@ -658,7 +658,7 @@ function AskAdvanced({ draft, setDraft }: { draft: LimitsDraft; setDraft: (d: Li
               <NumberInput size="sm" min={ASK_LIMITS.maxToolResultTokens.min} max={ASK_LIMITS.maxToolResultTokens.max} step={500} thousandSeparator="," placeholder={ASK_LIMITS.maxToolResultTokens.def.toLocaleString('en')} value={draft.maxToolResultTokens ?? ''} onChange={(v) => setDraft({ ...draft, maxToolResultTokens: num(v) })} />
             </Field>
           </div>
-          <Field label="Per-tool overrides" hint="A different result limit for specific tools, e.g. spec_get 12,000 or graph_query 3,000.">
+          <Field label="Per-tool overrides" hint="A different result limit for specific tools, e.g. get 12,000, spec_section_get 8,000 or graph_query 3,000.">
             <div className="np-stack" style={{ gap: 6 }}>
               {draft.perTool.map((row, i) => (
                 <Group key={i} gap={6} wrap="nowrap">

@@ -55,7 +55,7 @@ describe('news in replies', () => {
     await settle();
     const r = await call(agent('ada', 's1'), 'spec_list');
     expect(kinds(r.body)).toEqual([`question_answered mandate://questions/${q}`]);
-    expect(r.body.news.message).toMatch(/question_get it and continue the blocked work/);
+    expect(r.body.news.message).toMatch(/answered question → get it and continue the blocked work/);
     // Shown is not read: still there on the next reply.
     expect(kinds((await call(agent('ada', 's1'), 'project_info')).body)).toHaveLength(1);
     // Other client, other session of the same client, the web UI: nothing.

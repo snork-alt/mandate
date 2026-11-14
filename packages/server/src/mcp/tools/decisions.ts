@@ -79,7 +79,7 @@ Example: {"ref":"mandate://feedback/fb-0007","note":"reviewed the waiver with th
         ctx.storage.integrity.resolveIssue('self_approved_override', buildRef({ kind: 'feedback', id }));
         return { ref: buildRef({ kind: 'feedback', id }), approvalOverride: fb.approvalOverride ?? null, commit: commits.at(-1) ?? null, commits, warnings: [] };
       } catch (e) {
-        if (e instanceof OverrideConfirmError) throw new ToolError(e.code, e.message, e.code === 'same_person' ? 'another person confirms it' : 'check decisions_list kinds: ["approval_override"]', 'ref');
+        if (e instanceof OverrideConfirmError) throw new ToolError(e.code, e.message, e.code === 'same_person' ? 'another person confirms it' : 'check list { of: "decisions", kinds: ["approval_override"] }', 'ref');
         throw e;
       }
     },

@@ -67,6 +67,16 @@ export interface AgentDef {
   commands?: CommandSpec;
   /** Command files written by earlier versions (removed by uninstall). */
   legacyCommands?(ctx: Ctx): string[];
+  /**
+   * The client refreshes its tool list on `notifications/tools/list_changed` (per its docs): its URL lists the default
+   * `core` tool set and the agent adds sets with tools_enable. Others get `?tools=all` (every set, ~100 tools).
+   */
+  listChanged?: boolean;
+  /**
+   * Why the user-scope entry is kept next to a project-scope one (connect --repo): the agent reads the project config
+   * only under a condition (e.g. trusted projects). Unset: project scope replaces the user-scope entry of that project.
+   */
+  keepUserScope?: string;
   /** Shown after wiring. */
   note?: string;
 }
@@ -199,6 +209,7 @@ export const AGENTS: AgentDef[] = [
   {
     // code.claude.com/docs/en/mcp · /skills · /slash-commands · /memory
     id: 'claude-code',
+    listChanged: true,
     label: 'Claude Code',
     docs: ['https://code.claude.com/docs/en/mcp', 'https://code.claude.com/docs/en/skills', 'https://code.claude.com/docs/en/memory'],
     caps: { mcp: 'verified', skills: 'verified', commands: 'verified', instructions: ['CLAUDE.md'] },
@@ -216,6 +227,7 @@ export const AGENTS: AgentDef[] = [
   {
     // learn.chatgpt.com/docs/extend/mcp?surface=cli · /docs/build-skills · /docs/custom-prompts (deprecated, still read) · /docs/agent-configuration/agents-md
     id: 'codex',
+    keepUserScope: 'Codex reads a project .codex/config.toml only for trusted projects',
     label: 'Codex',
     docs: ['https://learn.chatgpt.com/docs/extend/mcp?surface=cli', 'https://learn.chatgpt.com/docs/build-skills', 'https://learn.chatgpt.com/docs/custom-prompts'],
     caps: { mcp: 'verified', skills: 'verified', commands: 'verified', instructions: ['AGENTS.md'] },
@@ -248,6 +260,7 @@ export const AGENTS: AgentDef[] = [
   {
     // code.visualstudio.com/docs/copilot/reference/mcp-configuration · /customization/agent-skills · /customization/prompt-files · /customization/custom-instructions
     id: 'vscode',
+    listChanged: true,
     label: 'VS Code (Copilot)',
     docs: ['https://code.visualstudio.com/docs/copilot/reference/mcp-configuration', 'https://code.visualstudio.com/docs/copilot/customization/agent-skills', 'https://code.visualstudio.com/docs/copilot/customization/prompt-files'],
     caps: { mcp: 'verified', skills: 'verified', commands: 'verified', instructions: ['AGENTS.md'] },
@@ -405,15 +418,22 @@ export const detectAgents = (ctx: Ctx) => AGENTS.filter((a) => a.detect(ctx));
 
 /* ------------------------------------------------------------------ MCP entry changes */
 
+/** The MCP URL an agent gets: clients that ignore tools/list_changed list every tool set from the start. */
+export const agentUrl = (agent: AgentDef, url: string) => (agent.listChanged || /[?&]tools=/.test(url) ? url : `${url}?tools=all`);
+const forAgent = (agent: AgentDef, s: Server): Server => ({ ...s, url: agentUrl(agent, s.url) });
+
 /** opencode's legacy shape needs `enabled` instead of `oauth`. */
 function entryFor(agent: AgentDef, s: Server, keyPath: string[]): unknown {
-  const e = oauthEntry(agent.entry(s), s) as Record<string, unknown>;
+  const e = oauthEntry(agent.entry(forAgent(agent, s)), s) as Record<string, unknown>;
   if (agent.id === 'opencode' && keyPath.length === 2) {
     const { oauth: _o, ...rest } = e;
     return { ...rest, enabled: true };
   }
   return e;
 }
+
+/** connect --repo: this agent gets the project-scope entry, which replaces its user-scope entry of the same project. */
+export const projectScopeOnly = (agent: AgentDef, force: boolean | undefined, repo: string, ctx: Ctx) => !!agent.projectMcp?.(repo, ctx) && can(agent, 'mcp', force) && agent.envSyntax !== null && !agent.keepUserScope;
 
 /** Agents whose MCP client signs in by itself (MCP OAuth), per their docs; the others need a personal token. */
 export const OAUTH_AGENTS = new Set(['claude-code', 'codex', 'cursor', 'vscode', 'gemini', 'windsurf', 'opencode']);
@@ -433,34 +453,51 @@ export function mcpUpsertText(agent: AgentDef, target: McpTarget, s: Server, tex
     const tableRe = new RegExp(`^\\[mcp_servers\\.${s.name.replace(/[-]/g, '\\-')}\\]`, 'm');
     const outside = removeBlock(text, s.name, 'hash') ?? '';
     if (tableRe.test(outside)) throw new Error(`${target.file} already defines [mcp_servers.${s.name}] outside Mandate's block; remove it or leave it as is`);
-    return upsertBlock(text, s.name, oauthEntry(agent.entry(s), s) as string, 'hash');
+    return upsertBlock(text, s.name, oauthEntry(agent.entry(forAgent(agent, s)), s) as string, 'hash');
   }
   const keyPath = agent.jsonPath!(s, text, target.file);
   return jsonSet(target.file, text, keyPath, entryFor(agent, s, keyPath));
 }
 
-export function mcpUpsert(agent: AgentDef, target: McpTarget, ...servers: Server[]): Change | null {
+/**
+ * Write THE Mandate server of a config file: other Mandate entries in it (named mandate-*, or pointing at
+ * /p/<id>/mcp on the same server) are replaced, so the agent sees Mandate's tools once. Other servers stay untouched.
+ */
+export function mcpUpsert(agent: AgentDef, target: McpTarget, s: Server): Change | null {
   let text = readText(target.file);
-  for (const s of servers) text = mcpUpsertText(agent, target, s, text);
+  const replaced = mandateServersIn(agent, target, new URL(s.url).origin).filter((n) => n !== s.name);
+  for (const n of replaced) text = removeEntryText(agent, target, text ?? '', n);
+  text = mcpUpsertText(agent, target, s, text);
   // A literal key (agents without env-var expansion) makes the file private (0600).
-  return change(target.file, text, `MCP server ${servers.map((s) => s.name).join(', ')}`, { private: servers.some((s) => !!s.key) });
+  return change(target.file, text, `MCP server ${s.name}${replaced.length ? `; replaced ${replaced.join(', ')}` : ''}`, { private: !!s.key });
+}
+
+/** The text without one server entry (managed TOML block, or the JSON entry at any of the agent's key paths). */
+function removeEntryText(agent: AgentDef, target: McpTarget, text: string, name: string): string {
+  if (target.format === 'toml') return removeBlock(text, name, 'hash') ?? text;
+  let after = text;
+  for (const p of [agent.jsonPath!({ name } as Server, after, target.file), ['mcp', name], ['mcp', 'servers', name]]) after = jsonRemove(target.file, after, p) ?? after;
+  return after;
 }
 
 export function mcpRemove(agent: AgentDef, target: McpTarget, ...names: string[]): Change | null {
   const text = readText(target.file);
   if (text === null) return null;
   let after: string = text;
-  for (const name of names) {
-    if (target.format === 'toml') after = removeBlock(after, name, 'hash') ?? after;
-    else for (const p of [agent.jsonPath!({ name } as Server, after, target.file), ['mcp', name], ['mcp', 'servers', name]]) after = jsonRemove(target.file, after, p) ?? after;
-  }
+  for (const name of names) after = removeEntryText(agent, target, after, name);
   if (after === text) return null;
   const empty = target.format === 'toml' ? !after.trim() : after.trim() === '{}';
   return change(target.file, empty ? null : after, `MCP server ${names.join(', ')}`);
 }
 
-/** Names of Mandate servers present in a target (for uninstall). */
-export function mandateServersIn(agent: AgentDef, target: McpTarget): string[] {
+/** A Mandate project endpoint URL (`<origin>/p/<id>/mcp`, optional query). */
+const MANDATE_URL = /^(https?:\/\/[^/]+)\/p\/[a-z0-9-]+\/mcp\/?(\?.*)?$/;
+
+/**
+ * Names of Mandate servers present in a target (uninstall, replacing): entries named mandate-*, and with `origin`,
+ * entries of any name whose URL is a project endpoint of that server.
+ */
+export function mandateServersIn(agent: AgentDef, target: McpTarget, origin?: string): string[] {
   const text = readText(target.file);
   if (text === null) return [];
   if (target.format === 'toml') return [...text.matchAll(/# >>> mandate:begin (mandate-[a-z0-9-]+)/g)].map((m) => m[1]!);
@@ -473,7 +510,14 @@ export function mandateServersIn(agent: AgentDef, target: McpTarget): string[] {
     } catch {
       return [];
     }
-    if (v && typeof v === 'object') for (const k of Object.keys(v)) if (/^mandate-[a-z0-9-]+$/.test(k)) names.add(k);
+    if (v && typeof v === 'object')
+      for (const [k, e] of Object.entries(v)) {
+        if (/^mandate-[a-z0-9-]+$/.test(k)) names.add(k);
+        else if (origin && e && typeof e === 'object') {
+          const url = ['url', 'httpUrl', 'serverUrl', 'uri'].map((f) => (e as Record<string, unknown>)[f]).find((x): x is string => typeof x === 'string');
+          if (url && MANDATE_URL.exec(url)?.[1] === origin) names.add(k);
+        }
+      }
   }
   return [...names];
 }

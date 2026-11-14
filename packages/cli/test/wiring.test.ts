@@ -11,7 +11,7 @@ import { repoSection, writeManifest } from '../src/wiring.js';
 import { capture, registerProjects, snapshotTree, tempCtx, write } from './helpers.js';
 
 
-function setupHome() {
+function setupHome(projects = ['web-app']) {
   const ctx = tempCtx('darwin');
   // Existing user content in several agents' configs.
   write(path.join(ctx.home, '.claude.json'), `${JSON.stringify({ numStartups: 1, mcpServers: { other: { type: 'stdio', command: 'x' } } }, null, 2)}\n`);
@@ -19,7 +19,7 @@ function setupHome() {
   write(path.join(ctx.home, '.cursor', 'mcp.json'), '{\n  "mcpServers": {}\n}\n');
   write(path.join(ctx.home, '.zshrc'), 'export EDITOR=vim\n');
   write(path.join(ctx.home, '.claude', 'commands', 'mine.md'), 'mine\n');
-  registerProjects(ctx, ['web-app', 'api']);
+  registerProjects(ctx, projects);
   return ctx;
 }
 
@@ -53,6 +53,15 @@ describe('install (user scope)', () => {
     expected['.cursor/mcp.json'] = '{}\n';
     delete expected['.cursor/mcp.json'];
     expect(after).toEqual(expected);
+  });
+
+  it('several projects: no user-scope MCP entries (one Mandate server per config file); skills and commands still', () => {
+    const ctx = setupHome(['web-app', 'api']);
+    const { changes, skipped } = userWiringChanges(ctx, AGENTS, 'http://localhost:4000');
+    expect(skipped.some((x) => /2 projects: user-scope MCP entries not written/.test(x))).toBe(true);
+    applyChanges(changes, { dryRun: false, out: capture() });
+    expect(Object.keys(JSON.parse(readFileSync(path.join(ctx.home, '.claude.json'), 'utf8')).mcpServers)).toEqual(['other']);
+    expect(existsSync(path.join(ctx.home, '.claude', 'skills', 'mandate', 'SKILL.md'))).toBe(true);
   });
 
   it('dry-run writes nothing', () => {

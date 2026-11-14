@@ -13,6 +13,7 @@ import { toWriteError } from '../../src/mcp/errors.js';
 import { AppendOnlyError } from '../../src/storage/index.js';
 import { tempDir } from '../helpers.js';
 import { writeTools } from '../../src/mcp/tools/write.js';
+import { inputJsonSchema } from '../../src/mcp/define.js';
 
 let fx: McpFixture;
 beforeAll(async () => {
@@ -64,22 +65,25 @@ async function newSpec(opts: { criteria?: boolean; title?: string } = {}) {
 
 describe('tools/list', () => {
   it('registers every write tool with guidance, schema and annotations', async () => {
-    const { tools } = await fx.client.listTools();
+    const client = await connect(new URL(`${fx.url.href}?tools=all`));
+    const { tools } = await client.listTools();
+    await client.close();
     const names = tools.map((t) => t.name);
+    // Per-type document writes are merged (create, status_set, section_insert, ...); their old names stay callable.
     const expected = [
-      'spec_create', 'spec_update_meta', 'spec_archive', 'spec_status_set',
-      'spec_section_insert', 'spec_section_update', 'spec_section_move', 'spec_section_archive', 'spec_section_link_add', 'spec_section_link_remove',
-      'standard_create', 'standard_update_meta', 'standard_section_insert', 'standard_section_update', 'standard_section_move', 'standard_section_archive', 'standard_section_link_add', 'standard_section_link_remove',
+      'create', 'update_meta', 'archive', 'status_set',
+      'section_insert', 'section_update', 'section_move', 'section_link_add', 'section_link_remove',
       'work_order_create', 'work_order_claim', 'work_order_heartbeat', 'work_order_release', 'work_order_section_done', 'work_order_complete', 'work_order_fail', 'work_order_cancel', 'work_order_next',
       'feedback_create', 'feedback_update', 'feedback_accept', 'feedback_close', 'verification_record', 'spec_diff_since_implemented',
     ];
     expect(names).toEqual(expect.arrayContaining(expected));
     // The section guide lives on spec_section_insert; the others point at it (prompts review 4.1).
-    expect(tools.find((x) => x.name === 'spec_section_insert')!.description).toContain('one concept each');
-    expect(tools.find((x) => x.name === 'spec_section_update')!.description).toContain('Section guide: spec_section_insert');
-    for (const n of ['spec_section_insert', 'spec_section_update', 'standard_section_insert', 'spec_create']) {
+    expect(names.filter((n) => /^(spec|standard|component)_(create|update_meta|archive|status_set|section_(insert|update|move|archive|link_add|link_remove))$/.test(n))).toEqual([]);
+    expect(tools.find((x) => x.name === 'section_insert')!.description).toContain('one concept each');
+    expect(tools.find((x) => x.name === 'section_update')!.description).toContain('Section guide: section_insert');
+    for (const n of ['section_insert', 'section_update', 'create']) {
       const t = tools.find((x) => x.name === n)!;
-      if (n === 'spec_section_insert') expect(t.description).toMatch(/summary/);
+      if (n === 'section_insert') expect(t.description).toMatch(/summary/);
       expect(t.annotations?.readOnlyHint).toBe(false);
       expect(Object.keys((t.inputSchema as { properties: object }).properties)).toEqual(expect.arrayContaining(['agent', 'branch', 'idempotencyKey']));
     }
@@ -89,8 +93,9 @@ describe('tools/list', () => {
 describe('schema checks per write tool', () => {
   it('every write tool rejects unknown keys and wrong types with invalid_input (nothing written)', async () => {
     const h = head();
-    const { tools } = await fx.client.listTools();
-    for (const t of tools.filter((x) => writeTools.some((w) => w.name === x.name))) {
+    // Every per-type write tool (listed or a hidden alias of a merged tool): called by name.
+    const tools = writeTools.map((w) => ({ name: w.name, inputSchema: inputJsonSchema(w.input) }));
+    for (const t of tools) {
       const unknown = await fx.call(t.name, { agent: AGENT, bogus: 1 });
       expect(unknown.body.error?.code, t.name).toBe('invalid_input');
       const props = Object.keys((t.inputSchema as { properties: Record<string, unknown> }).properties).filter((k) => !['agent', 'branch', 'idempotencyKey'].includes(k));

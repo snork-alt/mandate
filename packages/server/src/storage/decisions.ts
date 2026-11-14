@@ -209,7 +209,7 @@ export async function listDecisions(storage: Storage, input: DecisionsListInput 
       title: s.title,
       question: `Confirm the rules of draft standard "${s.title}" and make it active?`,
       options: [
-        { id: 'activate', label: 'Confirm the rules and activate it', tool: 'standard_status_set' },
+        { id: 'activate', label: 'Confirm the rules and activate it', tool: 'status_set' },
         { id: 'keep_draft', label: 'Keep it as a draft (not in force)' },
       ],
     });
@@ -248,7 +248,7 @@ export async function listDecisions(storage: Storage, input: DecisionsListInput 
         question: `"${s.title}" is done but its gate no longer holds (${one(drift.join('; '), 100)}): verify again or reopen it?`,
         options: [
           { id: 'verify', label: 'Verify the criteria again', tool: 'verification_record' },
-          { id: 'reopen', label: 'Reopen the spec (done → ready)', tool: 'spec_status_set' },
+          { id: 'reopen', label: 'Reopen the spec (done → ready)', tool: 'status_set' },
         ],
         suggested: 'verify',
       });

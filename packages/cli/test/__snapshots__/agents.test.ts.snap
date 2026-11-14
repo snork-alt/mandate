@@ -5,7 +5,7 @@ exports[`amp MCP > merges into the existing user config, idempotently; removal r
   "headers": {
     "Authorization": "Bearer \${MANDATE_KEY_WEB_APP}",
   },
-  "url": "http://localhost:4000/p/web-app/mcp",
+  "url": "http://localhost:4000/p/web-app/mcp?tools=all",
 }
 `;
 
@@ -57,7 +57,7 @@ exports[`cline MCP > merges into the existing user config, idempotently; removal
     "Authorization": "Bearer mnd_web-app_SECRETKEY123",
   },
   "type": "streamableHttp",
-  "url": "http://localhost:4000/p/web-app/mcp",
+  "url": "http://localhost:4000/p/web-app/mcp?tools=all",
 }
 `;
 
@@ -94,7 +94,7 @@ exports[`cursor MCP > merges into the existing user config, idempotently; remova
   "headers": {
     "Authorization": "Bearer \${env:MANDATE_KEY_WEB_APP}",
   },
-  "url": "http://localhost:4000/p/web-app/mcp",
+  "url": "http://localhost:4000/p/web-app/mcp?tools=all",
 }
 `;
 
@@ -121,7 +121,7 @@ exports[`gemini MCP > merges into the existing user config, idempotently; remova
   "headers": {
     "Authorization": "Bearer \${MANDATE_KEY_WEB_APP}",
   },
-  "httpUrl": "http://localhost:4000/p/web-app/mcp",
+  "httpUrl": "http://localhost:4000/p/web-app/mcp?tools=all",
 }
 `;
 
@@ -160,7 +160,7 @@ exports[`junie MCP > merges into the existing user config, idempotently; removal
   "headers": {
     "Authorization": "Bearer mnd_web-app_SECRETKEY123",
   },
-  "url": "http://localhost:4000/p/web-app/mcp",
+  "url": "http://localhost:4000/p/web-app/mcp?tools=all",
 }
 `;
 
@@ -183,7 +183,7 @@ exports[`opencode MCP > merges into the existing user config, idempotently; remo
   },
   "oauth": false,
   "type": "remote",
-  "url": "http://localhost:4000/p/web-app/mcp",
+  "url": "http://localhost:4000/p/web-app/mcp?tools=all",
 }
 `;
 
@@ -368,7 +368,7 @@ exports[`windsurf MCP > merges into the existing user config, idempotently; remo
   "headers": {
     "Authorization": "Bearer \${env:MANDATE_KEY_WEB_APP}",
   },
-  "serverUrl": "http://localhost:4000/p/web-app/mcp",
+  "serverUrl": "http://localhost:4000/p/web-app/mcp?tools=all",
 }
 `;
 
@@ -391,7 +391,7 @@ exports[`zed MCP > merges into the existing user config, idempotently; removal r
   "headers": {
     "Authorization": "Bearer mnd_web-app_SECRETKEY123",
   },
-  "url": "http://localhost:4000/p/web-app/mcp",
+  "url": "http://localhost:4000/p/web-app/mcp?tools=all",
 }
 `;
 
