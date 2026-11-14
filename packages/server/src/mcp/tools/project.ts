@@ -10,6 +10,7 @@ import { defineTool, type ToolContext } from '../define.js';
 import { ToolError } from '../errors.js';
 import { uploadInfo } from '../uploads.js';
 import { checkCodeRepos } from '../code-claims.js';
+import { INSTRUCTION_NAMES, instructionsFor, STUB_VERSION, stubUpdateNotice } from '../stubs.js';
 import { codeContextLabel, codeContextSetInputSchema } from '@mandate/shared';
 import { APPROVAL_POLICIES, QUESTIONS_VIA, type PrefPatch, clientIdentity, DEFAULT_POLICY, effective, FLOW_POLICIES, flowInstructions, flowChangedEvent, refusal, type OnOff, type ProjectSettings } from '../../projects/settings.js';
 
@@ -20,7 +21,9 @@ const settingsOf = (ctx: ToolContext): ProjectSettings => {
   return ctx.settings;
 };
 
-async function info(ctx: ToolContext) {
+const stubVersion = z.number().int().min(0).max(1000).optional();
+
+async function info(ctx: ToolContext, reportedStub?: number) {
   const policy = ctx.settings?.policy() ?? { ...DEFAULT_POLICY };
   const c = clientIdentity(ctx);
   const pref = ctx.settings ? await ctx.settings.clients.get(ctx.settings.project, c.id) : undefined;
@@ -36,7 +39,14 @@ async function info(ctx: ToolContext) {
     ...(upload ? { upload } : {}),
     codeRepos: ctx.settings?.codeRepos?.() ?? [],
     codeContext: ctx.session?.codeContext ?? null,
+    ...stubFields(reportedStub),
   };
+}
+
+/** `update` when the caller's installed stubs (skill / command files) are older than this server's. */
+function stubFields(reported?: number) {
+  const update = stubUpdateNotice(reported);
+  return update ? { stubVersion: STUB_VERSION, update } : {};
 }
 
 async function setPreference(a: PrefPatch, ctx: ToolContext) {
@@ -65,10 +75,19 @@ export const projectTools = [
     title: 'Project info',
     kind: 'read',
     description: `This project and the Mandate flow for your client: policy, client preference, effective { flow, approval, questions }, reason, instructions (follow them), upload (the curl for large files), codeRepos (code repo short names) and your codeContext.
-Call at the start of every task. flow off = read-only context (write tools refused: flow_off); approval off = skip the approval checkpoint; questions chat = ask in chat, not question_ask.
+Call at the start of every task. flow off = read-only context (write tools refused: flow_off); approval off = skip the approval checkpoint; questions chat = ask in chat, not question_ask. stubVersion: your local skill's (update: re-run the installer).
 Example: {}`,
-    input: z.object({}).strict(),
-    run: (_a, ctx) => info(ctx),
+    input: z.object({ stubVersion }).strict(),
+    run: (a, ctx) => info(ctx, a.stubVersion),
+  }),
+  defineTool({
+    name: 'instructions_get',
+    title: 'Current Mandate instructions',
+    kind: 'read',
+    description: `The current Mandate instructions, from the server; they override any local or remembered copy. name: core (working agreement) | bootstrap (args: its arguments, rendered as command) | flow (args: the /mandate-flow argument). stubVersion: your local skill's (update: re-run the installer). Works with the flow off.
+Example: {"name":"core","stubVersion":1}`,
+    input: z.object({ name: z.enum(INSTRUCTION_NAMES), args: z.string().max(500).optional(), stubVersion }).strict(),
+    run: async (a) => ({ name: a.name, ...instructionsFor(a.name, a.args), stubVersion: STUB_VERSION, ...(stubUpdateNotice(a.stubVersion) ? { update: stubUpdateNotice(a.stubVersion) } : {}) }),
   }),
   defineTool({
     name: 'code_context_set',

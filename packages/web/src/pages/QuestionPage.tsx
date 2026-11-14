@@ -16,7 +16,7 @@ export function QuestionPage() {
   const question = q.data?.question;
   return (
     <>
-      <TopBar crumbs={[{ label: 'Questions', to: '/questions' }, { label: id }]}>
+      <TopBar crumbs={[{ label: 'Questions', to: '/questions' }, { label: id, kind: 'question' }]}>
         <CopyMenu target={questionTarget(id)} visible />
       </TopBar>
       <div className="ov-page" style={{ maxWidth: 720 }}>

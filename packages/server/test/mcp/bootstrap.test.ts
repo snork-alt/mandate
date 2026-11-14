@@ -36,6 +36,10 @@ describe('bootstrap skill', () => {
     // Components at the architecture level, proposed once.
     expect(t).toMatch(/not the folders/);
     expect(t).toMatch(/Propose the map to the user once/);
+    // Tracking only in the run folder: no tracking spec or work order.
+    expect(t).not.toMatch(/tracked by a work order|tracking (spec|work order)|work order (for|about) the bootstrap/i);
+    // No stage word: the coordinator runs DISTILL and REVIEW itself as fresh sub-agents.
+    expect(t).toMatch(/No stage word = run every stage in this session: with sub-agents, start DISTILL, then REVIEW/);
     expect(t).toMatchSnapshot();
   });
 

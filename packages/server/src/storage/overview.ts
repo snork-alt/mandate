@@ -7,6 +7,10 @@ import {
   isClaimStale,
   MATURITY_STEPS,
   OPEN_WORK_ORDER_STATUSES,
+  planProgress,
+  WO_PLAN,
+  type OverviewCompleted,
+  type OverviewSession,
   type MaturityStep,
   type OverviewBlocked,
   type OverviewBlocker,
@@ -18,11 +22,13 @@ import {
   type SpecMaturity,
   type StoredSpec,
   type WorkOrder,
+  type LastAudit,
+  type OverviewMustFinding,
 } from '@mandate/shared';
 import { parseLinkTarget } from '@mandate/doc';
 import { projectOverviewInputSchema } from '@mandate/shared';
 import { specMaturity } from './maturity.js';
-import { dependencyState, finder } from './model.js';
+import { dependencyState, finder, type Model } from './model.js';
 import { deriveSpecs } from './insights.js';
 import type { Storage } from './index.js';
 
@@ -33,6 +39,27 @@ export interface OverviewDeps {
   /** Cause coverage of content edits (needs the index); omitted → null. */
   lineage?: () => { contentEdits: number; contentEditsWithCause: number } | null;
   now?: number;
+}
+
+/** The latest audit's open must findings of each listed spec (title, description, checklist item, code). */
+async function withMustFindings(storage: Storage, m: Model, list: ProjectOverview['mustFindingSpecs'], audits: Record<string, LastAudit | null>): Promise<ProjectOverview['mustFindingSpecs']> {
+  return Promise.all(
+    list.map(async (row) => {
+      const last = audits[row.id];
+      if (!last) return row;
+      try {
+        const stored = await storage.auditService.stored(last.id);
+        const view = await storage.auditService.view(stored, m, { staleness: false });
+        const findings: OverviewMustFinding[] = view.items
+          .flatMap((i) => i.findings.map((f) => ({ f, i })))
+          .filter(({ f }) => f.status === 'open' && f.level === 'must')
+          .map(({ f, i }) => ({ uri: f.uri, title: f.title, description: f.description, ref: f.ref, ...(i.sections?.length ? { sections: i.sections } : {}), codeRefs: f.codeRefs }));
+        return { ...row, auditTitle: stored.title, auditor: view.auditor, auditAt: view.completedAt ?? view.startedAt, findings };
+      } catch {
+        return row;
+      }
+    }),
+  );
 }
 
 export async function projectOverview(storage: Storage, input: ProjectOverviewInput = {}, deps: OverviewDeps = {}): Promise<ProjectOverview> {
@@ -128,6 +155,34 @@ export async function projectOverview(storage: Storage, input: ProjectOverviewIn
   const active = open.filter((w) => w.claim || w.status === 'in_progress').map(view);
   active.sort((a, b) => Number(!!a.claim?.stale) - Number(!!b.claim?.stale) || (b.claim?.heartbeatAt ?? b.updatedAt).localeCompare(a.claim?.heartbeatAt ?? a.updatedAt));
   const staleClaims = active.filter((w) => w.claim?.stale).length;
+  // Plan steps of the shown work orders (their plan sections; a handful of cached documents).
+  for (const v of active.slice(0, limit)) {
+    if (!v.hasPlan) continue;
+    const d = await storage.workOrderService.doc(v.id).catch(() => null);
+    const p = planProgress(d?.sections.find((x) => x.id === WO_PLAN)?.body ?? '');
+    if (p) v.plan = p;
+  }
+  const progressSpecs = [...new Set(active.map((w) => w.spec))].map((id) => ({ id, title: specTitle.get(id) ?? id, maturity: maturity.get(id) })).filter((x): x is { id: string; title: string; maturity: SpecMaturity } => !!x.maturity);
+
+  /* ---- agent sessions (claims overlapping the last 24 hours) and recently completed work orders */
+  const DAY = 86_400_000;
+  const since = new Date(now - DAY).toISOString();
+  const sessions: OverviewSession[] = [];
+  for (const w of workOrders) {
+    const base = { workOrder: w.id, kind: w.kind, title: view(w).title };
+    for (const c of w.claims ?? []) if (c.endedAt >= since) sessions.push({ ...base, agent: c.agent, startedAt: c.startedAt, endedAt: c.endedAt, ended: c.ended });
+    if (w.claim && OPEN_WORK_ORDER_STATUSES.includes(w.status) && w.claim.heartbeatAt >= since) sessions.push({ ...base, agent: w.claim.agent, startedAt: w.claim.startedAt, heartbeatAt: w.claim.heartbeatAt, stale: isClaimStale(w.claim, now) });
+  }
+  sessions.sort((a, b) => a.startedAt.localeCompare(b.startedAt));
+  const weekAgo = new Date(now - 7 * DAY).toISOString();
+  const recentlyCompleted: OverviewCompleted[] = workOrders
+    .filter((w) => w.status === 'done' && w.completedAt && w.completedAt >= weekAgo)
+    .sort((a, b) => b.completedAt!.localeCompare(a.completedAt!))
+    .slice(0, limit)
+    .map((w) => {
+      const last = (w.claims ?? []).filter((c) => c.endedAt <= w.completedAt!).at(-1);
+      return { id: w.id, title: view(w).title, kind: w.kind, spec: w.spec, specTitle: specTitle.get(w.spec) ?? null, ...(last ? { agent: last.agent, startedAt: last.startedAt } : {}), completedAt: w.completedAt! };
+    });
 
   /* ---- blocked: spec sections with an unimplemented depends_on target; open work orders on them or after unfinished ones */
   const blockerOf = (to: string): OverviewBlocker | null => {
@@ -200,10 +255,13 @@ export async function projectOverview(storage: Storage, input: ProjectOverviewIn
     },
     inProgress: active.slice(0, limit),
     inProgressTotal: active.length,
+    progressSpecs,
+    sessions,
+    recentlyCompleted,
     queued: open.filter((w) => !w.claim && w.status === 'pending').length,
     blocked: blocked.slice(0, limit),
     blockedTotal: blocked.length,
-    mustFindingSpecs: mustSpecs.sort((a, b) => b.openMust - a.openMust).slice(0, limit),
+    mustFindingSpecs: await withMustFindings(storage, m, mustSpecs.sort((a, b) => b.openMust - a.openMust).slice(0, limit), audits),
     byCategory: [...cats.values()].sort((a, b) => b.total - a.total || a.category.localeCompare(b.category)),
     neverAudited: neverAudited.sort((a, b) => a.title.localeCompare(b.title)).slice(0, limit),
     unverified: unverified.sort((a, b) => b.unverified + b.stale - (a.unverified + a.stale)).slice(0, limit),

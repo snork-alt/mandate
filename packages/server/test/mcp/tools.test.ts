@@ -1,4 +1,6 @@
 /** MCP tools: listing, a happy path per tool, invalid inputs per tool, structured errors. */
+import { SKILL_BODY } from '../../src/mcp/guide.js';
+import { STUB_VERSION } from '../../src/mcp/stubs.js';
 import { auditTools } from '../../src/mcp/tools/audits.js';
 import http from 'node:http';
 import { writeTools } from '../../src/mcp/tools/write.js';
@@ -151,6 +153,7 @@ const HAPPY: Record<string, { args: () => Record<string, unknown>; check: (b: Re
   project_overview: { args: () => ({ limit: 5 }), check: (b) => expect(b.maturity.total).toBeGreaterThan(0) },
   git_log: { args: () => ({ limit: 3 }), check: (b) => expect(b.items).toHaveLength(3) },
   ask_status: { args: () => ({}), check: (b) => expect(b).toMatchObject({ configured: false, missing: ['provider', 'model'] }) },
+  instructions_get: { args: () => ({ name: 'core', stubVersion: 0 }), check: (b) => expect(b).toMatchObject({ name: 'core', text: SKILL_BODY, stubVersion: STUB_VERSION, update: expect.stringContaining('re-run the Mandate installer') }) },
   lifecycle_get: { args: () => ({ kind: 'feedback' }), check: (b) => expect(b.steps.map((s: any) => s.to)).toContain('accepted') },
   project_info: { args: () => ({}), check: (b) => expect(b.effective).toEqual({ flow: 'on', approval: 'on', questions: 'mandate' }) },
   code_context_set: { args: () => ({ repo: 'app', commit: 'ABC1234', dirty: true }), check: (b) => expect(b.label).toBe('app@abc1234+dirty') },

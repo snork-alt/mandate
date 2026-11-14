@@ -61,6 +61,11 @@ export interface McpRouteOptions {
   baseUrl?: string;
   /** One-time section upload URLs (server secret, server-state db); default: a per-process key, in-memory use tracking. */
   uploads?: UploadService;
+  /**
+   * SSE keep-alive comment interval (ms, default 15 s): a write to a dead peer fails and frees the stream. Streams
+   * are also released as soon as the client disconnects, so a reopened tab never hits "only one SSE stream".
+   */
+  sseKeepAliveMs?: number;
 }
 
 export const samePrincipal = (a: Principal, b: Principal) =>
@@ -133,6 +138,7 @@ export function registerMcp(app: FastifyInstance, opts: McpRouteOptions): McpHub
     }
     const transport: StreamableHTTPServerTransport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
+      keepAliveMs: opts.sseKeepAliveMs ?? 15_000,
       onsessioninitialized: (id) => {
         state.id = id;
         sessions.set(id, session);

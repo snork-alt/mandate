@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Skeleton, Text, Tooltip } from '@mantine/core';
 import { IconAlertTriangle, IconBrandGit, IconFileOff, IconListCheck, IconSearch } from '@tabler/icons-react';
+import { KindIcon } from '../components/refs/KindIcon';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useLocation, useParams } from 'react-router';
 import { FINDING_STATUSES, type Audit, type AuditSummary, type StoredAudit } from '@mandate/shared';
@@ -146,6 +147,7 @@ function AuditPanels({ doc, view }: { doc: AuditDoc; view?: Audit }) {
                 {list.map((f) => (
                   <a key={f.id} href={`#finding-${f.id}`} className="linked-item">
                     <SeverityBadge severity={f.severity} />
+                    <KindIcon kind="finding" />
                     <span className="linked-title">{f.title}</span>
                   </a>
                 ))}
@@ -168,7 +170,7 @@ export function AuditDetailPage() {
   const after = tracked.commit ? tracked.data?.diff.after : undefined;
   const doc = query.data && after ? withFrontmatter(query.data, 'audits', after.frontmatter as Record<string, unknown>) : query.data;
   const view = tracked.commit ? undefined : doc?.audit;
-  const crumbs = [{ label: 'Audits', to: '/audits' }, { label: <span className="mono">{id}</span> }];
+  const crumbs = [{ label: 'Audits', to: '/audits' }, { label: <span className="mono">{id}</span>, kind: 'audit' as const }];
   useFindingAnchor(!!doc);
   const outlineStatus = useMemo(
     () => new Map((doc?.sections ?? []).filter((s) => s.type === 'audit-item').map((s) => [s.id, <ItemResultIcon key={s.id} result={s.result && s.result !== 'pending' ? s.result : undefined} size={12} />])),
@@ -257,6 +259,7 @@ function AuditRow({ a }: { a: AuditSummary }) {
     <ListRow
       to={`/audits/${a.id}`}
       list="audits"
+      kind="audit"
       className="audit-row"
       copy={target}
       lead={<AuditDot tone={tone} label={OUTCOME_META[a.outcome].label} />}

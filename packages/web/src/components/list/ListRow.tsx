@@ -4,6 +4,8 @@ import { Link } from 'react-router';
 import type { CopyTarget } from '../../lib/refs';
 import { absoluteTime, compactTime } from '../../lib/time';
 import { CopyRef, copyTargetProps } from '../copy';
+import type { NodeKind } from '@mandate/shared';
+import { KindIcon } from '../refs/KindIcon';
 import './list.css';
 
 /**
@@ -62,6 +64,8 @@ interface ListRowProps {
   copy?: CopyTarget;
   lead?: ReactNode;
   leadWidth?: number;
+  /** Object type: its KIND_ICON shows before the title. */
+  kind?: NodeKind;
   id?: ReactNode;
   idWidth?: number;
   /** Where the id column hides (default lg). */
@@ -81,7 +85,7 @@ interface ListRowProps {
   timeWidth?: number;
 }
 
-export function ListRow({ to, list, className, copy, lead, leadWidth = 18, id, idWidth = 72, idHide = 'lg', peopleHide, title, excerpt, chips, chipsWidth = 220, chipsMax, chipsHide = 'md', cols = [], people, time, timeWidth = 64 }: ListRowProps) {
+export function ListRow({ to, list, className, copy, lead, leadWidth = 18, kind, id, idWidth = 72, idHide = 'lg', peopleHide, title, excerpt, chips, chipsWidth = 220, chipsMax, chipsHide = 'md', cols = [], people, time, timeWidth = 64 }: ListRowProps) {
   return (
     <Link to={to} className={`row lr${copy ? ' has-copy-ref' : ''}${className ? ` ${className}` : ''}`} data-list={list} {...(copy ? copyTargetProps(copy) : {})}>
       {lead !== undefined && (
@@ -95,7 +99,10 @@ export function ListRow({ to, list, className, copy, lead, leadWidth = 18, id, i
         </span>
       )}
       <span className="lr-main" data-col="main">
-        <span className="row-title">{title}</span>
+        <span className="row-title">
+          {kind && <KindIcon kind={kind} className="kind-prefix" />}
+          {title}
+        </span>
         {excerpt && <span className="row-excerpt">{excerpt}</span>}
       </span>
       <span className="row-copy lr-copy" data-col="copy">

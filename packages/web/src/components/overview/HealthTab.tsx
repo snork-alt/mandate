@@ -21,6 +21,7 @@ import { Link } from 'react-router';
 import { MATURITY_LABELS, MATURITY_STEPS, type MaturityStep, type ProjectOverview } from '@mandate/shared';
 import { buildRef } from '@mandate/shared/refs';
 import { RefChip } from '../refs/RefChip';
+import { KindIcon } from '../refs/KindIcon';
 import { CopyPromptButton, ItemMenu } from '../decisions/DecisionActions';
 import { allPrompts, itemPrompt } from '../../lib/prompts';
 import { categoryLabel } from '../../lib/specs';
@@ -177,7 +178,10 @@ function CatSegment({ c, step }: { c: Cat; step: MaturityStep }) {
         <ul className="ov-hover-list">
           {specs.map((s) => (
             <li key={s.id}>
-              <Link to={`/specs/${s.id}`}>{s.title}</Link>
+              <Link to={`/specs/${s.id}`}>
+                <KindIcon kind="spec" className="kind-prefix" />
+                {s.title}
+              </Link>
             </li>
           ))}
         </ul>
@@ -262,6 +266,7 @@ export function VerificationGaps({ o }: { o: ProjectOverview }) {
                   <tr key={g.id} data-testid="gap-row">
                     <th scope="row">
                       <Link to={`/specs/${g.id}`} className="ov-table-title">
+                        <KindIcon kind="spec" className="kind-prefix" />
                         {g.title}
                       </Link>
                     </th>

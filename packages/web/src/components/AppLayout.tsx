@@ -22,6 +22,7 @@ import { useProjects } from '../connect/projects';
 import { ConnectAgentModal, registerConnectAgentOpener } from '../connect/ConnectAgentModal';
 import { UserFooter } from '../connect/UserFooter';
 import { useDecisions } from '../lib/decisions';
+import { actionCount, useOverview } from '../lib/overview';
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
 
@@ -39,11 +40,14 @@ function NavItem({ section, onClick }: { section: SectionDef; onClick: () => voi
 
 /** Open decisions (everything on the Actions page's decisions card), on the Actions item. */
 function ActionsCount() {
-  const n = useDecisions(50).data?.total ?? 0;
+  const decisions = useDecisions(50).data?.total ?? 0;
+  const o = useOverview().data;
+  // The Actions page total (every tab: decisions, blocked, must findings, specs); decisions alone until the overview loads.
+  const n = o ? actionCount(o, decisions) : decisions;
   if (!n) return <span className="nav-count" />;
   return (
-    <Tooltip label={`${n} decision${n === 1 ? '' : 's'} waiting for you`} openDelay={300} withinPortal>
-      <span className="nav-count nav-count-alert" data-testid="nav-actions" aria-label={`${n} open decision${n === 1 ? '' : 's'}`}>
+    <Tooltip label={`${n} item${n === 1 ? '' : 's'} waiting for you`} openDelay={300} withinPortal>
+      <span className="nav-count nav-count-alert" data-testid="nav-actions" aria-label={`${n} open action${n === 1 ? '' : 's'}`}>
         {n}
       </span>
     </Tooltip>

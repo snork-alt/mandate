@@ -1,19 +1,18 @@
 /**
- * Actions: everything the user has to act on (was the Overview's "Action needed" tab, moved as is): decisions (questions
- * from coding agents with "Answer all recommended", open feedback, waivers, draft standards, stale claims, approval
- * overrides, contradicted audits, drifted specs, integrity errors), specs needing attention, open must findings, blocked
- * items. `?focus=` narrows a card (from the Overview's attention chips).
+ * Actions: everything the user has to act on, one tab per kind with its count (questions from coding agents, feedback,
+ * waivers, standard drafts, claims, approval overrides, contradicted audits, drifted specs, integrity errors, specs
+ * needing attention, must findings, blocked items). The tab lives in `?tab=`; `?focus=` (the Overview's attention chips)
+ * opens the matching tab.
  */
-import { useEffect } from 'react';
 import { Skeleton, Text } from '@mantine/core';
-import { useSearchParams } from 'react-router';
 import { TopBar } from '../components/TopBar';
 import { ErrorState } from '../components/ListStates';
-import { DecisionDialogs } from '../components/decisions/DecisionActions';
-import { AttentionSpecs, Blocked, Decisions, MustFindings } from '../components/overview/ActionTab';
+import { CopyPromptButton, DecisionDialogs } from '../components/decisions/DecisionActions';
+import { ActionTabs } from '../components/overview/ActionTab';
 import { getCurrentProject } from '../project';
 import { useDecisionAccess, useDecisions } from '../lib/decisions';
-import { actionCount, CHIP_TARGET, useOverview, type AttentionFocus } from '../lib/overview';
+import { decisionsPrompt } from '../lib/prompts';
+import { actionCount, useOverview } from '../lib/overview';
 import '../components/overview/overview.css';
 
 export function ActionsPage() {
@@ -21,17 +20,8 @@ export function ActionsPage() {
   const decisions = useDecisions(50);
   const access = useDecisionAccess().data;
   const projectId = getCurrentProject() ?? '';
-  const [params] = useSearchParams();
-  const focus = (params.get('focus') ?? undefined) as AttentionFocus | undefined;
   const crumbs = [{ label: 'Actions' }];
   const pending = q.data && decisions.data ? actionCount(q.data, decisions.data.total) : null;
-  // A chip's card scrolls into view once rendered.
-  useEffect(() => {
-    if (!focus || !q.data) return;
-    const card = Object.values(CHIP_TARGET).find((c) => c.focus === focus)?.card;
-    const t = setTimeout(() => document.getElementById(`card-${card}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
-    return () => clearTimeout(t);
-  }, [focus, q.data]);
 
   if (q.isPending) {
     return (
@@ -51,7 +41,6 @@ export function ActionsPage() {
       </>
     );
   }
-  const o = q.data;
   return (
     <DecisionDialogs>
       <TopBar crumbs={crumbs}>
@@ -60,20 +49,14 @@ export function ActionsPage() {
             {pending} pending
           </Text>
         )}
+        {!!decisions.data?.total && <CopyPromptButton prompt={decisionsPrompt(projectId)} label="Resolve with your coding agent" testId="resolve-with-agent" />}
       </TopBar>
       <div className="ov-page" data-testid="actions">
-        <div className="ov-health">
-          <Decisions q={decisions} projectId={projectId} overrideOk={access?.override.ok ?? false} />
-          <div className="ov-cols">
-            <div className="ov-col">
-              <AttentionSpecs o={o} projectId={projectId} focus={focus} />
-              <MustFindings o={o} />
-            </div>
-            <div className="ov-col">
-              <Blocked o={o} projectId={projectId} />
-            </div>
-          </div>
-        </div>
+        <header className="ov-header act-header">
+          <h1 className="ov-title">Actions</h1>
+          <span className="ov-sub">What needs you: questions from coding agents, feedback, waivers, drafts and claims.</span>
+        </header>
+        <ActionTabs o={q.data} q={decisions} projectId={projectId} overrideOk={access?.override.ok ?? false} />
       </div>
     </DecisionDialogs>
   );

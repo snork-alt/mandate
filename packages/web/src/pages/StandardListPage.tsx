@@ -1,8 +1,9 @@
 import { useMemo } from 'react';
 import { Text, Tooltip } from '@mantine/core';
-import { IconFileText, IconRuler2, IconSearch, IconTarget } from '@tabler/icons-react';
+import { IconRuler2, IconSearch, IconTarget } from '@tabler/icons-react';
 import type { Standard } from '@mandate/shared';
 import { TagPill } from '../components/doc';
+import { KindIcon } from '../components/refs';
 import { EmptyView, ErrorState, RowsSkeleton } from '../components/ListStates';
 import { SearchInput } from '../components/SearchInput';
 import { ListHeader, ListRow, RowTime, withNodes, type ColDef } from '../components/list/ListRow';
@@ -53,7 +54,7 @@ function StandardRow({ std }: { std: Standard }) {
       list="standards"
       className="spec-row"
       copy={target}
-      lead={<IconRuler2 size={15} stroke={1.6} color="var(--app-text-muted)" />}
+      lead={<KindIcon kind="standard" size={15} />}
       id={std.id}
       idWidth={150}
       title={std.title}
@@ -90,7 +91,7 @@ function StandardRow({ std }: { std: Standard }) {
         sections: (
           <Tooltip label={`${std.sections.length} sections`}>
             <span className="row-indicator">
-              <IconFileText size={13} />
+              <KindIcon kind="section" size={13} />
               {std.sections.length}
             </span>
           </Tooltip>

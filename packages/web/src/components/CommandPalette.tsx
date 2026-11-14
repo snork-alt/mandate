@@ -3,20 +3,15 @@ import { Kbd, Loader, Modal, useComputedColorScheme, useMantineColorScheme } fro
 import { useDebouncedValue, useHotkeys } from '@mantine/hooks';
 import {
   IconAt,
-  IconBraces,
-  IconClipboardList,
-  IconCode,
-  IconFileText,
-  IconHash,
-  IconMessageReport,
   IconMoon,
   IconPlugConnected,
-  IconRuler2,
   IconSettings,
   IconGitMerge,
 } from '@tabler/icons-react';
 import { useLocation, useNavigate } from 'react-router';
-import { mentionOf, parseNodeUri, parseRef, refMention, type SearchKind } from '@mandate/shared';
+import { mentionOf, parseNodeUri, parseRef, refMention, type NodeKind, type SearchKind } from '@mandate/shared';
+import { KIND_ICON } from './refs/kinds';
+import { KindIcon } from './refs/KindIcon';
 import { SearchField } from './SearchField';
 import { StatusGlyph } from './refs/StatusGlyph';
 import { auditHref, sectionHref } from '../lib/links';
@@ -32,7 +27,6 @@ import { LastEditor } from './people/People';
 import { useMcpCodeSearch, useMcpIdLookup, useMcpNode, useMcpSearch, useMcpSymbolSearch, useMcpTextSearch, useMcpTool } from '../mcp/queries';
 import { LevelBadge } from './rules/RuleParts';
 import { useEntityList } from '../lib/queries';
-import { IconTopologyStar3 } from '@tabler/icons-react';
 import type { RuleHit } from '@mandate/shared';
 import { renderSnippet } from '../mcp/snippet';
 import '../mcp/palette.css';
@@ -47,7 +41,8 @@ let openPalette: (query?: string) => void = () => undefined;
 /** Open the palette from anywhere (sidebar button, mobile header). */
 export const openCommandPalette = (query?: string) => openPalette(query);
 
-const DOC_ICON: Record<string, typeof IconFileText> = { spec: IconFileText, standard: IconRuler2, work_order: IconClipboardList, feedback: IconMessageReport, section: IconHash };
+/** Object-type icon (KIND_ICON, the single source of truth); unknown kinds fall back to the spec icon. */
+const docIcon = (kind: string) => KIND_ICON[kind as NodeKind] ?? KIND_ICON.spec;
 const KIND_LABEL: Record<SearchKind, string> = { spec: 'Spec', standard: 'Standard', section: 'Section', work_order: 'Work order', feedback: 'Feedback', component: 'Component', audit: 'Audit' };
 const KIND_ORDER: SearchKind[] = ['spec', 'standard', 'section', 'work_order', 'feedback'];
 const MATCH_LABEL = { text: 'text', semantic: 'meaning', symbol: 'symbol' } as const;
@@ -123,7 +118,7 @@ export function CommandPalette() {
         select: go(`/${kind}`),
       }));
       // Beyond the sections: lineage, settings and the connect dialog (P1).
-      const extra: { id: string; label: string; icon: typeof IconFileText; select: () => void }[] = [
+      const extra: { id: string; label: string; icon: typeof IconGitMerge; select: () => void }[] = [
         { id: 'go-lineage', label: 'Go to Lineage', icon: IconGitMerge, select: go('/lineage') },
         { id: 'go-settings', label: 'Settings', icon: IconSettings, select: () => (close(), goTo('/settings')) },
         { id: 'connect-agent', label: 'Connect agent', icon: IconPlugConnected, select: () => (close(), openConnectAgent()) },
@@ -147,7 +142,7 @@ export function CommandPalette() {
       return r.length ? [{ id: 'nav-label', type: 'label', node: 'Navigate' }, ...r] : r;
     };
     const docHeader = (id: string, docKind: string, title: string, st?: string, extra?: ReactNode): Row => {
-      const Icon = DOC_ICON[docKind] ?? IconFileText;
+      const Icon = docIcon(docKind);
       return {
         id: `h-${id}`,
         type: 'header',
@@ -227,7 +222,7 @@ export function CommandPalette() {
             select: go(`/components/${c.id}`),
             node: (
               <>
-                <IconTopologyStar3 size={15} stroke={1.6} style={{ flex: 'none' }} />
+                <KindIcon kind="component" size={15} />
                 <div className="cmdk-row-main">
                   <div className="cmdk-row-title">
                     {c.title} <span className="cmdk-faint">component · {c.kind}</span>
@@ -271,7 +266,7 @@ export function CommandPalette() {
       }
       case 'phrase': {
         for (const m of phrase.data?.matches ?? []) {
-          const Icon = DOC_ICON[m.kind] ?? IconFileText;
+          const Icon = docIcon(m.kind);
           out.push({
             id: `${m.uri}:${m.line}`,
             type: 'item',
@@ -302,7 +297,7 @@ export function CommandPalette() {
             type: 'header',
             node: (
               <>
-                <IconBraces size={15} stroke={1.6} />
+                <KindIcon kind="symbol" size={15} />
                 <span className="cmdk-mono">{s.name}</span>
                 <span className="cmdk-faint">{s.usedIn.length} {s.usedIn.length === 1 ? 'section' : 'sections'}</span>
               </>
@@ -361,7 +356,7 @@ export function CommandPalette() {
             select: go(sectionHref(r.sectionUri)),
             node: (
               <>
-                <IconCode size={15} stroke={1.6} style={{ flex: 'none' }} />
+                <KindIcon kind="code_file" size={15} />
                 <div className="cmdk-row-main">
                   <div className="cmdk-row-title">
                     <span className="cmdk-mono">
@@ -414,7 +409,10 @@ export function CommandPalette() {
             select: go(sectionHref(r.node.ref)),
             node: (
               <>
-                <IconHash size={16} stroke={1.6} />
+                {(() => {
+                  const Icon = KIND_ICON[r.node.kind as NodeKind] ?? KIND_ICON.section;
+                  return <Icon size={16} stroke={1.6} />;
+                })()}
                 <div className="cmdk-row-main">
                   <div className="cmdk-row-title">{r.node.label}</div>
                   <div className="cmdk-snippet">Open {r.node.kind.replace('_', ' ')} {parsed.id}</div>

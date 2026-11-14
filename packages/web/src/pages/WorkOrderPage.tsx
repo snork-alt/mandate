@@ -3,6 +3,7 @@ import { QuestionsPanel } from '../components/questions/QuestionsPanel';
 import { useEffect, useMemo } from 'react';
 import { Alert, Skeleton, Tooltip } from '@mantine/core';
 import { IconAlertTriangle, IconArrowRight, IconBolt, IconCircleCheckFilled, IconCircleDashed, IconCircleOff, IconFileText } from '@tabler/icons-react';
+import { KindIcon } from '../components/refs/KindIcon';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useLocation, useParams } from 'react-router';
 import { buildRef } from '@mandate/shared/refs';
@@ -53,7 +54,7 @@ export function WorkOrderPage() {
   const r = query.data?.workOrder;
   const specFull = useSpec(r?.item.spec ?? '');
   const standardTitles = useMemo(() => new Map((standards.data ?? []).map((s) => [s.id, s.title])), [standards.data]);
-  const crumbs = [{ label: 'Work orders', to: '/work-orders' }, { label: <span className="mono">{id}</span> }];
+  const crumbs = [{ label: 'Work orders', to: '/work-orders' }, { label: <span className="mono">{id}</span>, kind: 'work_order' as const }];
   const threads = comments.data?.threads ?? r?.comments?.threads ?? [];
   const view = useMemo(() => (r ? { id, resolved: r, threads } : null), [id, r, threads]);
   const { hash } = useLocation();
@@ -265,6 +266,7 @@ export function WorkOrderPage() {
             criteria.map((c) => (
               <Link key={c.uri} to={`/specs/${item.spec}#section-${c.sectionId}`} className="linked-item">
                 <CriterionStateIcon state={c.state} />
+                <KindIcon kind="section" />
                 <span className="linked-title">{c.title}</span>
                 {c.method && <span className="linked-meta">{c.method}</span>}
               </Link>

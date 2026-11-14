@@ -6,6 +6,8 @@ import { CodeBlock } from './CodeBlock';
 import { withBase } from '../project';
 import { MCP_SERVER_NAME, parseNodeUri } from '@mandate/shared/refs';
 import { RefChip } from './refs/RefChip';
+import { KindIcon } from './refs/KindIcon';
+import { looksLikeFilePath } from '../lib/filePath';
 
 const SCHEME = `${MCP_SERVER_NAME}://`;
 const BARE = new RegExp(`(^|[\\s(,;])(${MCP_SERVER_NAME}:\\/\\/[A-Za-z0-9._~/@:-]*[A-Za-z0-9_/-])`, 'g');
@@ -32,6 +34,18 @@ export const markdownComponents: Components = {
       <a href={href && !external ? withBase(href) : href} {...rest} {...(external ? { target: '_blank', rel: 'noreferrer' } : {})}>
         {children}
       </a>
+    );
+  },
+  // Inline code that names a file gets the code-file icon (still plain code text, no link).
+  code: ({ children, node: _node, className, ...rest }) => {
+    const text = typeof children === 'string' ? children : Array.isArray(children) && children.every((c) => typeof c === 'string') ? children.join('') : null;
+    const inline = !className && text !== null && !text.includes('\n');
+    if (!inline || !looksLikeFilePath(text)) return <code className={className} {...rest}>{children}</code>;
+    return (
+      <code {...rest} className="md-file-code">
+        <KindIcon kind="code_file" size={12} />
+        {children}
+      </code>
     );
   },
   // ```mermaid fences inside markdown render as diagrams too.

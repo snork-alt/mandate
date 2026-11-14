@@ -1,0 +1,6 @@
+/* Object-type icon (KindIcon): dimmed, never shrinks, sits on the text baseline. */
+.kind-icon { flex: none; color: var(--app-text-muted); vertical-align: -2px; }
+/* Inline before a title or label. */
+.kind-icon.kind-prefix { margin-right: 6px; }
+/* Inline code that names a file (Markdown): a small code-file icon inside the code pill. */
+.md-file-code .kind-icon { margin-right: 3px; vertical-align: -1px; }

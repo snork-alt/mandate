@@ -1,7 +1,7 @@
 /** The one-line installer: rendering (no secrets, pinned version, URL / project), routes (HTTPS, checksum, the CLI
  * tarball), the tarball cache, and real sh runs with stubbed npm / curl. */
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import Fastify from 'fastify';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -247,6 +247,33 @@ esac`,
     expect(t.run(renderInstallSh(TEAM), ['--reinstall']).status).toBe(0);
     expect(t.calls().some((c) => c.startsWith('npm install -g'))).toBe(true);
     expect(t.calls().at(-1)).toBe(connectLine('--no-repo'));
+  });
+
+  it('same version, different build: reinstalls (the build marker, not --version, decides); no marker: reinstalls too', async () => {
+    const t = await setup();
+    expect(t.run(renderInstallSh(TEAM), []).status).toBe(0);
+    const marker = path.join(t.home, '.mandate', 'cli-build');
+    expect(readFileSync(marker, 'utf8')).toBe(`${TGZ_SHA} ${path.join(t.prefix, 'bin', 'getmandate')}\n`);
+    // The server is rebuilt: same version 1.2.3, a new tarball.
+    const NEW = 'getmandate-1.2.3 rebuilt';
+    writeFileSync(path.join(t.dir, 'served.tgz'), NEW);
+    t.reset();
+    const r = t.run(renderInstallSh({ ...TEAM, cliSha256: sha256Hex(NEW) }), []);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).not.toContain('already installed');
+    expect(r.stdout).toContain("Updating getmandate 1.2.3 to this server's build");
+    expect(t.calls().some((c) => c.startsWith('npm install -g'))).toBe(true);
+    expect(t.calls().at(-1)).toBe(connectLine('--no-repo'));
+    expect(readFileSync(marker, 'utf8')).toBe(`${sha256Hex(NEW)} ${path.join(t.prefix, 'bin', 'getmandate')}\n`);
+    // Same build again: connect only.
+    t.reset();
+    expect(t.run(renderInstallSh({ ...TEAM, cliSha256: sha256Hex(NEW) }), []).stdout).toContain('already installed');
+    expect(t.calls()).toEqual([connectLine('--no-repo')]);
+    // A CLI installed by an older installer (no marker): reinstalled.
+    rmSync(marker);
+    t.reset();
+    expect(t.run(renderInstallSh({ ...TEAM, cliSha256: sha256Hex(NEW) }), []).status).toBe(0);
+    expect(t.calls().some((c) => c.startsWith('npm install -g'))).toBe(true);
   });
 
   it('falls back to a per-user prefix when the global install fails (and keeps upgrading there)', async () => {

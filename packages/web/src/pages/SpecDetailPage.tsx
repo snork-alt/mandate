@@ -4,6 +4,7 @@ import { buildRef } from '@mandate/shared/refs';
 import { RailDetails } from '../components/rail/RailDetails';
 import { ActionIcon, CopyButton, Skeleton, Text, Tooltip } from '@mantine/core';
 import { IconAlertTriangle, IconCircleCheckFilled, IconBrandGit, IconCheck, IconCopy, IconFileOff, IconFolder, IconGitBranch, IconLock, IconRotateClockwise2, IconUnlink, IconUser } from '@tabler/icons-react';
+import { KindIcon } from '../components/refs/KindIcon';
 import type { WorkOrder, Spec } from '@mandate/shared';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api';
@@ -41,6 +42,7 @@ function SpecLink({ id, spec }: { id: string; spec?: Spec }) {
   return (
     <Link to={`/specs/${id}`} className="linked-item" data-missing={spec ? undefined : true}>
       {spec?.maturity ? <MaturityDot m={spec.maturity} details={false} /> : spec ? <StatusIcon status={spec.status} reopened={isReopened(spec)} withTooltip /> : <IconFileOff size={14} />}
+      <KindIcon kind="spec" />
       <span className="linked-title">{spec?.title ?? id}</span>
       {spec && <span className="linked-meta">{spec.maturity?.label ?? SPEC_STATUS_META[spec.status].label}</span>}
     </Link>
@@ -126,7 +128,7 @@ export function SpecDetailPage() {
   const crumbs = [
     { label: 'Specs', to: '/specs' },
     ...(spec?.category ? [{ label: categoryLabel(spec.category), to: `/specs?category=${encodeURIComponent(spec.category)}` }] : []),
-    { label: <span className="mono">{id}</span> },
+    { label: <span className="mono">{id}</span>, kind: 'spec' as const },
   ];
 
   if (query.isPending || (query.isError && tracked.commit && tracked.loading)) {
@@ -439,6 +441,7 @@ export function SpecDetailPage() {
           {specWorkOrders.map((q) => (
             <Link key={q.id} to={`/work-orders/${q.id}`} className="linked-item">
               <WorkOrderStatusIcon status={q.status} />
+              <KindIcon kind="work_order" />
               <span className="linked-title">
                 {KIND_LABEL[q.kind]} · {q.sections.length} section{q.sections.length === 1 ? '' : 's'}
               </span>

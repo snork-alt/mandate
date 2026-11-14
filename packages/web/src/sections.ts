@@ -1,4 +1,5 @@
-import { IconFileText, IconListCheck, IconClipboardList, IconMessageReport, IconRuler2, IconTopologyStar3 } from '@tabler/icons-react';
+import type { IconFileText } from '@tabler/icons-react';
+import { KIND_ICON } from './components/refs/kinds';
 import type { EntityKind } from '@mandate/shared';
 
 export interface SectionDef {
@@ -19,42 +20,42 @@ export const SECTIONS: SectionDef[] = [
     label: 'Specs',
     singular: 'spec',
     description: 'Specifications agents implement against.',
-    icon: IconFileText,
+    icon: KIND_ICON.spec,
   },
   {
     kind: 'standards',
     label: 'Standards',
     singular: 'standard',
     description: 'Reusable rule sets and patterns that specs follow.',
-    icon: IconRuler2,
+    icon: KIND_ICON.standard,
   },
   {
     kind: 'components',
     label: 'Components',
     singular: 'component',
     description: 'The architecture: services, modules and datastores, what they own and depend on.',
-    icon: IconTopologyStar3,
+    icon: KIND_ICON.component,
   },
   {
     kind: 'audits',
     label: 'Audits',
     singular: 'audit',
     description: 'Audit reports: a coding agent checks the code against a spec or standard.',
-    icon: IconListCheck,
+    icon: KIND_ICON.audit,
   },
   {
     kind: 'work-orders',
     label: 'Work orders',
     singular: 'work order',
     description: 'Work orders for agents on spec sections, in file order.',
-    icon: IconClipboardList,
+    icon: KIND_ICON.work_order,
   },
   {
     kind: 'feedback',
     label: 'Feedbacks',
     singular: 'feedback item',
     description: 'Why specs and standards change: ambiguities, conflicts, bugs and ideas.',
-    icon: IconMessageReport,
+    icon: KIND_ICON.feedback,
     count: (items) => (items as { status: string }[]).filter((f) => f.status === 'open').length,
   },
 ];

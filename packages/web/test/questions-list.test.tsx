@@ -46,6 +46,10 @@ vi.mock('../src/mcp/client', () => ({
       const items = args.status === 'open' ? OPEN : args.status === 'all' ? [...OPEN, ...CLOSED] : CLOSED;
       return { items, total: items.length };
     }
+    if (name === 'question_answer') {
+      OPEN = OPEN.filter((x) => x.id !== args.id);
+      return { ok: true };
+    }
     if (name === 'activity_list') return { events: [] };
     if (name === 'ask_status') return { configured: false, default: null, models: [], missing: [] };
     throw new Error(`${name}: not mocked`);
@@ -88,20 +92,93 @@ function mount(path = '/questions') {
 }
 
 describe('questions list page', () => {
-  it('shows open questions with purpose, blocking, context and asker; answer-all on the Open tab', async () => {
-    OPEN = [ask('ask-0002'), ask('ask-0001', { purpose: 'approval', blocking: false, context: [WO] })];
+  it('Open tab: every open question as an answer card, grouped by purpose with counts; blocking first; page answer-all', async () => {
+    OPEN = [
+      ask('ask-0002', { blocking: false, createdAt: new Date(Date.now() - 60_000).toISOString() }),
+      ask('ask-0001', { purpose: 'approval', blocking: false, context: [WO] }),
+      ask('ask-0004'),
+      ask('ask-0006', { purpose: 'other', blocking: false }),
+    ];
     CLOSED = [ask('ask-0003', { status: 'answered', answer: { by: { agent: 'mandate-ui', user: 'ada' }, at, answers: { q1: 'OAuth' }, via: 'ui' } })];
     mount();
-    expect(await screen.findByTestId('q-row-ask-0002')).toBeTruthy();
-    expect(screen.getByTestId('q-row-ask-0001')).toBeTruthy();
-    expect(screen.queryByTestId('q-row-ask-0003')).toBeNull();
-    expect(screen.getAllByText('Blocking')).toHaveLength(1);
-    expect(screen.getByText('Approval')).toBeTruthy();
-    // Two rows, one context each (ChipList also renders a hidden measuring copy).
-    expect(screen.getAllByTestId('q-context-chip').filter((c) => !c.closest('[aria-hidden]'))).toHaveLength(2);
+    const groups = await screen.findByTestId('q-open-groups');
+    // Approvals, then Decisions, then Other (order of PURPOSE_GROUP); no empty groups.
+    const sections = within(groups).getAllByRole('region');
+    expect(sections.map((x) => x.getAttribute('aria-label'))).toEqual(['Approvals', 'Decisions', 'Other']);
+    const dec = screen.getByTestId('q-group-decision');
+    expect(within(dec).getByTestId('q-group-count').textContent).toBe('2');
+    // Blocking (older) before the newer non-blocking one.
+    const cards = within(dec).getAllByTestId(/^question-ask-/);
+    expect(cards.map((c) => c.dataset.testid)).toEqual(['question-ask-0004', 'question-ask-0002']);
+    // The answer card in place: choices, Submit, copy-ref and the question page link.
+    expect(within(cards[0]!).getByRole('radio', { name: 'OAuth (recommended)' })).toBeTruthy();
+    expect(within(cards[0]!).getByTestId('q-submit')).toBeTruthy();
+    expect(within(cards[0]!).getByLabelText(/Copy reference/)).toBeTruthy();
+    expect(within(cards[0]!).getByTestId('q-open-page').getAttribute('href')).toBe('/questions/ask-0004');
+    expect(screen.queryByTestId('question-ask-0003')).toBeNull();
     expect(screen.getByTestId('q-answer-all')).toBeTruthy();
-    await waitFor(() => expect(screen.getByText('Open 2')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Open 4')).toBeTruthy());
     expect(screen.getByText('Answered 1')).toBeTruthy();
+    // Collapsing a group hides its cards.
+    fireEvent.click(within(dec).getByTestId('q-group-toggle'));
+    expect(within(dec).queryByTestId('question-ask-0004')).toBeNull();
+  });
+
+  it('Group by: what it is about (element title + link) and agent, kept in the URL', async () => {
+    OPEN = [ask('ask-0001', { context: [WO] }), ask('ask-0002'), ask('ask-0005', { context: [], asker: { agent: 'codex@box' } })];
+    mount();
+    await screen.findByTestId('q-open-groups');
+    fireEvent.click(within(screen.getByTestId('q-group-by')).getByText("What it's about"));
+    await waitFor(() => expect(screen.getByTestId('q-open-groups').dataset.groupBy).toBe('about'));
+    expect(screen.getByTestId('where').textContent).toBe('/questions?group=about');
+    const wo = screen.getByTestId(`q-group-${WO}`);
+    expect(within(wo).getByTestId('question-ask-0001')).toBeTruthy();
+    expect(within(wo).getByTestId('q-group-link').getAttribute('href')).toBe('/work-orders/wo-0001');
+    expect(within(screen.getByTestId(`q-group-${SPEC}`)).getByTestId('question-ask-0002')).toBeTruthy();
+    expect(within(screen.getByTestId('q-group-~none')).getByTestId('question-ask-0005')).toBeTruthy();
+    fireEvent.click(within(screen.getByTestId('q-group-by')).getByText('Agent'));
+    await waitFor(() => expect(screen.getByTestId('q-open-groups').dataset.groupBy).toBe('agent'));
+    expect(within(screen.getByTestId('q-group-codex@box')).getByTestId('question-ask-0005')).toBeTruthy();
+    expect(within(screen.getByTestId('q-group-claude-code@mbp')).getAllByTestId(/^question-ask-/)).toHaveLength(2);
+  });
+
+  it("a group's Answer all recommended answers only that group's questions", async () => {
+    OPEN = [ask('ask-0001', { purpose: 'approval' }), ask('ask-0002'), ask('ask-0004')];
+    mount();
+    const btn = (await screen.findByTestId('q-group-answer-all-decision')) as HTMLButtonElement;
+    await waitFor(() => expect(btn.disabled).toBe(false));
+    fireEvent.click(btn);
+    fireEvent.click(await screen.findByTestId('q-group-answer-all-decision-confirm'));
+    await waitFor(() => expect(calls.filter((c) => c.name === 'question_answer')).toHaveLength(2));
+    expect(calls.filter((c) => c.name === 'question_answer').map((c) => c.args.id).sort()).toEqual(['ask-0002', 'ask-0004']);
+    // Both shown as answered in place; the approval still open.
+    expect(await screen.findByTestId('question-summary-ask-0002')).toBeTruthy();
+    expect(screen.getByTestId('question-summary-ask-0004')).toBeTruthy();
+    expect(screen.getByTestId('question-ask-0001')).toBeTruthy();
+  });
+
+  it('answering in place collapses the card to the answered summary with the continue line', async () => {
+    OPEN = [ask('ask-0001'), ask('ask-0002')];
+    mount();
+    const card = await screen.findByTestId('question-ask-0001');
+    await waitFor(() => expect((within(card).getByTestId('q-submit') as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(within(card).getByRole('radio', { name: 'API key' }));
+    fireEvent.click(within(card).getByTestId('q-submit'));
+    const sum = await screen.findByTestId('question-summary-ask-0001');
+    expect(calls.find((c) => c.name === 'question_answer')?.args).toMatchObject({ id: 'ask-0001', answers: { q1: 'API key' } });
+    expect(within(sum).getByTestId('q-continue')).toBeTruthy();
+    expect(within(sum).getByTestId('q-answer-pill').textContent).toContain('API key');
+    expect(screen.queryByTestId('question-ask-0001')).toBeNull();
+    expect(screen.getByTestId('question-ask-0002')).toBeTruthy();
+  });
+
+  it('many questions: a page of cards per group with Show more', async () => {
+    OPEN = Array.from({ length: 25 }, (_, i) => ask(`ask-${String(100 + i).padStart(4, '0')}`));
+    mount();
+    const dec = await screen.findByTestId('q-group-decision');
+    expect(within(dec).getAllByTestId(/^question-ask-/)).toHaveLength(20);
+    fireEvent.click(within(dec).getByTestId('q-group-more'));
+    expect(within(dec).getAllByTestId(/^question-ask-/)).toHaveLength(25);
   });
 
   it('switches to Answered: answer summary, closed status marks, Status filter, no answer-all', async () => {
@@ -111,8 +188,8 @@ describe('questions list page', () => {
       ask('ask-0004', { status: 'cancelled', cancelled: { by: { agent: 'claude-code@mbp' }, at, reason: 'decided by the spec' } }),
     ];
     mount();
-    await screen.findByTestId('q-row-ask-0001');
-    fireEvent.click(screen.getByText(/^Answered/));
+    await screen.findByTestId('question-ask-0001');
+    fireEvent.click(within(screen.getByTestId('q-tabs')).getByText(/^Answered/));
     expect(await screen.findByTestId('q-row-ask-0003')).toBeTruthy();
     expect(screen.queryByTestId('q-row-ask-0001')).toBeNull();
     expect(screen.getByText(/Answer: API key — keep it simple/)).toBeTruthy();
@@ -130,40 +207,40 @@ describe('questions list page', () => {
       ask('ask-0005', { context: [] }),
     ];
     mount('/questions?purpose=approval');
-    expect(await screen.findByTestId('q-row-ask-0001')).toBeTruthy();
-    expect(screen.queryByTestId('q-row-ask-0002')).toBeNull();
+    expect(await screen.findByTestId('question-ask-0001')).toBeTruthy();
+    expect(screen.queryByTestId('question-ask-0002')).toBeNull();
     cleanup();
     mount('/questions?by=agent:codex@box');
-    expect(await screen.findByTestId('q-row-ask-0002')).toBeTruthy();
-    expect(screen.queryByTestId('q-row-ask-0001')).toBeNull();
+    expect(await screen.findByTestId('question-ask-0002')).toBeTruthy();
+    expect(screen.queryByTestId('question-ask-0001')).toBeNull();
     cleanup();
     mount('/questions?by=client:cli-b');
-    expect(await screen.findByTestId('q-row-ask-0002')).toBeTruthy();
-    expect(screen.queryByTestId('q-row-ask-0005')).toBeNull();
+    expect(await screen.findByTestId('question-ask-0002')).toBeTruthy();
+    expect(screen.queryByTestId('question-ask-0005')).toBeNull();
     cleanup();
     mount(`/questions?about=${encodeURIComponent(WO)}`);
-    expect(await screen.findByTestId('q-row-ask-0002')).toBeTruthy();
-    expect(screen.queryByTestId('q-row-ask-0001')).toBeNull();
+    expect(await screen.findByTestId('question-ask-0002')).toBeTruthy();
+    expect(screen.queryByTestId('question-ask-0001')).toBeNull();
     cleanup();
     mount('/questions?about=~none');
-    expect(await screen.findByTestId('q-row-ask-0005')).toBeTruthy();
-    expect(screen.queryByTestId('q-row-ask-0002')).toBeNull();
+    expect(await screen.findByTestId('question-ask-0005')).toBeTruthy();
+    expect(screen.queryByTestId('question-ask-0002')).toBeNull();
     // Nothing matches: the filtered empty state, and Clear resets the filters.
     cleanup();
     mount('/questions?purpose=clarification');
     expect(await screen.findByText('No matching questions')).toBeTruthy();
     fireEvent.click(screen.getByText('Clear'));
-    expect(await screen.findByTestId('q-row-ask-0001')).toBeTruthy();
+    expect(await screen.findByTestId('question-ask-0001')).toBeTruthy();
   });
 
-  it('a row opens the question page; a context chip opens the element', async () => {
-    OPEN = [ask('ask-0001', { context: [WO] })];
-    mount();
-    fireEvent.click(await screen.findByTestId('q-row-ask-0001'));
-    await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/questions/ask-0001'));
+  it('Answered tab: a row opens the question page; a context chip opens the element', async () => {
+    CLOSED = [ask('ask-0003', { status: 'answered', context: [WO], answer: { by: { agent: 'mandate-ui' }, at, answers: { q1: 'OAuth' }, via: 'ui' } })];
+    mount('/questions?tab=answered');
+    fireEvent.click(await screen.findByTestId('q-row-ask-0003'));
+    await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/questions/ask-0003'));
     cleanup();
-    mount();
-    const row = (await screen.findByTestId('q-row-ask-0001')).closest('a')!;
+    mount('/questions?tab=answered');
+    const row = (await screen.findByTestId('q-row-ask-0003')).closest('a')!;
     fireEvent.click(within(row).getAllByTestId('q-context-chip').find((c) => !c.closest('[aria-hidden]'))!);
     await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/work-orders/wo-0001'));
   });

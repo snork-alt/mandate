@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, type MouseEvent } from 'react';
-import { Menu, Tooltip } from '@mantine/core';
+import { Menu } from '@mantine/core';
 import { IconAlertTriangle, IconAt, IconExternalLink, IconLink } from '@tabler/icons-react';
 import { useNavigate } from 'react-router';
 import type { ReferenceCheck } from '@mandate/shared';
@@ -15,7 +15,7 @@ import { parseRef } from '@mandate/shared/refs';
 import { MaturityDot } from '../maturity/MaturityBadge';
 import { useSpecMaturities } from '../maturity/SpecMaturity';
 import './refs.css';
-import { Contributors } from '../people/People';
+import { RefHoverCard } from './RefPreview';
 import { appUrl, withBase } from '../../project';
 
 /** Reference checks of an ask answer: unresolved refs render visibly as such. */
@@ -33,18 +33,6 @@ export interface RefChipProps {
   /** Skip resolving through MCP (the label falls back to the reference). */
   resolve?: boolean;
   check?: ReferenceCheck;
-}
-
-const PEOPLE_LABEL: Partial<Record<string, string>> = { code_file: 'Touched by', code_range: 'Touched by', repo: 'Touched by', commit: 'Committed by', code_commit: 'Implemented by', pull_request: 'Worked on by', branch: 'Worked on by', agent: 'Used by', symbol: 'Mentioned by' };
-
-/** Who touched / wrote the referenced element (lazy: the preview mounts only while open). */
-function RefPeople({ uri, kind }: { uri: string; kind: string }) {
-  return (
-    <div className="ref-preview-people" data-testid="ref-people">
-      <span className="faint">{PEOPLE_LABEL[kind] ?? 'Contributors'}</span>
-      <Contributors refUri={uri} size="xs" max={5} form="compact" />
-    </div>
-  );
 }
 
 /**
@@ -85,27 +73,27 @@ export function RefChip({ to, label, href, resolve = true, check }: RefChipProps
     else void copyText(mentionOf(uri), 'Copied reference');
   };
 
-  const preview = unresolved ? (
-    <div>
-      <strong>Unresolved reference</strong>
-      <div className="ref-preview-mono">{uri}</div>
-      {chk?.error && <div>{chk.error}</div>}
-    </div>
-  ) : (
-    <div>
-      <strong>{node.data?.label ?? title}</strong>
-      <div className="ref-preview-mono">{kind?.replace('_', ' ')}{status ? ` · ${status.replace('_', ' ')}` : ''}</div>
-      {summary && <div>{summary}</div>}
-      {(kind === 'code_file' || kind === 'code_range') && <CodeRulesLines refUri={uri} />}
-      {kind && <RefPeople uri={uri} kind={kind} />}
-    </div>
-  );
+  const updated = ['updated', 'updatedAt', 'at'].map((k) => props[k]).find((v): v is string => typeof v === 'string');
+  const hint = unresolved || !kind ? undefined : target || kind === 'symbol' || kind === 'code_file' || kind === 'code_range' ? 'Click to open' : 'Click to copy the reference';
 
   return (
     <Menu opened={menu} onChange={setMenu} position="bottom-start" withinPortal>
       <Menu.Target>
         <span onContextMenu={(e) => (e.preventDefault(), setMenu(true))} style={{ display: 'inline-flex', maxWidth: '100%' }}>
-          <Tooltip label={preview} multiline w={280} openDelay={350} withinPortal disabled={menu}>
+          <RefHoverCard
+            disabled={menu}
+            uri={uri}
+            kind={kind}
+            label={node.data?.label ?? title}
+            status={status}
+            maturity={specId ? maturity.get(specId) : undefined}
+            summary={summary}
+            updated={updated}
+            unresolved={unresolved}
+            error={chk?.error}
+            hint={hint}
+            extra={kind === 'code_file' || kind === 'code_range' ? <CodeRulesLines refUri={uri} /> : undefined}
+          >
             <a
               className="ref-chip-rich"
               data-kind={kind ?? 'invalid'}
@@ -124,7 +112,7 @@ export function RefChip({ to, label, href, resolve = true, check }: RefChipProps
                 <StatusGlyph status={status} size={12} />
               )}
             </a>
-          </Tooltip>
+          </RefHoverCard>
         </span>
       </Menu.Target>
       <Menu.Dropdown>

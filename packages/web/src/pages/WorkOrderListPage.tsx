@@ -77,6 +77,7 @@ function WorkOrderRow({ item, spec, now }: { item: WorkOrder; spec?: Spec; now: 
     <ListRow
       to={`/work-orders/${item.id}`}
       list="work-orders"
+      kind="work_order"
       copy={target}
       lead={
         <>

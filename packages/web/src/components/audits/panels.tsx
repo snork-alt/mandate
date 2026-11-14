@@ -1,6 +1,7 @@
 import { Link } from 'react-router';
 import { Tooltip } from '@mantine/core';
 import { IconListCheck } from '@tabler/icons-react';
+import { KindIcon } from '../refs/KindIcon';
 import { FINDING_STATUSES, type AuditFinding, type AuditSummary, type LastAudit, type SpecAudits, type StandardAudits } from '@mandate/shared';
 import { TimeAgo } from '../TimeAgo';
 import { CommitHash } from '../copy';
@@ -120,6 +121,7 @@ function HistoryList({ history }: { history: AuditSummary[] }) {
       {history.map((a) => (
         <Link key={a.id} to={auditPath(a.id)} className="linked-item">
           <AuditDot tone={a.stale && a.outcome === 'pass' ? 'stale' : OUTCOME_META[a.outcome].tone} />
+          <KindIcon kind="audit" />
           <span className="linked-title">
             <TimeAgo iso={a.at} /> · {auditorLabel(a.auditor)}
           </span>

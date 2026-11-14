@@ -1,7 +1,8 @@
 /**
  * Questions coding agents asked through Mandate (`question_ask`), as a list: Open | Answered (answered plus the other
  * closed states: withdrawn, superseded, expired, each with its status mark and a Status filter). Filters: asked by
- * (coding agent / user / client), purpose, what it is about. A row opens /questions/:id.
+ * (coding agent / user / client), purpose, what it is about. Open: every open question as an answer card, grouped
+ * (by purpose, element or coding agent; `?group=`), answered in place. Answered: compact rows; a row opens /questions/:id.
  */
 import { useMemo, type KeyboardEvent, type MouseEvent } from 'react';
 import { Button, SegmentedControl, Text, Tooltip } from '@mantine/core';
@@ -17,6 +18,7 @@ import { ListHeader, ListRow, RowTime, withNodes, type ChipItem, type ColDef } f
 import { ActorAvatar } from '../components/people/People';
 import { KIND_ICON, fallbackLabel, refHref, refKind } from '../components/refs/kinds';
 import { AnswerAllRecommended, NO_ACCESS } from '../components/questions/QuestionCard';
+import { OpenQuestionsGrouped, type GroupBy } from '../components/questions/OpenQuestionsGrouped';
 import { useDecisionAccess } from '../lib/decisions';
 import { PURPOSE_LABEL, useQuestions } from '../lib/questions';
 import { useSpecs, useStandards } from '../lib/queries';
@@ -166,6 +168,7 @@ function QuestionRow({ q, titles }: { q: Question; titles: Map<string, string> }
     <ListRow
       to={`/questions/${q.id}`}
       list="questions"
+      kind="question"
       copy={questionTarget(q.id)}
       lead={<QuestionStatusIcon status={q.status} />}
       leadWidth={18}
@@ -239,14 +242,13 @@ export function QuestionsListPage() {
 
   const all = query.data?.items ?? [];
   const f = { by: sel('by'), purpose: sel('purpose'), about: sel('about'), status: tab === 'answered' ? sel('status') : [] };
-  const visible = all.filter(
-    (x) =>
+  const pass = (x: Question) =>
       matches(q, x.id, ...x.questions.flatMap((i) => [i.header, i.question]), ...x.context, outcomeLine(x)) &&
       (!f.by.length || askedBy(x).some((v) => f.by.includes(v))) &&
       (!f.purpose.length || f.purpose.includes(x.purpose)) &&
       (!f.about.length || x.context.some((r) => f.about.includes(elementOf(r))) || (f.about.includes('~none') && !x.context.length)) &&
-      (!f.status.length || f.status.includes(x.status)),
-  );
+      (!f.status.length || f.status.includes(x.status));
+  const visible = all.filter(pass);
   const count = (pred: (x: Question) => boolean) => all.filter(pred).length;
   const active = KEYS.some((k) => f[k].length);
 
@@ -298,6 +300,8 @@ export function QuestionsListPage() {
   const closedCount = closedQ.data?.total;
   const canAnswer = access.data?.canDecide ?? false;
   const openVisible = tab === 'open' ? visible.filter((x) => x.status === 'open') : [];
+  const reason = access.isPending ? 'Checking access…' : NO_ACCESS;
+  const groupBy: GroupBy = (['about', 'agent'] as const).find((g) => g === params.get('group')) ?? 'purpose';
 
   return (
     <>
@@ -366,7 +370,7 @@ export function QuestionsListPage() {
           </Button>
         )}
         <div style={{ flex: 1 }} />
-        {tab === 'open' && <AnswerAllRecommended questions={openVisible} canAnswer={canAnswer} reason={access.isPending ? 'Checking access…' : NO_ACCESS} />}
+        {tab === 'open' && <AnswerAllRecommended questions={openVisible} canAnswer={canAnswer} reason={reason} />}
         <SearchInput value={q} onChange={(v) => set('q', v)} placeholder="Search questions…" />
       </div>
 
@@ -386,10 +390,25 @@ export function QuestionsListPage() {
       {query.data && all.length > 0 && visible.length === 0 && (
         <EmptyView icon={<IconSearch size={22} stroke={1.5} />} title="No matching questions" description="Try another filter or search term." />
       )}
-      {visible.length > 0 && <QuestionsHeader tab={tab} />}
-      {visible.map((x) => (
-        <QuestionRow key={x.id} q={x} titles={titles} />
-      ))}
+      {tab === 'open' && visible.length > 0 && (
+        <div className="q-open-page">
+          <OpenQuestionsGrouped
+            questions={openVisible}
+            by={groupBy}
+            onBy={(v) => set('group', v === 'purpose' ? '' : v)}
+            titles={titles}
+            canAnswer={canAnswer}
+            reason={reason}
+            user={access.data?.user}
+            keep={pass}
+          />
+        </div>
+      )}
+      {tab === 'answered' && visible.length > 0 && <QuestionsHeader tab={tab} />}
+      {tab === 'answered' &&
+        visible.map((x) => (
+          <QuestionRow key={x.id} q={x} titles={titles} />
+        ))}
       {query.data && query.data.total > all.length && (
         <Text size="xs" c="var(--app-text-faint)" px="md" py="xs">
           Showing the newest {all.length} of {query.data.total}.

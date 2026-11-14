@@ -25,6 +25,15 @@ export const PURPOSE_LABEL: Record<Question['purpose'], string> = {
   other: 'Question',
 };
 
+/** Group headings of the open questions by purpose, in display order (approvals first). */
+export const PURPOSE_GROUP: { purpose: Question['purpose']; label: string }[] = [
+  { purpose: 'approval', label: 'Approvals' },
+  { purpose: 'standard_confirmation', label: PURPOSE_LABEL.standard_confirmation },
+  { purpose: 'decision', label: 'Decisions' },
+  { purpose: 'clarification', label: 'Clarifications' },
+  { purpose: 'other', label: 'Other' },
+];
+
 /** Recommended labels of one question as a list. */
 export const recommendedOf = (item: Pick<QuestionItem, 'recommended'>): string[] => (Array.isArray(item.recommended) ? item.recommended : [item.recommended]);
 
@@ -75,7 +84,7 @@ const settle = (qc: ReturnType<typeof useQueryClient>) => {
 };
 
 /** Answer one question. */
-export function useAnswerQuestion(onDone?: () => void) {
+export function useAnswerQuestion(onDone?: (a: AnswerArgs) => void) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (a: AnswerArgs) => callTool<unknown>('question_answer', { ...a }, undefined, { retry: false }),
@@ -86,14 +95,14 @@ export function useAnswerQuestion(onDone?: () => void) {
     },
     onSuccess: (_r, a) => {
       notifications.show({ color: 'teal', title: 'Answer sent', message: createElement(ContinueNotice, { ids: [a.id] }), autoClose: 12_000 });
-      onDone?.();
+      onDone?.(a);
     },
     onSettled: () => settle(qc),
   });
 }
 
 /** Answer every given question with its recommended options (one call each, in order). */
-export function useAnswerAllRecommended(onDone?: () => void) {
+export function useAnswerAllRecommended(onDone?: (r: { ok: number; failed: string[]; answered: string[] }) => void) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (qs: Question[]) => {
@@ -115,7 +124,7 @@ export function useAnswerAllRecommended(onDone?: () => void) {
         message: createElement('div', null, r.failed.length ? `Not recorded: ${r.failed.join('; ')}` : null, r.answered.length ? createElement(ContinueNotice, { ids: r.answered }) : null),
         autoClose: 12_000,
       });
-      onDone?.();
+      onDone?.(r);
     },
     onError: (e, _a, ctx) => {
       for (const [k, v] of ctx?.keys ?? []) qc.setQueryData(k, v);

@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { Link } from 'react-router';
 import { Tooltip } from '@mantine/core';
 import { IconArrowUpRight, IconCircleCheck, IconCircleDashed, IconCircleHalf2, IconCircleOff, IconCircleX, IconClipboardList, IconHistory, IconMessageReport } from '@tabler/icons-react';
+import { KindIcon } from '../refs/KindIcon';
 import { AUDIT_ITEM_RESULTS, AUDIT_LEVELS, type AuditFinding, type AuditItemResult, type AuditLevel, type AuditOutcome, type AuditSummary, type FindingSeverity, type FindingStatus, type LevelCounts } from '@mandate/shared';
 import { CodeRefChip } from '../doc';
 import { CodeBlock } from '../CodeBlock';
@@ -217,7 +218,10 @@ export function FindingCard({ f, code, compact, showAudit }: { f: AuditFinding; 
     <div className="audit-finding has-copy-ref" id={`finding-${f.id}`} data-status={f.status} {...copyTargetProps(target)}>
       <div className="audit-finding-head">
         <SeverityBadge severity={f.severity} />
-        <span className="audit-finding-title">{f.title}</span>
+        <span className="audit-finding-title">
+          <KindIcon kind="finding" className="kind-prefix" />
+          {f.title}
+        </span>
         <span className="section-people finding-people" data-testid="finding-people">
           <Contributors refUri={f.uri} size="xs" max={3} form="compact" />
         </span>

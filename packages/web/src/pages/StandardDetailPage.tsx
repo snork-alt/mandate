@@ -35,7 +35,7 @@ export function StandardDetailPage() {
   const standards = useStandards();
   const now = useNow();
   const standardTitles = useMemo(() => new Map((standards.data ?? []).map((s) => [s.id, s.title])), [standards.data]);
-  const crumbs = [{ label: 'Standards', to: '/standards' }, { label: <span className="mono">{id}</span> }];
+  const crumbs = [{ label: 'Standards', to: '/standards' }, { label: <span className="mono">{id}</span>, kind: 'standard' as const }];
   const tracked = useTrackedChanges('standards', id);
   const feedback = useDocFeedback('standards', id);
   const navigate = useNavigate();

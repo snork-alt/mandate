@@ -1,7 +1,7 @@
 /**
  * `/mandate-bootstrap`: reverse-engineer an existing codebase into a Mandate project (components, standards, specs),
- * as a resumable, checkpointed procedure tracked by a work order. A separate Agent Skill (`mandate-bootstrap`) so the
- * master skill stays small. Pure module (no server imports): the CLI bundles it. Tool names are checked against the
+ * as a resumable, checkpointed procedure tracked only in its run folder (never a Mandate item). Served by
+ * `instructions_get { name: "bootstrap" }` (the CLI installs only a stub skill, stubs.ts) so the master skill stays small. Pure module (no server imports): the CLI bundles it. Tool names are checked against the
  * registry by test/mcp/bootstrap.test.ts.
  */
 
@@ -44,6 +44,7 @@ One JSON object per line:
 - Then \`mandate bootstrap validate <runId>\`; fix every error.
 
 ## Stage 2: DISTILL (fresh agent)
+No stage word = run every stage in this session: with sub-agents, start DISTILL, then REVIEW, as a fresh sub-agent each yourself (don't stop or ask for a new session). Only without sub-agents: stop after the stage and tell the user to start a new session with \`/mandate-bootstrap <stage> --run <runId>\`.
 Read manifest + notes; dedup; code beats stale docs unless docs are authoritative (ask on contradiction). Per area:
 1. Survey (≤ 30 lines: what, parts, interactions, testing) in \`notes/survey-<area>.md\` of the run folder; show it to the user to correct.
 2. Architecture: components from \`component_candidate\` / \`dependency\` notes (name, responsibility, \`owns\`, \`layer\`, \`parent\`, \`depends_on\`). Model the architecture, not the folders: deployable units, major modules, bounded contexts; few (~5-15 top-level per service), children only for a genuinely separate responsibility, depth ≤ 2; merge small ones with the same responsibility. Each: one clear responsibility, \`owns\` globs covering its code without overlap, \`layer\`, acyclic \`depends_on\` following the layering. Reuse existing ones (\`architecture_get\`). Propose the map to the user once (one question): confirm / rename / merge / split; then \`component_create\` + \`component_section_link_add\` \`depends_on\`; check \`architecture_get\`, \`code_owner\`. Each component gets \`affects\` / \`follows\` links and \`owns\` (or \`kind: external\`), as in the mandate skill.
@@ -63,6 +64,6 @@ export const BOOTSTRAP_COMMAND = {
   description: 'Reverse-engineer this codebase into Mandate (extract → distill → review). Forms: (none) · extract|distill|review [--run id] [--area path] · --resume · scope.',
   argumentHint: '[extract|distill|review] [--run <id>] [--area <path>] [--resume] [scope…]',
   render: (args: string) => `Run the Mandate bootstrap per the "mandate-bootstrap" skill. Arguments: "${args}".
-No stage word = all stages. DISTILL and REVIEW each need a fresh agent; without sub-agents, stop after the stage and tell the user to start a new session with "/mandate-bootstrap distill --run <id>".
+No stage word = all stages in this session. DISTILL and REVIEW each need a fresh agent: with sub-agents, start them yourself; only without sub-agents, stop after the stage and tell the user to start a new session with "/mandate-bootstrap distill --run <id>".
 Skill not loaded: project_info first (stop if flow is off: writes are refused with flow_off); spec_match before every create; sections get provenance "inferred"; standards: inferred drafts the user confirms at the end.`,
 };

@@ -4,6 +4,7 @@ import type { StandardUsage } from '@mandate/shared';
 import { Link } from 'react-router';
 import { categoryLabel, isReopened } from '../lib/specs';
 import { StatusIcon } from './doc';
+import { KindIcon } from './refs/KindIcon';
 import { PropGroup } from './PropertyList';
 import { CopyRef } from './copy';
 import { parseRef, refMention } from '@mandate/shared/refs';
@@ -54,6 +55,7 @@ export function UsedByPanel({ usage, loading, action }: { usage?: StandardUsage[
               <div key={u.specId} className="usedby-row">
                 <Link to={`/specs/${u.specId}`} className="linked-item">
                   <StatusIcon status={u.status} reopened={isReopened({ status: u.status, implementedCommit: undefined })} withTooltip />
+                  <KindIcon kind="spec" />
                   <span className="linked-title">{u.title}</span>
                   {u.category && <span className="linked-meta">{categoryLabel(u.category)}</span>}
                 </Link>
@@ -94,6 +96,7 @@ export function DeviationsPanel({ usage }: { usage?: StandardUsage[] }) {
       {rows.map((d) => (
         <Link key={`${d.specId}-${d.id}-${d.target}`} to={`/specs/${d.specId}#section-${d.id}`} className="deviation-row">
           <span className="deviation-title">
+            <KindIcon kind="section" className="kind-prefix" />
             {d.specTitle} › {d.title}
           </span>
           <span className="deviation-target mono">from {parseRef(d.target)?.sectionId}</span>

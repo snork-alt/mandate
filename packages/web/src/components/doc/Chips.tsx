@@ -8,9 +8,9 @@ import { IconBraces, IconCode, IconRuler2 } from '@tabler/icons-react';
 import type { CodeRef } from '@mandate/shared';
 import { RulesHover } from '../rules/RuleParts';
 import { ownerOf, type StoredComponent } from '@mandate/shared';
-import { IconTopologyStar3 } from '@tabler/icons-react';
 import { Link } from 'react-router';
 import { useEntityList } from '../../lib/queries';
+import { KIND_ICON } from '../refs/kinds';
 
 /** `repo · path:lines @commit`; click copies its code reference, right-click for the raw path. */
 export function CodeRefChip({ codeRef }: { codeRef: CodeRef }) {
@@ -77,6 +77,8 @@ export function TagPill({ tag }: { tag: string }) {
 }
 
 /** "Owned by" chip next to a code ref: the component whose `owns` globs match the path (most specific wins). */
+const ComponentIcon = KIND_ICON.component;
+
 function OwnedBy({ repo, path }: { repo: string; path: string }) {
   const comps = useEntityList('components');
   const owner = ownerOf(repo, path, (comps.data ?? []) as unknown as StoredComponent[]);
@@ -84,7 +86,7 @@ function OwnedBy({ repo, path }: { repo: string; path: string }) {
   return (
     <Tooltip label={`Owned by ${owner.component.title} (${owner.glob})`} openDelay={300}>
       <Link to={`/components/${owner.component.id}`} className="chip chip-owner">
-        <IconTopologyStar3 size={11} />
+        <ComponentIcon size={11} />
         {owner.component.title}
       </Link>
     </Tooltip>

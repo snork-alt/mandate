@@ -14,6 +14,7 @@ import { CopyRef, copyTargetProps } from '../copy';
 import { CriterionStateIcon } from '../doc/Acceptance';
 import { sectionAnchor } from '../doc/anchors';
 import { CodeRulesLines } from '../refs/CodeRules';
+import { RefPeople } from '../refs/RefPreview';
 import { LineageButton, WhereUsedButton } from '../lineage/LineageButton';
 import { Contributors } from '../people/People';
 import { bareRef } from '../../lib/lineage';
@@ -231,11 +232,8 @@ export function RulesHover({ repo, path, lines, children }: { repo: string; path
           Rules for <span className="mono">{path}</span>
           {lines ? <span className="mono faint">:{lines}</span> : null}
         </div>
-        <div className="ref-preview-people" data-testid="code-people">
-          <span className="faint">Touched by</span>
-          {/* The file (work orders record touched files, not ranges). */}
-          <Contributors refUri={buildCodeRef({ repo, path })} size="xs" max={5} form="compact" />
-        </div>
+        {/* The file (work orders record touched files, not ranges). */}
+        <RefPeople uri={buildCodeRef({ repo, path })} kind="code_file" testId="code-people" />
         <TouchedBy repo={repo} path={path} />
         <RulesForCode repo={repo} path={path} lines={lines} />
         <CodeRulesLines refUri={buildCodeRef({ repo, path, lines })} />

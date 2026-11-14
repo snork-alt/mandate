@@ -134,8 +134,11 @@ describe('overview helpers', () => {
     expect(pickTab(null, null)).toBe('progress');
     expect(pickTab('action', null)).toBe('progress');
   });
-  it('actionCount sums decisions, blocked, attention specs and must-finding specs', () => {
-    expect(actionCount(fullOverview(), 1)).toBe(1 + 1 + 1 + 1);
+  it('actionCount sums the Actions tab counts: decisions, blocked, open must findings, non-blocked attention specs', () => {
+    expect(actionCount(fullOverview(), 1)).toBe(1 + 1 + 1 + 2);
+    const o = fullOverview();
+    o.attention.specs = [{ ...o.attention.specs[0]!, overlay: 'blocked' }];
+    expect(actionCount(o, 1)).toBe(1 + 1 + 0 + 2);
     expect(actionCount(emptyOverview(), 0)).toBe(0);
   });
   it('groupRecent: days newest first, one item per document with all its actors', () => {
@@ -228,8 +231,8 @@ describe.each(['light', 'dark'] as const)('overview page (%s)', (scheme) => {
     expect(screen.queryByTestId('ov-decisions')).toBeNull();
     cleanup();
     render(<R scheme={scheme} path="/actions" />);
-    expect(await screen.findByTestId('ov-decisions')).toBeTruthy();
-    expect(screen.getByText('4 pending')).toBeTruthy();
+    expect(await screen.findByTestId('apanel-feedback')).toBeTruthy();
+    expect(screen.getByText('5 pending')).toBeTruthy();
     fireEvent.click(screen.getByTestId('resolve-with-agent'));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(decisionsPrompt('')));
   });
@@ -247,13 +250,14 @@ describe.each(['light', 'dark'] as const)('overview page (%s)', (scheme) => {
     cleanup();
     render(<R scheme={scheme} path="/?tab=action&focus=stale" />);
     await waitFor(() => expect(loc).toBe('/actions?focus=stale'));
-    expect(await screen.findByTestId('ov-decisions')).toBeTruthy();
+    await waitFor(() => expect(screen.getByTestId('atab-attention').getAttribute('aria-selected')).toBe('true'));
+    expect(await screen.findByText(/Specs needing attention: stale/)).toBeTruthy();
   });
 
   it('item menu copies a one-item prompt; Accept opens a dialog and records it through feedback_accept', async () => {
     render(<R scheme={scheme} path="/actions" />);
-    const card = await screen.findByTestId('ov-decisions');
-    await within(card).findByText(/Which IdPs/);
+    const card = await screen.findByTestId('apanel-feedback');
+    await within(card).findByText('fb-0001 (question)');
     fireEvent.click(within(card).getByTestId('item-menu'));
     fireEvent.click(await screen.findByTestId('copy-prompt'));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(expect.stringContaining(`Resolve this Mandate decision with me: @mandate:${FB}`)));
@@ -271,8 +275,8 @@ describe.each(['light', 'dark'] as const)('overview page (%s)', (scheme) => {
       items: [{ ref: OV, kind: 'approval_override', title: 'Allow my deviation', question: 'Confirm this self-approved acceptance?', options: [{ id: 'confirm', label: 'Confirm (a second person reviewed it)', tool: 'approval_override_confirm' }] }],
       counts: { ...decisions().counts, feedback_open: 0, approval_override: 1 },
     };
-    render(<R scheme={scheme} path="/actions" />);
-    const card = await screen.findByTestId('ov-decisions');
+    render(<R scheme={scheme} path="/actions?tab=overrides" />);
+    const card = await screen.findByTestId('apanel-overrides');
     await within(card).findByText(/Allow my deviation/);
     fireEvent.click(within(card).getByTestId('item-primary'));
     const confirm = (await screen.findByTestId('decision-confirm')) as HTMLButtonElement;
@@ -285,8 +289,8 @@ describe.each(['light', 'dark'] as const)('overview page (%s)', (scheme) => {
   it('server mode without write access: direct decisions are disabled, prompts still copy', async () => {
     data.canDecide = false;
     render(<R scheme={scheme} path="/actions" />);
-    const card = await screen.findByTestId('ov-decisions');
-    await within(card).findByText(/Which IdPs/);
+    const card = await screen.findByTestId('apanel-feedback');
+    await within(card).findByText('fb-0001 (question)');
     await waitFor(() => expect((within(card).getByTestId('item-primary') as HTMLButtonElement).disabled).toBe(true));
     fireEvent.click(within(card).getByTestId('item-menu'));
     expect((await screen.findByTestId('copy-prompt')).getAttribute('data-disabled')).toBeNull();
@@ -332,8 +336,147 @@ describe.each(['light', 'dark'] as const)('overview page (%s)', (scheme) => {
     expect(screen.getByText('All criteria verified ✓')).toBeTruthy();
     cleanup();
     render(<R scheme={scheme} path="/actions" />);
-    expect(await screen.findByText('No decisions pending')).toBeTruthy();
-    expect(screen.getByText('Nothing is blocked')).toBeTruthy();
-    expect(screen.getByText('Every spec is on track')).toBeTruthy();
+    // Nothing pending: only the Questions tab, with its empty state.
+    expect(await screen.findByText('All questions answered')).toBeTruthy();
+    expect(screen.getByTestId('show-answered').getAttribute('href')).toBe('/questions?tab=answered');
+    expect(screen.getAllByRole('tab').map((t) => t.getAttribute('data-testid'))).toEqual(['atab-questions']);
+    cleanup();
+    render(<R scheme={scheme} path="/actions?tab=blocked" />);
+    expect(await screen.findByText('Nothing is blocked')).toBeTruthy();
+    expect(screen.getAllByRole('tab')).toHaveLength(1);
+  });
+});
+
+describe('Actions page tabs', () => {
+  const WO = buildRef({ kind: 'work-orders', id: 'q-0001' });
+  const ask = { id: 'ask-0001', uri: 'mandate://questions/ask-0001', asker: { agent: 'claude-code@mbp', user: 'ada' }, context: [SPEC], purpose: 'decision', blocking: true, createdAt: new Date(Date.now() - 3600_000).toISOString(), status: 'open', questions: [{ id: 'q1', header: 'Auth method', question: 'Which login method should the API use?', options: [{ label: 'OAuth', description: 'Delegated' }, { label: 'API key', description: 'Static' }], recommended: 'OAuth', multiSelect: false }] } as unknown as NonNullable<DecisionsList['items'][number]['ask']>;
+  const withKinds = (items: DecisionsList['items']): DecisionsList => {
+    const counts = { ...decisions().counts, feedback_open: 0, question: 0 } as DecisionsList['counts'];
+    for (const d of items) counts[d.kind] = (counts[d.kind] ?? 0) + 1;
+    return { items, total: items.length, counts };
+  };
+
+  it('one tab per kind with counts, empty tabs hidden, first with items selected; tab clicks and ?tab= / ?focus= deep links', async () => {
+    render(<R path="/actions" />);
+    await waitFor(() => expect(screen.getByTestId('atab-feedback').getAttribute('aria-selected')).toBe('true'));
+    // Empty tabs are hidden (unless active); Blocked and Must findings follow Feedback.
+    expect(screen.getAllByRole('tab').map((t) => t.getAttribute('data-testid'))).toEqual(['atab-feedback', 'atab-blocked', 'atab-findings', 'atab-attention']);
+    expect(screen.getByTestId('atab-findings').textContent).toContain('2');
+    expect(screen.getByTestId('atab-feedback').textContent).toContain('1');
+    expect(screen.queryByTestId('atab-questions')).toBeNull();
+    // Rows sit flat in the panel (no card in a card).
+    expect(screen.getByTestId('apanel-feedback').querySelector('.ov-card')).toBeNull();
+    expect(within(screen.getByTestId('apanel-feedback')).getByTestId('item-inline-reject').textContent).toBe('Decline');
+    fireEvent.click(screen.getByTestId('atab-blocked'));
+    await waitFor(() => expect(loc).toBe('/actions?tab=blocked'));
+    expect(await screen.findByText('Fix callback')).toBeTruthy();
+    // The Blocked tab keeps its "Copy prompt for all"; the footer opens the other attention tabs.
+    expect(within(screen.getByTestId('apanel-blocked')).getByTestId('copy-all')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('bk-other-drift'));
+    await waitFor(() => expect(loc).toBe('/actions?tab=drift'));
+    expect(await screen.findByTestId('act-empty-drift')).toBeTruthy();
+    // An empty tab stays visible while active.
+    expect(screen.getByTestId('atab-drift').getAttribute('aria-selected')).toBe('true');
+    cleanup();
+    render(<R path="/actions?focus=blocked" />);
+    await waitFor(() => expect(screen.getByTestId('atab-blocked').getAttribute('aria-selected')).toBe('true'));
+    cleanup();
+    render(<R path="/actions?tab=waivers" />);
+    expect(await screen.findByTestId('act-empty-waivers')).toBeTruthy();
+    expect(screen.getByTestId('atab-waivers').getAttribute('aria-selected')).toBe('true');
+    cleanup();
+    render(<R path="/actions?focus=findings" />);
+    await waitFor(() => expect(screen.getByTestId('atab-findings').getAttribute('aria-selected')).toBe('true'));
+  });
+
+  it('Questions tab: first when there are questions, grouped answer cards with the summary and Answer all recommended', async () => {
+    data.decisions = withKinds([{ ref: ask.uri, kind: 'question', title: 'Auth method', question: 'Which login method?', options: [], ask }, ...decisions().items]);
+    render(<R path="/actions" />);
+    await waitFor(() => expect(screen.getByTestId('atab-questions').getAttribute('aria-selected')).toBe('true'));
+    const panel = screen.getByTestId('apanel-questions');
+    expect(within(panel).getByTestId('q-open-groups')).toBeTruthy();
+    expect(within(panel).getByTestId('question-ask-0001')).toBeTruthy();
+    expect(within(panel).getByTestId('q-summary').textContent).toBe('1 request from 1 agent · 1 blocking');
+    expect(within(panel).getAllByTestId('q-answer-all').length).toBeGreaterThan(0);
+    expect(panel.querySelector('.ov-card')).toBeNull();
+  });
+
+  it('Feedback tab: kind badge, spec › section chip, suggestion icon; kind filter; "Accept N suggested" records each through feedback_accept', async () => {
+    const FB2 = buildRef({ kind: 'feedback', id: 'fb-0002' });
+    const base = decisions().items[0]!;
+    data.decisions = withKinds([
+      { ...base, feedbackKind: 'question', by: 'codex', since: new Date(Date.now() - 7200_000).toISOString() },
+      { ...base, ref: FB2, title: 'Routes lack the key', feedbackKind: 'bug', suggested: 'accept', suggestedWhy: 'Reported as a bug: accepting it plans the fix.', subject: buildRef({ kind: 'specs', id: 'login-sso', sectionId: 'callback' }), since: new Date().toISOString() },
+    ]);
+    render(<R path="/actions?tab=feedback" />);
+    const panel = await screen.findByTestId('apanel-feedback');
+    const rows = await within(panel).findAllByTestId('act-row-feedback_open');
+    // Newest first: the bug, then the question.
+    expect(rows.map((r) => r.querySelector('.fb-kind')?.textContent)).toEqual(['Bug', 'Question']);
+    expect(within(rows[0]!).getByTestId('fb-suggested')).toBeTruthy();
+    expect(within(rows[1]!).queryByTestId('fb-suggested')).toBeNull();
+    expect(within(rows[0]!).getByTestId('act-loc').textContent).toContain('callback');
+    expect(rows[1]!.textContent).toContain('codex');
+    expect(within(rows[0]!).getByTestId('item-inline-reject').textContent).toBe('Decline');
+    fireEvent.click(within(panel).getByLabelText(/Questions/));
+    await waitFor(() => expect(within(panel).getAllByTestId('act-row-feedback_open')).toHaveLength(1));
+    fireEvent.click(within(panel).getByLabelText(/^All/));
+    await waitFor(() => expect(within(panel).getAllByTestId('act-row-feedback_open')).toHaveLength(2));
+    const bulk = within(panel).getByTestId('fb-accept-many');
+    expect(bulk.textContent).toBe('Accept 1 suggested');
+    // Selecting rows switches the bulk action to the selection.
+    fireEvent.click(within(panel).getByLabelText('Select all'));
+    await waitFor(() => expect(within(panel).getByTestId('fb-accept-many').textContent).toBe('Accept 2 selected'));
+    fireEvent.click(within(panel).getByTestId('fb-accept-many'));
+    fireEvent.click(await screen.findByTestId('decision-confirm'));
+    await waitFor(() => expect(calls.filter((c) => c.name === 'feedback_accept').map((c) => c.args.ref).sort()).toEqual([FB, FB2].sort()));
+  });
+
+  it('Blocked tab: grouped by blocker by default (unblock count, start-work prompt), by spec on request, remembered', async () => {
+    window.localStorage.clear();
+    render(<R path="/actions?tab=blocked" />);
+    const panel = await screen.findByTestId('apanel-blocked');
+    expect(within(panel).getByTestId('bk-by-blocker')).toBeTruthy();
+    expect(within(panel).getByTestId('bk-unblocks').textContent).toContain('unblocks 1');
+    fireEvent.click(within(panel).getByTestId('bk-start'));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(expect.stringContaining('Continue work order')));
+    fireEvent.click(within(panel).getByLabelText('By spec'));
+    expect(await within(panel).findByTestId('bk-by-spec')).toBeTruthy();
+    expect(within(panel).getByTestId('bk-sgroup').textContent).toContain('Login with SSO');
+    expect(window.localStorage.getItem('mandate.actions.blockedGrouping')).toBe('spec');
+    cleanup();
+    render(<R path="/actions?tab=blocked" />);
+    expect(await screen.findByTestId('bk-by-spec')).toBeTruthy();
+    window.localStorage.clear();
+  });
+
+  it('Must findings tab: one row per open must finding with a fix-work-order prompt; empty state opens audits', async () => {
+    const o = fullOverview();
+    const F = `${buildRef({ kind: 'audits', id: 'a-1' })}/findings/f1`;
+    o.mustFindingSpecs = [{ ...o.mustFindingSpecs[0]!, auditTitle: 'Security audit', auditor: { agent: 'codex' }, auditAt: new Date().toISOString(), findings: [{ uri: F, title: 'Webhooks are not signature-checked', description: 'POST /webhooks accepts any body.', ref: buildRef({ kind: 'specs', id: 'login-sso', sectionId: 'callback' }), codeRefs: [] }] }];
+    data.overview = o;
+    render(<R path="/actions?tab=findings" />);
+    const panel = await screen.findByTestId('apanel-findings');
+    const row = await within(panel).findByTestId('fd-row');
+    expect(row.textContent).toContain('Webhooks are not signature-checked');
+    expect(row.textContent).toContain('MUST');
+    expect(row.textContent).toContain('A-1 Security audit by codex');
+    fireEvent.click(within(row).getByTestId('fd-fix'));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(expect.stringContaining('audit_findings_to_work_orders')));
+    cleanup();
+    data.overview = { ...fullOverview(), mustFindingSpecs: [], attention: { ...fullOverview().attention, mustFindings: 0 } };
+    render(<R path="/actions?tab=findings" />);
+    expect(await screen.findByText('No open must findings')).toBeTruthy();
+    expect(screen.getByTestId('open-audits').getAttribute('href')).toBe('/audits');
+  });
+
+  it('Claims tab: Release claim on a stale claim row records it through work_order_release', async () => {
+    data.decisions = withKinds([{ ref: WO, kind: 'stale_claim', title: 'q-0001 Implement Login', question: 'Release?', options: [], context: 'claimed by claude-code@mbp; last heartbeat 2h ago' }]);
+    render(<R path="/actions?focus=claims" />);
+    const panel = await screen.findByTestId('apanel-claims');
+    const row = await within(panel).findByTestId('act-row-stale_claim');
+    fireEvent.click(within(row).getByTestId('item-primary'));
+    fireEvent.click(await screen.findByTestId('decision-confirm'));
+    await waitFor(() => expect(calls.some((c) => c.name === 'work_order_release' && c.args.ref === WO)).toBe(true));
   });
 });

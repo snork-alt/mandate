@@ -4,11 +4,13 @@ import { Tooltip } from '@mantine/core';
 import { parseRef } from '@mandate/shared/refs';
 import { CriterionStateIcon, VerificationCount } from './doc';
 import { PropGroup } from './PropertyList';
+import { KindIcon } from './refs/KindIcon';
 
 function Row({ c, href }: { c: CriterionState; href: string }) {
   const row = (
     <Link to={href} className="linked-item">
       <CriterionStateIcon state={c.state} />
+      <KindIcon kind="section" />
       <span className="linked-title">{c.title}</span>
       <span className="linked-meta">{c.state === 'waived' ? `waived · ${c.waiver?.feedback ?? ''}` : c.state === 'unknown' ? 'pin lost' : c.method}</span>
     </Link>

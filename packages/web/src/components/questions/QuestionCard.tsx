@@ -11,7 +11,6 @@ import {
   IconCheck,
   IconChecks,
   IconCircleCheck,
-  IconFile,
   IconGitBranch,
   IconHandStop,
   IconHelpCircle,
@@ -21,11 +20,12 @@ import {
   IconSend,
   IconShieldCheck,
 } from '@tabler/icons-react';
+import { KindIcon } from '../refs/KindIcon';
 import { answerText, type Question, type QuestionItem } from '@mandate/shared';
 import { ByLine } from '../attribution/Attribution';
 import { RefChip } from '../refs/RefChip';
 import { When } from '../overview/parts';
-import { PURPOSE_LABEL, recommendedAnswers, recommendedOf, useAnswerAllRecommended, useAnswerQuestion, type Answers } from '../../lib/questions';
+import { PURPOSE_LABEL, recommendedAnswers, recommendedOf, useAnswerAllRecommended, useAnswerQuestion, type AnswerArgs, type Answers } from '../../lib/questions';
 import { AskAboutQuestion } from './AskAboutQuestion';
 import './questions.css';
 
@@ -155,7 +155,7 @@ function Evidence({ item }: { item: QuestionItem }) {
     <div className="qa-evidence" data-testid="qa-evidence">
       {ev.map((e) => (
         <span key={e.ref} className="qa-file" title={e.ref}>
-          <IconFile size={12} />
+          <KindIcon kind="code_file" size={12} />
           <span>{evidencePath(e.ref)}</span>
         </span>
       ))}
@@ -306,12 +306,20 @@ function Chips({ q, blocking }: { q: Question; blocking: boolean }) {
   );
 }
 
-/** An open question as a decision card. `canAnswer` false: read-only with the reason. */
-export function QuestionCard({ q, canAnswer, reason = NO_ACCESS }: { q: Question; canAnswer: boolean; reason?: string }) {
+/** The question as answered in this UI (shown until the list is refreshed from the server). */
+export function answeredLocally(q: Question, a: Pick<AnswerArgs, 'answers' | 'notes'>, user?: string | null): Question {
+  return { ...q, status: 'answered', answer: { by: { agent: 'mandate-ui', ...(user ? { user } : {}) }, at: new Date().toISOString(), answers: a.answers, ...(a.notes ? { notes: a.notes } : {}), via: 'ui' } };
+}
+
+/**
+ * An open question as a decision card. `canAnswer` false: read-only with the reason. `headEnd`: extra controls in the
+ * head row (e.g. copy reference, open the question page); `onAnswered`: called with the answer once it is recorded.
+ */
+export function QuestionCard({ q, canAnswer, reason = NO_ACCESS, headEnd, onAnswered }: { q: Question; canAnswer: boolean; reason?: string; headEnd?: ReactNode; onAnswered?: (a: AnswerArgs) => void }) {
   const [state, setState] = useState<Record<string, ItemState>>(() => Object.fromEntries(q.questions.map((i) => [i.id, initial(i)])));
   const [notes, setNotes] = useState('');
   const [showNotes, setShowNotes] = useState(false);
-  const answer = useAnswerQuestion();
+  const answer = useAnswerQuestion((a) => onAnswered?.(a));
   const answers = useMemo(() => buildAnswers(q.questions, state), [q.questions, state]);
   const disabled = !canAnswer || answer.isPending;
   const single = q.questions.length === 1;
@@ -340,9 +348,11 @@ export function QuestionCard({ q, canAnswer, reason = NO_ACCESS }: { q: Question
       >
         <div className="qa-head">
           <div className="qa-head-row">
+            <KindIcon kind="question" />
             <Asker q={q} />
             <span className="q-head-end">
               <When iso={q.createdAt} />
+              {headEnd}
             </span>
           </div>
           <Chips q={q} blocking />
@@ -398,14 +408,32 @@ export function QuestionCard({ q, canAnswer, reason = NO_ACCESS }: { q: Question
 }
 
 /** "Answer all recommended": every open question takes its recommended options, after a confirmation. */
-export function AnswerAllRecommended({ questions, canAnswer, reason = NO_ACCESS, testId = 'q-answer-all' }: { questions: Question[]; canAnswer: boolean; reason?: string; testId?: string }) {
+export function AnswerAllRecommended({
+  questions,
+  canAnswer,
+  reason = NO_ACCESS,
+  testId = 'q-answer-all',
+  label = 'Answer all recommended',
+  onAnswered,
+}: {
+  questions: Question[];
+  canAnswer: boolean;
+  reason?: string;
+  testId?: string;
+  label?: string;
+  /** The ids recorded (the others failed). */
+  onAnswered?: (ids: string[]) => void;
+}) {
   const [open, setOpen] = useState(false);
-  const all = useAnswerAllRecommended(() => setOpen(false));
+  const all = useAnswerAllRecommended((r) => {
+    setOpen(false);
+    onAnswered?.(r.answered);
+  });
   if (questions.length < 1) return null;
   const n = questions.length;
   const button = (
     <Button size="compact-sm" variant="subtle" color="gray" leftSection={<IconChecks size={14} />} onClick={() => setOpen(true)} disabled={!canAnswer} data-testid={testId} className="qa-all">
-      Answer all recommended
+      {label}
     </Button>
   );
   return (
@@ -446,6 +474,7 @@ export function QuestionSummary({ q, footer }: { q: Question; footer?: ReactNode
     <li className="q-summary" data-status={q.status} data-testid={`question-summary-${q.id}`}>
       <div className="qa-head">
         <div className="qa-head-row">
+          <KindIcon kind="question" />
           <Asker q={q} />
           <span className="q-status" data-status={q.status}>
             {q.status === 'answered' && <IconCircleCheck size={13} aria-hidden />}

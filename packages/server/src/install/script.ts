@@ -75,7 +75,7 @@ export function renderInstallSh(i: InstallScriptInput): string {
 #   curl -fsSL ${base}/install.sh | sh
 #   ... | sh -s -- --agents claude-code,codex --dry-run      (flags go to \`getmandate connect\`)
 #   ... | sh -s -- --uninstall                              (removes the agent wiring again; the CLI stays)
-#   ... | sh -s -- --reinstall                              (reinstall the CLI even if this version is installed)
+#   ... | sh -s -- --reinstall                              (reinstall the CLI even if this build is installed)
 # Remove the wiring and the CLI: curl -fsSL ${i.url}/uninstall.sh | sh
 # This script contains no token or secret. Verify it first: ${base}/install.sh.sha256
 set -eu
@@ -118,6 +118,10 @@ fi
 
 CLI_PREFIX="\${MANDATE_HOME:-$HOME/.mandate}/cli"
 CLI_URL="$MANDATE_URL/getmandate.tgz"
+# Build identity of the installed CLI: "<sha256 of the tarball it came from> <path>". The version string alone is not
+# enough (every build of a version prints the same --version): an older build would rewrite the agent files with its
+# older text.
+BUILD_MARKER="\${MANDATE_HOME:-$HOME/.mandate}/cli-build"
 
 say "Mandate installer (getmandate $MANDATE_VERSION)"
 say "  server:  $MANDATE_URL"
@@ -191,16 +195,20 @@ TMPD=$(mktemp -d 2>/dev/null || mktemp -d -t mandate)
 trap 'rm -rf "$TMPD"' EXIT
 trap 'exit 130' INT TERM
 TGZ=''
-# Download the CLI tarball and check its sha256; nothing is installed on a mismatch.
-get_tgz() {
-  TGZ="$TMPD/getmandate-$MANDATE_VERSION.tgz"
-  say "Downloading $CLI_URL"
-  fetch "$CLI_URL" "$TGZ" || die "could not download $CLI_URL"
+# The sha256 of this server's CLI tarball (embedded, else read from $CLI_URL.sha256).
+want_sha() {
   want=$MANDATE_CLI_SHA256
   if [ -z "$want" ]; then
     fetch "$CLI_URL.sha256" "$TMPD/sum" || die "could not download $CLI_URL.sha256"
     want=$(cut -d ' ' -f 1 <"$TMPD/sum")
   fi
+}
+# Download the CLI tarball and check its sha256; nothing is installed on a mismatch.
+get_tgz() {
+  TGZ="$TMPD/getmandate-$MANDATE_VERSION.tgz"
+  say "Downloading $CLI_URL"
+  fetch "$CLI_URL" "$TGZ" || die "could not download $CLI_URL"
+  want_sha
   got=$(sha256 "$TGZ")
   [ "$got" = "$want" ] || die "checksum mismatch for $CLI_URL (expected $want, got $got); nothing was installed"
   say "  sha256 ok ($got)"
@@ -216,12 +224,17 @@ npm_user() {
 
 CLI=''
 HAVE=''
+SAME_BUILD=0
 if FOUND=$(find_cli); then HAVE=$("$FOUND" --version 2>/dev/null | tail -n 1 || true); fi
+if [ "$HAVE" = "$MANDATE_VERSION" ] && [ "$REINSTALL" = 0 ] && [ "$UNINSTALL" = 0 ] && [ -f "$BUILD_MARKER" ]; then
+  want_sha
+  [ "$(head -n 1 "$BUILD_MARKER")" = "$want $FOUND" ] && SAME_BUILD=1
+fi
 if [ "$UNINSTALL" = 1 ] && [ -n "$HAVE" ]; then
   CLI=$FOUND
-elif [ "$HAVE" = "$MANDATE_VERSION" ] && [ "$REINSTALL" = 0 ]; then
+elif [ "$SAME_BUILD" = 1 ]; then
   CLI=$FOUND
-  say "getmandate $HAVE is already installed ($FOUND)."
+  say "getmandate $HAVE is already installed ($FOUND, same build)."
 elif [ "$DRY" = 1 ] || [ "$UNINSTALL" = 1 ]; then
   # Change nothing on this machine: run this version once from the verified tarball (npm exec cache).
   get_tgz
@@ -232,7 +245,8 @@ elif [ "$DRY" = 1 ] || [ "$UNINSTALL" = 1 ]; then
   exit "$code"
 else
   get_tgz
-  if [ -n "$HAVE" ]; then say "Upgrading getmandate $HAVE -> $MANDATE_VERSION"; else say "Installing getmandate $MANDATE_VERSION"; fi
+  if [ "$HAVE" = "$MANDATE_VERSION" ]; then say "Updating getmandate $HAVE to this server's build"
+  elif [ -n "$HAVE" ]; then say "Upgrading getmandate $HAVE -> $MANDATE_VERSION"; else say "Installing getmandate $MANDATE_VERSION"; fi
   if [ -x "$CLI_PREFIX/bin/getmandate" ]; then
     npm_user # an earlier per-user install: upgrade it in place
   elif npm install -g --no-fund --no-audit --loglevel=error "$TGZ" >"$TMPD/npm.log" 2>&1 </dev/null; then
@@ -244,6 +258,7 @@ else
     npm_user
   fi
   [ -x "$CLI" ] || die "installed, but $CLI is missing"
+  mkdir -p "$(dirname "$BUILD_MARKER")" && printf '%s %s\n' "$got" "$CLI" >"$BUILD_MARKER"
   say "Installed getmandate $MANDATE_VERSION ($CLI)."
   BIN_DIR=$(dirname "$CLI")
   case ":$PATH:" in
@@ -291,6 +306,8 @@ if (-not $MandateProject -and -not ($PassArgs -contains '--project')) { throw "p
 $MandateHome = if ($env:MANDATE_HOME) { $env:MANDATE_HOME } else { Join-Path $HOME '.mandate' }
 $CliPrefix = Join-Path $MandateHome 'cli'
 $CliUrl = "$MandateUrl/getmandate.tgz"
+# Build identity of the installed CLI ("<tarball sha256> <path>"): the version alone does not tell builds apart.
+$BuildMarker = Join-Path $MandateHome 'cli-build'
 $Uninstall = $PassArgs -contains '--uninstall'
 $DryRun = $PassArgs -contains '--dry-run'
 $Reinstall = $PassArgs -contains '--reinstall'
@@ -359,21 +376,29 @@ New-Item -ItemType Directory -Path $Tmp | Out-Null
 $code = 0
 try {
   $tgz = Join-Path $Tmp "getmandate-$MandateVersion.tgz"
+  $wantSha = {
+    $w = $MandateCliSha256
+    if (-not $w) { $w = ([string](Invoke-RestMethod -UseBasicParsing -Uri "$CliUrl.sha256")).Trim().Split(' ')[0] }
+    $w.ToLower()
+  }
   $getTgz = {
     Write-Host "Downloading $CliUrl"
     Invoke-WebRequest -UseBasicParsing -Uri $CliUrl -OutFile $tgz
-    $want = $MandateCliSha256
-    if (-not $want) { $want = ([string](Invoke-RestMethod -UseBasicParsing -Uri "$CliUrl.sha256")).Trim().Split(' ')[0] }
-    $got = (Get-FileHash -Path $tgz -Algorithm SHA256).Hash.ToLower()
-    if ($got -ne $want.ToLower()) { throw "checksum mismatch for $CliUrl (expected $want, got $got); nothing was installed" }
-    Write-Host "  sha256 ok ($got)"
+    $want = & $wantSha
+    $script:got = (Get-FileHash -Path $tgz -Algorithm SHA256).Hash.ToLower()
+    if ($script:got -ne $want) { throw "checksum mismatch for $CliUrl (expected $want, got $($script:got)); nothing was installed" }
+    Write-Host "  sha256 ok ($($script:got))"
   }
   $found = Find-MandateCli
   $have = ''
   if ($found) { try { $have = ([string](& $found --version | Select-Object -Last 1)).Trim() } catch { $have = '' } }
   $exe = $null
+  $sameBuild = $false
+  if ($have -eq $MandateVersion -and -not $Reinstall -and -not $Uninstall -and (Test-Path $BuildMarker)) {
+    $sameBuild = ([string](Get-Content $BuildMarker -TotalCount 1)).Trim() -eq "$(& $wantSha) $found"
+  }
   if ($Uninstall -and $have) { $exe = $found }
-  elseif ($have -eq $MandateVersion -and -not $Reinstall) { $exe = $found; Write-Host "getmandate $have is already installed ($found)." }
+  elseif ($sameBuild) { $exe = $found; Write-Host "getmandate $have is already installed ($found, same build)." }
   elseif ($DryRun -or $Uninstall) {
     # Change nothing on this machine: run this version once from the verified tarball (npm exec cache).
     & $getTgz
@@ -382,7 +407,7 @@ try {
     $code = $LASTEXITCODE
   } else {
     & $getTgz
-    if ($have) { Write-Host "Upgrading getmandate $have -> $MandateVersion" } else { Write-Host "Installing getmandate $MandateVersion" }
+    if ($have -eq $MandateVersion) { Write-Host "Updating getmandate $have to this server's build" } elseif ($have) { Write-Host "Upgrading getmandate $have -> $MandateVersion" } else { Write-Host "Installing getmandate $MandateVersion" }
     $log = Join-Path $Tmp 'npm.log'
     $userInstall = Test-Path (Join-Path $CliPrefix 'getmandate.cmd')
     if (-not $userInstall) {
@@ -404,6 +429,8 @@ try {
       $exe = Join-Path $CliPrefix 'getmandate.cmd'
     }
     if (-not (Test-Path $exe)) { throw "installed, but $exe is missing" }
+    New-Item -ItemType Directory -Force -Path $MandateHome | Out-Null
+    Set-Content -Path $BuildMarker -Value "$($script:got) $exe"
     Write-Host "Installed getmandate $MandateVersion ($exe)."
     $binDir = Split-Path $exe -Parent
     if (-not (($env:Path -split ';') -contains $binDir)) {
@@ -476,6 +503,7 @@ if [ -n "$GLOBAL_ROOT" ] && [ -e "$GLOBAL_ROOT/getmandate" ]; then
   else die "could not remove the global getmandate package; try: sudo npm uninstall -g getmandate"
   fi
 fi
+rm -f "\${MANDATE_HOME:-$HOME/.mandate}/cli-build"
 say "Done."
 }
 
@@ -528,6 +556,7 @@ try {
     Remove-Item -Recurse -Force -Path $CliPrefix -ErrorAction SilentlyContinue
     Write-Host "Removed the getmandate CLI ($CliPrefix)."
   }
+  Remove-Item -Force -Path (Join-Path (Split-Path $CliPrefix -Parent) 'cli-build') -ErrorAction SilentlyContinue
   if ($hasGlobal) {
     & npm uninstall -g --loglevel=error getmandate
     if ($LASTEXITCODE -ne 0) { throw "could not remove the global getmandate package; run: npm uninstall -g getmandate" }

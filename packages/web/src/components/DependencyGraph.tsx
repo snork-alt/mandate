@@ -14,7 +14,6 @@ import {
   IconLink,
   IconRuler2,
   IconSection,
-  IconTopologyStar3,
 } from '@tabler/icons-react';
 import type { ElkNode } from 'elkjs/lib/elk-api';
 import type { DependencyEdge, DependencyNode, DependencyTree } from '@mandate/shared';
@@ -27,6 +26,9 @@ import { maturityText, SpecMaturityDot, useSpecMaturities } from './maturity/Spe
 import { copyTargetProps } from './copy/copyTargets';
 import { CanvasViewer, ClaimAvatar } from './doc';
 import { WORK_ORDER_STATUS_META, WorkOrderStatusIcon } from './WorkOrderStatusIcon';
+import { KIND_ICON } from './refs/kinds';
+
+const ComponentIcon = KIND_ICON.component;
 
 const OPEN_KEY = 'mandate.work-order-deps.open';
 const NODE_W = 236;
@@ -246,7 +248,7 @@ function NodeCard({ n, commit, style, now }: { n: DependencyNode; commit: string
                 {(n.components ?? []).slice(0, 2).map((c) => (
                   <Tooltip key={c} label={`Component ${c}`} openDelay={300}>
                     <span className="dep-node-comp">
-                      <IconTopologyStar3 size={10} />
+                      <ComponentIcon size={10} />
                       {c}
                     </span>
                   </Tooltip>

@@ -7,9 +7,10 @@ import { TopBar } from '../components/TopBar';
 import { ErrorState } from '../components/ListStates';
 import { MaturityMeter } from '../components/maturity/MaturityBadge';
 import { DecisionDialogs } from '../components/decisions/DecisionActions';
-import { InProgress, RecentlyChanged } from '../components/overview/ProgressTab';
+import { ProgressTab } from '../components/overview/ProgressTab';
+import { useMovingActivity } from '../lib/progress';
 import { ByCategory, Coverage, VerificationGaps, Warnings } from '../components/overview/HealthTab';
-import { Empty, pct, plural } from '../components/overview/parts';
+import { Empty, TabCount, pct, plural } from '../components/overview/parts';
 import { getCurrentProject } from '../project';
 import { useProjects } from '../connect/projects';
 import { openConnectAgent } from '../connect/ConnectAgentModal';
@@ -108,7 +109,6 @@ function OverviewSkeleton() {
   );
 }
 
-const TabCount = ({ n, tone }: { n: number | undefined; tone?: 'danger' }) => (n ? <span className="ov-tab-count" data-tone={tone}>{n}</span> : null);
 
 /**
  * Project landing: a compact header (name, maturity bar, attention chips) and two tabs: "In progress" (default) and
@@ -119,6 +119,7 @@ export function OverviewPage() {
   const now = useNow();
   const q = useOverview();
   const recent = useRecentActivity();
+  const moving = useMovingActivity(Math.floor(now / 300_000) * 300_000);
   const navigate = useNavigate();
   const projectId = getCurrentProject() ?? '';
   const summary = useProjects().data?.items.find((p) => p.id === projectId);
@@ -236,14 +237,7 @@ export function OverviewPage() {
             </Tabs.Tab>
           </Tabs.List>
           <Tabs.Panel value="progress" pt="md">
-            <div className="ov-cols">
-              <div className="ov-col">
-                <InProgress o={o} now={now} />
-              </div>
-              <div className="ov-col">
-                <RecentlyChanged events={recent.data?.events ?? []} loading={recent.isPending} error={recent.error} now={now} />
-              </div>
-            </div>
+            <ProgressTab o={o} now={now} recent={{ events: recent.data?.events ?? [], loading: recent.isPending, error: recent.error }} moving={{ events: moving.data?.events ?? [], loading: moving.isPending }} />
           </Tabs.Panel>
           <Tabs.Panel value="health" pt="md">
             <div className="ov-health">

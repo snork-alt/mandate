@@ -127,9 +127,15 @@ export function saveTab(projectId: string, tab: OverviewTab): void {
   }
 }
 
-/** Items on the Actions page: decisions, blocked items, specs needing attention, specs with open must findings. */
+/** Actions › Specs: specs needing attention for a reason other than blocked work (blocked work has its own tab). */
+export const attentionCount = (o: Pick<ProjectOverview, 'attention'>) => o.attention.specs.filter((s) => s.overlay !== 'blocked').length;
+
+/** Actions › Must findings: open must findings (older servers without the total: specs with findings). */
+export const findingsCount = (o: Pick<ProjectOverview, 'attention' | 'mustFindingSpecs'>) => (o.mustFindingSpecs.length ? Math.max(o.attention.mustFindings, o.mustFindingSpecs.length) : 0);
+
+/** Items on the Actions page (the sum of its tab counts): decisions, blocked items, open must findings, specs needing attention. */
 export function actionCount(o: Pick<ProjectOverview, 'blockedTotal' | 'attention' | 'mustFindingSpecs'>, decisionsTotal: number): number {
-  return decisionsTotal + o.blockedTotal + o.attention.specs.length + o.mustFindingSpecs.length;
+  return decisionsTotal + o.blockedTotal + attentionCount(o) + findingsCount(o);
 }
 
 /** The tab to show: the URL, else the one remembered for this project, else "In progress". */

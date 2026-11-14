@@ -102,7 +102,7 @@ export function FeedbackItemPage() {
   const history = useQuery({ queryKey: ['feedback', id, 'history'], queryFn: () => api.feedbackHistory(id) });
   const standards = useStandards();
   const standardTitles = useMemo(() => new Map((standards.data ?? []).map((s) => [s.id, s.title])), [standards.data]);
-  const crumbs = [{ label: 'Feedbacks', to: '/feedback' }, { label: <span className="mono">{id}</span> }];
+  const crumbs = [{ label: 'Feedbacks', to: '/feedback' }, { label: <span className="mono">{id}</span>, kind: 'feedback' as const }];
   const r = resolved.data;
   const sections = useMemo(() => (r?.targets ?? []).map((t) => t.section).filter((s): s is Section => !!s), [r]);
 

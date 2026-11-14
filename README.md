@@ -167,6 +167,10 @@ Linux), adds the Mandate skills and slash commands to the coding agents it finds
 address it listens behind your reverse proxy, prints ready-to-use Caddy and nginx configs tuned for MCP's streaming
 responses, and prints the one-time setup link with an SSH tunnel to reach it safely.
 
+Many browser tabs: over plain HTTP/1.1 a browser opens at most 6 connections per origin, so the web UI shares a single
+live-update stream across all tabs of the same browser (one tab holds it and relays to the others). Behind the
+generated Caddy or nginx config (HTTPS with HTTP/2) this limit disappears altogether.
+
 Useful flags: `--port N`, `--bind ADDR`, `--no-service`, `--no-open`, `--no-agents`, `--agents a,b`, `--dry-run`, `--yes`.
 
 ### 2. Run the setup wizard
@@ -210,8 +214,11 @@ repository does the same.
 - The CLI comes from the Mandate server itself, at the server's exact version (`<server>/getmandate.tgz`, checked
   against its SHA-256, which is embedded in the script; npm is never asked for `getmandate`). It is installed with
   `npm install -g`; without write access to npm's global folder it goes to `~/.mandate/cli` and the script prints the
-  `PATH` line to add (it never edits your shell files). Running the line again upgrades the CLI to the server's
-  version (`--reinstall` forces it), then runs `getmandate connect`.
+  `PATH` line to add (it never edits your shell files). Running the line again installs the server's CLI build
+  whenever it differs from the installed one (the tarball's SHA-256, recorded in `~/.mandate/cli-build`, not just the
+  version; `--reinstall` forces it), then runs `getmandate connect`.
+- The skills and slash commands it writes are short stubs: the coding agent loads the current instructions from the
+  server (`instructions_get`), so a server update reaches every agent without reinstalling.
 - The script holds no token and pins the server's exact Mandate version.
 - Agents sign in with GitHub on first use (MCP OAuth, with PKCE and short-lived, project-bound tokens), so nothing secret
   is written. Agents that can't sign in by themselves use a personal token (`--auth token`), kept only in

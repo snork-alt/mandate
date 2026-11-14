@@ -112,8 +112,10 @@ export async function listDecisions(storage: Storage, input: DecisionsListInput 
           { id: 'reject', label: 'Reject, with a reason', tool: 'feedback_close' },
           { id: 'duplicate', label: 'Duplicate of another item', tool: 'feedback_close' },
         ],
-        ...(f.kind === 'bug' ? { suggested: 'accept' } : {}),
+        ...(f.kind === 'bug' ? { suggested: 'accept', suggestedWhy: 'Reported as a bug: accepting it plans the fix.' } : {}),
         ...(on ? { subject: on } : {}),
+        feedbackKind: f.kind,
+        ...(f.createdBy || f.createdByUser ? { by: f.createdBy ?? f.createdByUser } : {}),
         since: f.createdAt,
       });
     } else if (f.status === 'accepted' && !actingOn.has(f.id)) {
@@ -130,6 +132,8 @@ export async function listDecisions(storage: Storage, input: DecisionsListInput 
         ],
         suggested: 'work_order',
         ...(on ? { subject: on } : {}),
+        feedbackKind: f.kind,
+        ...(f.createdBy || f.createdByUser ? { by: f.createdBy ?? f.createdByUser } : {}),
         since: f.updatedAt,
       });
     }

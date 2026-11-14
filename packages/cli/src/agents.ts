@@ -9,12 +9,15 @@
  *   Codex, Cursor, Gemini CLI, opencode; VS Code prompt files in connected repos); Windsurf / Devin uses the MCP
  *   prompts. The master skill drives everything else; `mandate-bootstrap` is a separate skill. Command files of earlier
  *   versions are still removed by uninstall.
+ * - Skills and commands are short STUBS (stubs.ts, stamped `mandate-stub v<STUB_VERSION>`): they load the current text
+ *   from the server (`instructions_get`), so server updates need no reinstall.
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { FLOW_COMMAND, SKILL_BODY, SKILL_DESCRIPTION } from '../../server/src/mcp/guide.js';
-import { BOOTSTRAP_COMMAND, BOOTSTRAP_SKILL_BODY, BOOTSTRAP_SKILL_DESCRIPTION } from '../../server/src/mcp/bootstrap.js';
+import { FLOW_COMMAND, SKILL_DESCRIPTION } from '../../server/src/mcp/guide.js';
+import { BOOTSTRAP_COMMAND, BOOTSTRAP_SKILL_DESCRIPTION } from '../../server/src/mcp/bootstrap.js';
+import { BOOTSTRAP_SKILL_STUB, commandStub, SKILL_STUB, STUB_VERSION } from '../../server/src/mcp/stubs.js';
 import type { Ctx } from './context.js';
 import { change, jsonGet, jsonRemove, jsonSet, MANAGED_MARK, readText, removeBlock, upsertBlock, type Change } from './edits.js';
 
@@ -89,8 +92,15 @@ export interface Command {
   argumentHint: string;
   render(args: string): string;
 }
-/** The slash commands deployed to every agent that has commands or prompts (others get the MCP prompts). */
-export const COMMANDS: Command[] = [FLOW_COMMAND, BOOTSTRAP_COMMAND];
+/**
+ * The slash commands deployed to every agent that has commands or prompts (others get the MCP prompts): stubs that load
+ * the current command text with `instructions_get` (name, description and hint come from the server constants).
+ */
+export const COMMANDS: Command[] = [
+  { ...FLOW_COMMAND, render: (args: string) => commandStub('flow', args) },
+  { ...BOOTSTRAP_COMMAND, render: (args: string) => commandStub('bootstrap', args) },
+];
+export { STUB_VERSION };
 
 export interface CommandSpec {
   /** File of a command (user scope). */
@@ -114,7 +124,7 @@ metadata:
 
 <!-- ${MANAGED_MARK}: \`mandate uninstall\` removes it; \`mandate install\` refreshes it. -->
 
-${BOOTSTRAP_SKILL_BODY}`;
+${BOOTSTRAP_SKILL_STUB}`;
 }
 
 export function skillMd(): string {
@@ -127,7 +137,7 @@ metadata:
 
 <!-- ${MANAGED_MARK}: \`mandate uninstall\` removes it; \`mandate install\` refreshes it. -->
 
-${SKILL_BODY}`;
+${SKILL_STUB}`;
 }
 
 /** Markdown command with front matter and `$ARGUMENTS` (Claude Code, Codex, opencode). */

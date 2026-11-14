@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { KindIcon } from '../components/refs/KindIcon';
 import { SegmentedControl, Skeleton, Tooltip } from '@mantine/core';
 import { IconFileOff, IconFolder } from '@tabler/icons-react';
 import { useQuery } from '@tanstack/react-query';
@@ -163,8 +164,8 @@ export function ComponentDetailPage() {
   const ancestors = [...(query.data?.ancestors ?? [])].reverse();
   const crumbs = [
     { label: 'Components', to: '/components' },
-    ...ancestors.map((a) => ({ label: <span className="mono">{a.id}</span>, to: `/components/${a.id}` })),
-    { label: <span className="mono">{id}</span> },
+    ...ancestors.map((a) => ({ label: <span className="mono">{a.id}</span>, to: `/components/${a.id}`, kind: 'component' as const })),
+    { label: <span className="mono">{id}</span>, kind: 'component' as const },
   ];
   const after = tracked.commit ? tracked.data?.diff.after : undefined;
   const c = query.data && after ? withFrontmatter(query.data, 'components', after.frontmatter as Record<string, unknown>) : query.data;
@@ -237,12 +238,14 @@ export function ComponentDetailPage() {
       <PropGroup title={`Depends on · ${c.dependsOn?.length ?? 0}`}>
         {(c.dependsOn ?? []).map((d) => (
           <Link key={d} to={`/components/${d}`} className="linked-item">
+            <KindIcon kind="component" />
             <span className="linked-title">{d}</span>
           </Link>
         ))}
         {(c.dependents ?? []).length > 0 && <div className="prop-subtitle">Used by</div>}
         {(c.dependents ?? []).map((d) => (
           <Link key={d} to={`/components/${d}`} className="linked-item">
+            <KindIcon kind="component" />
             <span className="linked-title">{d}</span>
           </Link>
         ))}
@@ -255,11 +258,13 @@ export function ComponentDetailPage() {
           {c.parent && (
             <Link to={`/components/${c.parent}`} className="linked-item">
               <span className="linked-meta">Part of</span>
+              <KindIcon kind="component" />
               <span className="linked-title">{c.ancestors?.[0]?.title ?? c.parent}</span>
             </Link>
           )}
           {(c.children ?? []).map((k) => (
             <Link key={k.id} to={`/components/${k.id}`} className="linked-item">
+              <KindIcon kind="component" />
               <span className="linked-title">{k.title}</span>
               <span className="linked-meta">{k.status !== 'active' ? k.status : k.id}</span>
             </Link>
@@ -269,6 +274,7 @@ export function ComponentDetailPage() {
       <PropGroup title={`Affected by specs · ${c.affectedBy?.length ?? 0}`}>
         {(c.affectedBy ?? []).map((a) => (
           <Link key={a.spec} to={`/specs/${a.spec}`} className="linked-item">
+            <KindIcon kind="spec" />
             <span className="linked-title">{a.title}</span>
             <span className="linked-meta">{a.via.join(' + ')}</span>
           </Link>
@@ -284,6 +290,7 @@ export function ComponentDetailPage() {
           {c.workOrders!.map((w) => (
             <Link key={w.id} to={`/work-orders/${w.id}`} className="linked-item">
               <WorkOrderStatusIcon status={w.status as never} />
+              <KindIcon kind="work_order" />
               <span className="linked-title mono">{w.id}</span>
               <span className="linked-meta">{w.spec}</span>
               {w.claim && <ClaimAvatar claim={w.claim} now={now} size={16} workOrder={w.id} />}
@@ -296,6 +303,7 @@ export function ComponentDetailPage() {
           <Tooltip key={r.uri} label={r.via} disabled={!r.via} multiline maw={320} openDelay={300}>
             <Link to={`/standards/${r.standard}#section-${r.uri.split('/').pop()}`} className="linked-item">
               <LevelBadge level={r.level} />
+              <KindIcon kind="section" />
               <span className="linked-title">{r.title}</span>
             </Link>
           </Tooltip>

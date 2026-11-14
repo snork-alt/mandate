@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { AGENTS, agentById, can, CHECKED, commandChanges, cursorCommand, geminiCommand, makeServer, markdownCommand, mcpRemove, mcpUpsert, skillChanges, skillMd, bootstrapSkillMd, COMMANDS, vscodePrompt } from '../src/agents.js';
+import { AGENTS, agentById, can, CHECKED, commandChanges, cursorCommand, geminiCommand, makeServer, markdownCommand, mcpRemove, mcpUpsert, skillChanges, skillMd, bootstrapSkillMd, COMMANDS, STUB_VERSION, vscodePrompt } from '../src/agents.js';
 import { applyChanges, change } from '../src/edits.js';
 import { connectChanges } from '../src/connect.js';
 import { uninstallChanges, userWiringChanges } from '../src/install.js';
@@ -149,8 +149,15 @@ describe('skills and command templates', () => {
   it('two skills, open-format front matter, one source each', () => {
     expect(skillMd()).toMatch(/^---\nname: mandate\ndescription: ".+"\nmetadata:\n  managed-by: mandate\n---\n/);
     expect(bootstrapSkillMd()).toMatch(/^---\nname: mandate-bootstrap\ndescription: ".+"\nmetadata:\n  managed-by: mandate\n---\n/);
-    expect(skillMd()).toContain('/mandate-bootstrap');
-    expect(bootstrapSkillMd()).toContain('Stage 2: DISTILL');
+    // Stubs: the text itself comes from the server (instructions_get), so a server update needs no reinstall.
+    expect(skillMd()).toContain('instructions_get {"name":"core","stubVersion":' + STUB_VERSION + '}');
+    expect(bootstrapSkillMd()).toContain('instructions_get {"name":"bootstrap"');
+    for (const md of [skillMd(), bootstrapSkillMd()]) {
+      expect(md).toContain(`mandate-stub v${STUB_VERSION} `);
+      expect(md).toMatch(/stop and tell the user/);
+      expect(md).not.toMatch(/## Intake|Stage 2: DISTILL/);
+      expect(Math.ceil(md.length / 4)).toBeLessThanOrEqual(300); // front matter (description) + stub; the full skill was ~2,200
+    }
     expect(skillMd()).toMatchSnapshot();
   });
   it('each command renders per agent format', () => {
@@ -161,14 +168,25 @@ describe('skills and command templates', () => {
       expect(cursorCommand(c)).toContain('(the text after the command)');
     }
     expect(COMMANDS.map((c) => markdownCommand(c))).toMatchSnapshot();
-    // /mandate-flow as written for every agent that has commands (calls flow_set / project_info, one-line report).
+    // /mandate-flow as written for every agent that has commands: a stub that loads the current text from the server.
     for (const a of AGENTS.filter((x) => x.commands)) {
       const flow = a.commands!.render(COMMANDS[0]!);
-      expect(flow, a.id).toContain('flow_set');
-      expect(flow, a.id).toContain('Project policy: optional · this client (<client.label>): flow off, approval on, questions via mandate');
+      expect(flow, a.id).toContain('instructions_get {"name":"flow","args":');
+      expect(flow, a.id).toContain(`"stubVersion":${STUB_VERSION}`);
       expect(flow, a.id).not.toMatch(/Claude/);
       expect(flow).toMatchSnapshot(a.id);
     }
+  });
+  it('inventory flags installed files that are not the current stub (full text of an earlier version)', () => {
+    const ctx = tempCtx();
+    const cc = agentById('claude-code')!;
+    applyChanges([...skillChanges(ctx, [cc]), ...commandChanges(ctx, [cc])], { dryRun: false, out: capture() });
+    expect(inventory(ctx, [cc])[0]!.outdated).toEqual([]);
+    write(`${ctx.home}/.claude/skills/mandate/SKILL.md`, '---\nname: mandate\n---\n<!-- managed by mandate -->\n# Mandate\nold full text\n');
+    expect(inventory(ctx, [cc])[0]!.outdated).toEqual(['~/.claude/skills/mandate/SKILL.md']);
+    // Install / connect overwrite managed files with the current stub.
+    applyChanges(skillChanges(ctx, [cc]), { dryRun: false, out: capture() });
+    expect(inventory(ctx, [cc])[0]!.outdated).toEqual([]);
   });
   it('uninstall also removes the slash commands of earlier versions (managed only)', () => {
     const ctx = tempCtx();

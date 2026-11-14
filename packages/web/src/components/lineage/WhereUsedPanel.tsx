@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { Loader, Tooltip, UnstyledButton } from '@mantine/core';
-import { IconChevronDown, IconChevronRight, IconCircleCheck, IconCircleDashed, IconCircleX, IconCode } from '@tabler/icons-react';
+import { IconChevronDown, IconChevronRight, IconCircleCheck, IconCircleDashed, IconCircleX } from '@tabler/icons-react';
 import type { UsageLocation, UsageState, WhereUsedResponse } from '@mandate/shared';
 import { useWhereUsed } from '../../lib/lineage';
 import { relativeTime, absoluteTime } from '../../lib/time';
 import { RefChip } from '../refs/RefChip';
+import { KindIcon } from '../refs/KindIcon';
 import './lineage.css';
 
 const STATE_META: Record<UsageState, { label: string; icon: typeof IconCircleCheck }> = {
@@ -56,7 +57,7 @@ function Location({ l }: { l: UsageLocation }) {
       <StateIcon state={l.state} />
       <Tooltip label={`${l.repo} · ${l.path}${lines}${l.ruleTitle ? ` · ${l.ruleTitle}` : ''}`} openDelay={400} withinPortal>
         <span className="wu-path mono">
-          <IconCode size={11} />
+          <KindIcon kind="code_file" size={11} />
           {l.path.split('/').pop()}
           <span className="faint">{lines}</span>
         </span>
@@ -90,7 +91,10 @@ export function WhereUsedView({ data }: { data: WhereUsedResponse }) {
         return (
           <div key={g.component ?? '-'} className="wu-group" data-testid="wu-group">
             <div className="wu-group-head">
-              <span className="wu-group-title">{g.label}</span>
+              <span className="wu-group-title">
+                {g.component && <KindIcon kind="component" className="kind-prefix" />}
+                {g.label}
+              </span>
               <span className="wu-counts">
                 {g.compliant > 0 && <span data-state="compliant">{g.compliant} ok</span>}
                 {g.violating > 0 && <span data-state="violating">{g.violating} violating</span>}

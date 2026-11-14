@@ -328,16 +328,4 @@ span.row-slot.row-slot-people {
 .criterion-head .section-people {
   margin-left: auto;
 }
-.ref-preview-people {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 6px;
-}
-.ref-preview-people:has(.pp-stack-wrap) {
-  display: flex;
-}
-.ref-preview-people:not(:has(.pp-stack-wrap)) {
-  display: none;
-}
 .lin-node-people { display: inline-flex; flex-shrink: 0; text-transform: none; }

@@ -19,9 +19,9 @@ export function When({ iso, prefix = '', now }: { iso: string; prefix?: string; 
 }
 
 /** One card: title, count and a body (or its empty state). */
-export function Card({ id, icon, title, count, action, children, wide }: { id: string; icon: ReactNode; title: string; count?: number; action?: ReactNode; children: ReactNode; wide?: boolean }) {
+export function Card({ id, icon, title, count, action, children, wide, flat }: { id: string; icon: ReactNode; title: string; count?: number; action?: ReactNode; children: ReactNode; wide?: boolean; /** No border (inside a tab: no card in a card). */ flat?: boolean }) {
   return (
-    <section className="ov-card" data-wide={wide || undefined} aria-labelledby={`ov-${id}`} data-testid={`ov-${id}`} id={`card-${id}`}>
+    <section className="ov-card" data-wide={wide || undefined} data-flat={flat || undefined} aria-labelledby={`ov-${id}`} data-testid={`ov-${id}`} id={`card-${id}`}>
       <header className="ov-card-head">
         <span className="ov-card-icon" aria-hidden>
           {icon}
@@ -36,6 +36,9 @@ export function Card({ id, icon, title, count, action, children, wide }: { id: s
     </section>
   );
 }
+
+/** Count next to a tab label (Overview and Actions tabs); nothing when zero. */
+export const TabCount = ({ n, tone }: { n: number | undefined; tone?: 'danger' }) => (n ? <span className="ov-tab-count" data-tone={tone}>{n}</span> : null);
 
 /** Empty state inside a card: what would appear here and why it matters. */
 export function Empty({ icon, title, children }: { icon?: ReactNode; title: string; children?: ReactNode }) {

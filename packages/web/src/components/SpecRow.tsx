@@ -108,6 +108,7 @@ export const SpecRow = memo(function SpecRow({ spec, byId, now, wide }: Props & 
     <ListRow
       to={`/specs/${spec.id}`}
       list="specs"
+      kind="spec"
       className="spec-row"
       copy={target}
       lead={

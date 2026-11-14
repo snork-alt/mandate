@@ -12,6 +12,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { createMcpServer, INSTRUCTIONS, TOOLS } from '../../src/mcp/server.js';
 import { CORE_RULES, FLOW_COMMAND, SKILL_BODY } from '../../src/mcp/guide.js';
+import { BOOTSTRAP_COMMAND, BOOTSTRAP_SKILL_BODY } from '../../src/mcp/bootstrap.js';
+import { BOOTSTRAP_SKILL_STUB, commandStub, instructionsFor, SKILL_STUB, STUB_FALLBACK, STUB_VERSION } from '../../src/mcp/stubs.js';
 import { callTool, type ToolContext } from '../../src/mcp/define.js';
 import { STANDARD_CONFIRMATION } from '../../src/mcp/tools/write.js';
 import { coverage, terms } from '../../src/mcp/tools/match.js';
@@ -76,6 +78,40 @@ describe('the mandate-flow MCP prompt', () => {
     expect(text).toContain('flow_set');
     await expect(c.getPrompt({ name: 'implement' })).rejects.toThrow(/no prompt/);
     await c.close();
+  });
+});
+
+describe('instructions_get: the server is the single source of the skill / command text', () => {
+  const call = async (args: Record<string, unknown>) => JSON.parse(((await callTool(byName.get('instructions_get')!, args, {} as ToolContext)).content[0] as { text: string }).text);
+  it('serves exactly the server constants (no copy that could drift)', async () => {
+    expect((await call({ name: 'core' })).text).toBe(SKILL_BODY);
+    expect((await call({ name: 'bootstrap' })).text).toBe(BOOTSTRAP_SKILL_BODY);
+    expect((await call({ name: 'bootstrap' })).command).toBeUndefined();
+    expect((await call({ name: 'bootstrap', args: '--resume' })).command).toBe(BOOTSTRAP_COMMAND.render('--resume'));
+    expect((await call({ name: 'flow', args: 'approval off' })).text).toBe(FLOW_COMMAND.render('approval off'));
+    expect((await call({ name: 'flow' })).text).toBe(FLOW_COMMAND.render('status'));
+    expect(instructionsFor('core').text).toBe(SKILL_BODY);
+  });
+  it('tells an agent with older stubs to re-run the installer (instructions_get and project_info)', async () => {
+    const cur = await call({ name: 'core', stubVersion: STUB_VERSION });
+    expect(cur.stubVersion).toBe(STUB_VERSION);
+    expect(cur.update).toBeUndefined();
+    expect((await call({ name: 'core', stubVersion: STUB_VERSION - 1 })).update).toMatch(/re-run the Mandate installer/);
+    const info = async (a: Record<string, unknown>) => JSON.parse(((await callTool(byName.get('project_info')!, a, {} as ToolContext)).content[0] as { text: string }).text);
+    expect((await info({})).update).toBeUndefined();
+    expect((await info({ stubVersion: STUB_VERSION })).update).toBeUndefined();
+    expect((await info({ stubVersion: STUB_VERSION - 1 })).update).toMatch(/getmandate connect/);
+  });
+  it('stubs are short, versioned, load the text from the server and stop when it is unreachable', () => {
+    for (const t of [SKILL_STUB, BOOTSTRAP_SKILL_STUB, commandStub('flow', '$ARGUMENTS'), commandStub('bootstrap', '$ARGUMENTS')]) {
+      expect(t).toContain('instructions_get');
+      expect(t).toContain(`"stubVersion":${STUB_VERSION}`);
+      expect(t).toContain(`mandate-stub v${STUB_VERSION} `);
+      expect(t).toContain(STUB_FALLBACK);
+      expect(Math.ceil(t.length / 4)).toBeLessThanOrEqual(200);
+    }
+    expect(SKILL_STUB).not.toContain('## Intake');
+    expect(INSTRUCTIONS).toContain('instructions_get');
   });
 });
 

@@ -4,7 +4,7 @@
  * awaits a decision, and coverage. Recent changes come from `activity_list`.
  */
 import { z } from 'zod';
-import type { MaturityStep } from './maturity.js';
+import type { MaturityStep, SpecMaturity } from './maturity.js';
 import type { GitContext } from './work-orders.js';
 
 export const projectOverviewInputSchema = z
@@ -41,7 +41,63 @@ export interface OverviewWorkOrder {
   claim?: { agent: string; branch?: string; startedAt: string; heartbeatAt: string; stale: boolean };
   git: GitContext[];
   hasPlan: boolean;
+  /** Plan progress: its steps (top-level list items of the `plan` section); `done` / `current` when they are checkboxes. */
+  plan?: PlanProgress;
   updatedAt: string;
+}
+
+/** Steps of a work-order plan: top-level list items (`1.` / `-` / `- [ ]`); checked boxes count as done. */
+export interface PlanProgress {
+  total: number;
+  /** Checked items (only when the plan uses checkboxes). */
+  done?: number;
+  /** The first unchecked step (1-based index and text), when the plan uses checkboxes. */
+  current?: { index: number; text: string };
+}
+
+/** Parse a plan's steps (pure). Null when the plan has no list. */
+export function planProgress(md: string): PlanProgress | null {
+  const items: { text: string; box: boolean; checked: boolean }[] = [];
+  let fence = false;
+  for (const line of md.split(/\r?\n/)) {
+    if (/^\s*(```|~~~)/.test(line)) fence = !fence;
+    if (fence) continue;
+    const m = /^(?:[-*+]|\d+[.)])\s+(?:\[([ xX])\]\s+)?(.*\S)\s*$/.exec(line);
+    if (!m) continue;
+    items.push({ text: m[2]!.replace(/[*_`]/g, ''), box: m[1] !== undefined, checked: m[1] === 'x' || m[1] === 'X' });
+  }
+  if (!items.length) return null;
+  if (!items.some((i) => i.box)) return { total: items.length };
+  const done = items.filter((i) => i.checked).length;
+  const idx = items.findIndex((i) => !i.checked);
+  return { total: items.length, done, ...(idx >= 0 ? { current: { index: idx + 1, text: items[idx]!.text } } : {}) };
+}
+
+/** One claim session of an agent on a work order (current or ended), for the "Agents today" timeline. */
+export interface OverviewSession {
+  workOrder: string;
+  kind: string;
+  title: string;
+  agent: string;
+  startedAt: string;
+  /** Ended claims: when and how. */
+  endedAt?: string;
+  ended?: string;
+  /** Current claim: the last heartbeat and whether it is stale. */
+  heartbeatAt?: string;
+  stale?: boolean;
+}
+
+/** A work order completed recently (duration = its last claim's start to completion). */
+export interface OverviewCompleted {
+  id: string;
+  title: string;
+  kind: string;
+  spec: string;
+  specTitle: string | null;
+  agent?: string;
+  startedAt?: string;
+  completedAt: string;
 }
 
 /** What blocks an item: a depends_on target section that is not implemented (or broken), or an unfinished work order. */
@@ -66,6 +122,19 @@ export interface OverviewBlocked {
   specId: string;
   specTitle: string | null;
   blockedBy: OverviewBlocker[];
+}
+
+/** One open must finding of a spec's latest audit (Actions › Must findings). */
+export interface OverviewMustFinding {
+  /** The finding (`.../findings/<id>` reference). */
+  uri: string;
+  title: string;
+  description: string;
+  /** The checklist item it is about (a spec criterion section, or a standard rule). */
+  ref: string;
+  /** Rules: the spec sections following the rule. */
+  sections?: string[];
+  codeRefs: string[];
 }
 
 export interface ProjectOverview {
@@ -97,12 +166,28 @@ export interface ProjectOverview {
   /** Open work orders that are claimed or in progress (fresh heartbeat first), capped. */
   inProgress: OverviewWorkOrder[];
   inProgressTotal: number;
+  /** Specs of the work in progress (all of them, not capped): maturity and section progress. */
+  progressSpecs?: { id: string; title: string; maturity: SpecMaturity }[];
+  /** Claim sessions (current and ended) overlapping the last 24 hours, oldest first. */
+  sessions?: OverviewSession[];
+  /** Work orders completed in the last 7 days, newest first (capped). */
+  recentlyCompleted?: OverviewCompleted[];
   /** Open work orders waiting for an agent (pending, unclaimed). */
   queued: number;
   blocked: OverviewBlocked[];
   blockedTotal: number;
   /** Specs whose latest audit has open must findings (capped). */
-  mustFindingSpecs: { id: string; title: string; audit: string; openMust: number }[];
+  mustFindingSpecs: {
+    id: string;
+    title: string;
+    audit: string;
+    openMust: number;
+    /** The latest audit (title, auditor, completion time) and its open must findings. */
+    auditTitle?: string;
+    auditor?: { agent: string; user?: string };
+    auditAt?: string;
+    findings?: OverviewMustFinding[];
+  }[];
   /** Health: maturity steps per category (non-archived specs). */
   byCategory: { category: string; total: number; steps: Record<MaturityStep, number>; specs: { id: string; title: string; step: MaturityStep }[] }[];
   /** Health: specified (non-draft) specs never audited, and specs with unverified / stale must criteria (capped). */
@@ -178,6 +263,12 @@ export interface Decision {
   feedback?: string;
   /** Waivers: approving needs an approval override (the approver wrote the change). */
   selfApproval?: boolean;
+  /** Feedback (kinds `feedback_open` / `feedback_accepted`): its kind (bug, improvement, question, ...). */
+  feedbackKind?: string;
+  /** Who filed it (feedback: the coding agent or person that created it). */
+  by?: string;
+  /** Why `suggested` is suggested (one line), when derivable. */
+  suggestedWhy?: string;
   /** Questions (kind `question`): the open question an agent asked through Mandate (answer with question_answer). */
   ask?: import('./questions.js').Question;
 }

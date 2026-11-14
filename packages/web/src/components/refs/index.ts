@@ -3,5 +3,6 @@ export { RefEmbed } from './RefEmbed';
 export { RefTable } from './TableEmbed';
 export { GraphEmbed } from './GraphEmbed';
 export { StatusGlyph } from './StatusGlyph';
+export { KindIcon } from './KindIcon';
 export { KIND_ICON, fallbackLabel, refHref, refKind } from './kinds';
 export { useRefNode } from './useRefNode';

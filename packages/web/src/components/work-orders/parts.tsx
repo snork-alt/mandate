@@ -1,9 +1,10 @@
 import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
 import { Tooltip } from '@mantine/core';
-import { IconAlertOctagon, IconChevronRight, IconExternalLink, IconFile, IconFolder, IconGitBranch, IconGitMerge, IconGitPullRequest, IconGitPullRequestClosed, IconGitPullRequestDraft, IconMessage, IconServer } from '@tabler/icons-react';
+import { IconAlertOctagon, IconChevronRight, IconExternalLink, IconFolder, IconGitBranch, IconGitMerge, IconGitPullRequest, IconGitPullRequestClosed, IconGitPullRequestDraft, IconMessage, IconServer } from '@tabler/icons-react';
 import type { WorkOrder, CommentThread, CommentView, GitContext, PastClaim, PullRequest, ResolvedWorkOrder, TouchedFile } from '@mandate/shared';
 import { buildNodeUri, mentionOf } from '@mandate/shared/refs';
 import { Markdown } from '../Markdown';
+import { KindIcon } from '../refs/KindIcon';
 import { TimeAgo } from '../TimeAgo';
 import { CommitHash, CopyRef, copyTargetProps } from '../copy';
 import { CodeRefChip } from '../doc';
@@ -215,7 +216,7 @@ function TreeView({ n, sections, depth }: { n: TreeNode; sections: (f: TouchedFi
           return (
             <div key={f.path} className="wo-tree-file" style={{ paddingLeft: depth * 12 }} data-change={f.change}>
               <ChangeBadge change={f.change} />
-              <IconFile size={13} className="faint" />
+              <KindIcon kind="code_file" size={13} />
               <span className="wo-tree-name mono">{f.path.split('/').pop()}</span>
               {f.from && <span className="faint small mono">← {f.from}</span>}
               {f.lines?.length ? <span className="faint small mono">{f.lines.map((l) => `L${l}`).join(', ')}</span> : null}

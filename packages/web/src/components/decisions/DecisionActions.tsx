@@ -19,7 +19,9 @@ export type DialogRequest =
   | { type: 'duplicate'; ref: string; title: string }
   | { type: 'release'; ref: string; title: string; agent?: string; heartbeat?: string }
   | { type: 'snooze'; rule: string; uri: string; title: string }
-  | { type: 'confirm_override'; ref: string; title: string };
+  | { type: 'confirm_override'; ref: string; title: string }
+  /** Several open feedback items at once (Actions › Feedback: the selected or suggested ones). */
+  | { type: 'accept_many'; refs: string[]; title: string };
 
 interface DialogApi {
   open: (r: DialogRequest) => void;
@@ -72,6 +74,7 @@ function DialogBody({ req, onClose, access }: { req: DialogRequest; onClose: () 
       </>
     );
   }
+  if (req.type === 'accept_many') return <AcceptMany refs={req.refs} onClose={onClose} />;
   if (req.type === 'reject') {
     return (
       <>
@@ -137,6 +140,43 @@ function DialogBody({ req, onClose, access }: { req: DialogRequest; onClose: () 
   );
 }
 
+/** Accepts several feedback items one after the other (each is its own recorded decision). */
+function AcceptMany({ refs, onClose }: { refs: string[]; onClose: () => void }) {
+  const decide = useDecide();
+  const [done, setDone] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const run = async () => {
+    setBusy(true);
+    try {
+      for (const ref of refs) {
+        await decide.mutateAsync({ tool: 'feedback_accept', args: { ref } });
+        setDone((n) => n + 1);
+      }
+      onClose();
+    } catch {
+      /* the failure is shown by useDecide; the rest stays pending */
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      <Text size="sm">
+        Accept <strong>{refs.length === 1 ? '1 feedback item' : `${refs.length} feedback items`}</strong>: each will be acted on (a coding agent changes the spec or standard through a work order).
+      </Text>
+      <Text size="xs" c="dimmed" mt={8}>{RECORDED} One decision per item.</Text>
+      <Group justify="flex-end" mt="md" gap="xs">
+        <Button variant="default" onClick={onClose} disabled={busy}>
+          Cancel
+        </Button>
+        <Button onClick={() => void run()} loading={busy} disabled={!refs.length} data-testid="decision-confirm">
+          {busy ? `Accepting ${done + 1} of ${refs.length}` : `Accept ${refs.length}`}
+        </Button>
+      </Group>
+    </>
+  );
+}
+
 const TITLE: Record<DialogRequest['type'], string> = {
   accept: 'Accept feedback',
   reject: 'Reject feedback',
@@ -144,6 +184,7 @@ const TITLE: Record<DialogRequest['type'], string> = {
   release: 'Release stale claim',
   snooze: 'Snooze integrity warning',
   confirm_override: 'Confirm approval override',
+  accept_many: 'Accept feedback',
 };
 
 /** Hosts the confirmation dialogs for everything below it. */
@@ -170,6 +211,8 @@ export interface ItemAction {
   dialog: DialogRequest;
   /** Shown first as a button next to the menu. */
   primary?: boolean;
+  /** Also shown as a subtle button next to the primary one (Actions page rows). */
+  inline?: boolean;
   danger?: boolean;
 }
 
@@ -180,6 +223,7 @@ const ICON: Record<DialogRequest['type'], ReactNode> = {
   release: <IconPlayerStop size={14} />,
   snooze: <IconMoonStars size={14} />,
   confirm_override: <IconUserCheck size={14} />,
+  accept_many: <IconCheck size={14} />,
 };
 
 /** Why direct actions are unavailable (no write access to the repository), or null. */
@@ -205,6 +249,16 @@ export function ItemMenu({ label, prompt, actions = [], showPrimary = true }: { 
           </Button>
         </Tooltip>
       )}
+      {showPrimary &&
+        actions
+          .filter((a) => a.inline && !a.primary)
+          .map((a) => (
+            <Tooltip key={a.id} label={block ?? a.label} openDelay={300} disabled={!block}>
+              <Button size="compact-xs" variant="subtle" color="gray" onClick={() => run(a)} disabled={!!block} data-testid={`item-inline-${a.id}`}>
+                {a.label}
+              </Button>
+            </Tooltip>
+          ))}
       <Menu position="bottom-end" width={260} withinPortal shadow="md">
         <Menu.Target>
           <ActionIcon variant="subtle" size="sm" aria-label={`Actions for ${label}`} data-testid="item-menu">

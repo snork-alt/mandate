@@ -78,6 +78,39 @@ describe('project_overview', () => {
     expect(zero.isError).toBe(true);
   });
 
+  it('In progress tab data: plan step, specs of the work, agent sessions and recently completed work orders', async () => {
+    const call = async (name: string, args: Record<string, unknown>) => {
+      const r = await fx.call(name, { agent: 'claude-code@ov', ...args });
+      if (r.isError) throw new Error(`${name}: ${JSON.stringify(r.body.error)}`);
+      return r.body;
+    };
+    const id = `ov-prog-${Date.now().toString(36)}`;
+    await call('spec_create', { id, title: 'Progress spec', summary: 'Overview progress.', sections: [{ id: 'one', title: 'One', summary: 'One.', body: 'Body.' }, { id: 'two', title: 'Two', summary: 'Two.', body: 'Body.' }] });
+    const wo = await call('work_order_create', { spec: id, sections: ['one'], kind: 'implement', plan: '- [x] Read the spec\n- [ ] Write the tests\n- [ ] Ship it' });
+    await call('work_order_claim', { ref: wo.ref });
+    const fix = await call('work_order_create', { spec: id, sections: ['two'], kind: 'fix', fastPath: true, title: 'Quick fix' });
+    await call('work_order_claim', { ref: fix.ref });
+    await call('work_order_complete', { ref: fix.ref, outcome: 'Fixed.' });
+
+    const { body } = await fx.call('project_overview', {});
+    const woId = String(wo.ref).split('/').pop();
+    const fixId = String(fix.ref).split('/').pop();
+    const w = body.inProgress.find((x: any) => x.id === woId);
+    expect(w.plan).toEqual({ total: 3, done: 1, current: { index: 2, text: 'Write the tests' } });
+    const ps = body.progressSpecs.find((x: any) => x.id === id);
+    expect(ps.title).toBe('Progress spec');
+    expect(ps.maturity.sections.total).toBe(2);
+    const live = body.sessions.find((s: any) => s.workOrder === woId);
+    expect(live).toMatchObject({ agent: 'claude-code@ov', kind: 'implement', stale: false });
+    expect(live.heartbeatAt).toBeTruthy();
+    const ended = body.sessions.find((s: any) => s.workOrder === fixId);
+    expect(ended).toMatchObject({ agent: 'claude-code@ov', ended: 'completed' });
+    const done = body.recentlyCompleted.find((x: any) => x.id === fixId);
+    expect(done).toMatchObject({ title: 'Quick fix', kind: 'fix', spec: id, agent: 'claude-code@ov' });
+    expect(Date.parse(done.completedAt)).toBeGreaterThanOrEqual(Date.parse(done.startedAt));
+    expect(body.recentlyCompleted.map((x: any) => x.completedAt)).toEqual([...body.recentlyCompleted.map((x: any) => x.completedAt)].sort().reverse());
+  });
+
   it('is fast (single pass over the cached model)', async () => {
     await projectOverview(fx.storage, {});
     const t = performance.now();

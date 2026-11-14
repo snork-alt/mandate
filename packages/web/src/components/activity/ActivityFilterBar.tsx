@@ -1,20 +1,29 @@
 import type { ReactNode } from 'react';
-import { IconFileText, IconGitCommit, IconClipboardList, IconMessageReport, IconListCheck, IconMessage, IconRuler2, IconShieldCheck } from '@tabler/icons-react';
+import type { NodeKind } from '@mandate/shared';
+import { KIND_ICON } from '../refs/kinds';
 import { initials } from '../../lib/specs';
 import { FilterButton, type FilterOption } from '../FilterButton';
 import type { ActivityFilters } from './types';
 import { UserAvatar } from '../attribution/Attribution';
 
+const famIcon = (k: NodeKind) => {
+  const I = KIND_ICON[k];
+  return <I size={14} stroke={1.6} />;
+};
+/** Icon per event family: the object-type icon (KIND_ICON). */
 export const FAMILY_ICON: Record<string, ReactNode> = {
-  spec: <IconFileText size={14} stroke={1.6} />,
-  standard: <IconRuler2 size={14} stroke={1.6} />,
-  work_order: <IconClipboardList size={14} stroke={1.6} />,
-  feedback: <IconMessageReport size={14} stroke={1.6} />,
-  verification: <IconShieldCheck size={14} stroke={1.6} />,
-  audit: <IconListCheck size={14} stroke={1.6} />,
-  comment: <IconMessage size={14} stroke={1.6} />,
-  git: <IconGitCommit size={14} stroke={1.6} />,
-  commit: <IconGitCommit size={14} stroke={1.6} />,
+  spec: famIcon('spec'),
+  standard: famIcon('standard'),
+  work_order: famIcon('work_order'),
+  feedback: famIcon('feedback'),
+  verification: famIcon('verification'),
+  audit: famIcon('audit'),
+  finding: famIcon('finding'),
+  component: famIcon('component'),
+  question: famIcon('question'),
+  comment: famIcon('comment'),
+  git: famIcon('commit'),
+  commit: famIcon('commit'),
 };
 
 /** Agent and event-type filters: the same menu buttons as the Specs toolbar (multi-select). */
