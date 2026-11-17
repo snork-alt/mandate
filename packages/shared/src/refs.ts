@@ -399,3 +399,15 @@ export function canonicalRef(input: string): string | null {
 
 /** Every reference builder (the contract tests check each one is exercised). */
 export const REF_BUILDERS = { buildRef, buildNodeUri, refMention, canonicalRef } as const;
+
+/** The `mandate://` references written inside a text (an @-reference inserts one), canonical, deduplicated, in order. */
+export function extractRefs(text: string, max = 30): string[] {
+  const out: string[] = [];
+  for (const m of text.matchAll(/mandate:\/\/[^\s)\]>"'`,;]+/g)) {
+    const raw = m[0].replace(/[.:!?]+$/, '');
+    const ref = canonicalRef(raw);
+    if (ref && !out.includes(ref)) out.push(ref);
+    if (out.length >= max) break;
+  }
+  return out;
+}

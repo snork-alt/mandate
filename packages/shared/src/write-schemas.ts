@@ -285,7 +285,14 @@ export const requestCreateInputSchema = z
     quote: text(5000).optional(),
     relatedTo: z.array(relatedRef).max(20).optional(),
     /** `comment`: the request comes from a comment (relatedTo: the commented object and the comment, mandate://comments/<id>). */
-    source: z.enum(['comment']).optional(),
+    source: z.enum(['comment', 'ui']).optional(),
+    /** Who handles it: a client id / handle of an agent (presence), or `any` (the next free agent). Queued while it is offline. */
+    assignee: line(200).optional(),
+    /** Objects the request refers to (@-references: mandate:// refs, `repo:path` code refs); also extracted from the body. */
+    context: z.array(z.string().trim().min(1).max(400)).max(30).optional(),
+    priority: z.enum(['low', 'normal', 'high']).optional(),
+    /** Stop after the spec update and the work-order plan: the user reviews before any code is written. */
+    planOnly: z.boolean().optional(),
     /** The audit finding this request comes from (spec_wrong / ambiguous): mandate://audits/<id>/findings/<fid>. */
     fromFinding: z
       .string()
@@ -303,6 +310,8 @@ export const requestUpdateInputSchema = z
   .object({ ref: fbRef, body: text(20_000).min(1).optional(), targets: z.array(feedbackTarget).min(1).max(20).optional(), relatedTo: z.array(relatedRef).max(20).optional() })
   .strict()
   .refine((v) => Object.keys(v).some((k) => k !== 'ref'), 'nothing to change: pass body, targets or relatedTo');
+export const requestAssignInputSchema = z.object({ ref: fbRef, assignee: line(200) }).strict();
+export const requestPlanApproveInputSchema = z.object({ ref: fbRef }).strict();
 export const requestCloseInputSchema = z
   .object({ ref: fbRef, resolution: z.enum(FEEDBACK_RESOLUTIONS), resolutionNote: text(5000).optional(), duplicateOf: fbRef.optional() })
   .strict();

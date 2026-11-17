@@ -27,7 +27,7 @@ export interface Routing {
 export interface RouteState {
   presence: AgentPresence;
   workOrders: WorkOrder[];
-  requests: Pick<Feedback, 'id' | 'createdBy' | 'createdByUser' | 'status' | 'relatedTo'>[];
+  requests: (Pick<Feedback, 'id' | 'createdBy' | 'createdByUser' | 'status' | 'relatedTo'> & { assignee?: string; startedBy?: string })[];
 }
 
 const isHuman = (a: { agent: string }) => a.agent === UI_AGENT;
@@ -61,6 +61,19 @@ export function responsibleFor(target: string, st: RouteState): { agent: string;
   return [];
 }
 
+/** The client(s) running the request a target is about (UI-filed requests: createdBy is the web UI, not an agent). */
+function directClients(target: string, st: RouteState, p: AgentPresence): string[] {
+  const t = parseCommentTarget(target);
+  if (!t) return [];
+  const ids = t.kind === 'requests' ? [t.id] : t.kind === 'work-orders' ? (st.workOrders.find((w) => w.id === t.id)?.reason ?? []) : [];
+  for (const id of ids) {
+    const r = st.requests.find((x) => x.id === id && x.status !== 'closed');
+    const who = r?.startedBy ?? (r?.assignee && r.assignee !== ANY ? r.assignee : undefined);
+    if (who) return p.resolve(who).length ? p.resolve(who) : [who];
+  }
+  return [];
+}
+
 /** Who the comment `c` (the last of `thread`) addresses. */
 export function routeOf(c: CommentView | CommentRecord, thread: CommentThread, st: RouteState): Routing {
   const p = st.presence;
@@ -82,6 +95,9 @@ export function routeOf(c: CommentView | CommentRecord, thread: CommentThread, s
   const all = [thread, ...thread.replies];
   const inThread = wake(all.filter((m) => m.id !== c.id && !isHuman(m.author)).flatMap((m) => clientsOfAuthor(m.author, p)));
   if (inThread.length) return { via: 'thread', clients: inThread };
+  // A request filed in the web UI is run by the agent that started it (else its assignee).
+  const direct = wake(directClients(thread.target, st, p));
+  if (direct.length) return { via: 'responsible', clients: direct };
   const resp = wake(responsibleFor(thread.target, st).flatMap((r) => p.clientsOfAgent(r.agent, r.user)));
   if (resp.length) return { via: 'responsible', clients: resp };
   return { via: 'none', clients: [] };

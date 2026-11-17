@@ -13,7 +13,7 @@ import type { AnyToolDef } from '../../src/mcp/define.js';
 const byName = new Map(AGENT_TOOLS.map((t) => [t.name, t]));
 const families = new Set(TOOLS.map((t) => t.name.split('_')[0]!));
 /** snake_case words in those families that are not tools: kinds, enum values, fields. */
-const NOT_TOOLS = new Set([
+const NOT_TOOLS = new Set(['request_assigned', 
   'work_order', 'work_order_section', 'spec_section', 'standard_section', 'component_section', 'audit_finding', 'flow_policy', 'standard_confirmation', 'code_deviates', 'spec_wrong',
   'spec_drifted', 'standard_draft', 'stale_claim', 'feedback_open', 'feedback_accepted', 'waiver_pending', 'approval_override', 'audit_contradicted', 'integrity_error',
   'question_frozen', 'question_not_answered', 'question_ineligible', 'question_purpose', 'feedback_target_mismatch', 'request_closed', 'feedback_tampered', 'code_repo_unavailable',

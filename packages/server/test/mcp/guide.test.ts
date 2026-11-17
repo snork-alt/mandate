@@ -27,7 +27,7 @@ describe('working agreement text', () => {
   it('only mentions real tool names', () => {
     const texts = [CORE_RULES, SKILL_BODY, INSTRUCTIONS, FLOW_COMMAND.render('on')];
     const mentioned = new Set(texts.flatMap((t) => [...t.matchAll(/`?\b([a-z]+(?:_[a-z]+)+)\b`?/g)].map((m) => m[1]!)).filter((n) => /^(spec|standard|component|work_order|feedback|request|verification|project|graph|rule|rules|search|symbol|code|text|architecture)_/.test(n) || n === 'rules_for_code'));
-    const unknown = [...mentioned].filter((n) => !byName.has(n) && !['spec_section', 'standard_section', 'flow_enabled', 'code_deviates', 'spec_wrong', 'standard_confirmation'].includes(n));
+    const unknown = [...mentioned].filter((n) => !byName.has(n) && !['spec_section', 'standard_section', 'flow_enabled', 'code_deviates', 'spec_wrong', 'standard_confirmation', 'request_assigned'].includes(n));
     expect(unknown).toEqual([]);
     for (const n of ['project_info', 'spec_match', 'request_create', 'work_order_create', 'request_close', 'verification_record', 'work_order_complete']) expect(mentioned.has(n), n).toBe(true);
     // Merged tools and tool sets (tool-sets.ts).

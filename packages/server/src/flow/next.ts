@@ -32,6 +32,7 @@ export type FlowState =
   | 'complete'
   | 'close'
   | 'comments'
+  | 'plan_ready'
   | 'waiting'
   | 'done';
 
@@ -42,7 +43,9 @@ export interface FlowStep {
 }
 
 export interface FlowItem {
-  request: { id: string; ref: string; kind: string; status: string; summary: string; createdBy?: string };
+  request: { id: string; ref: string; kind: string; status: string; summary: string; createdBy?: string; source?: string; assignee?: string; startedBy?: string; priority?: string; planOnly?: boolean };
+  /** Assigned to an agent that has not started it yet. */
+  queued?: boolean;
   state: FlowState;
   next: FlowStep | null;
   /** Unanswered question ids that block this request (or its work orders / steps / sections). */
@@ -98,10 +101,12 @@ const hasCriterion = (spec: Pick<StoredSpec, 'sections'>, sid: string): boolean 
 export function flowFor(f: Feedback, snap: FlowSnapshot): FlowItem {
   const now = snap.now ?? Date.now();
   const item = (state: FlowState, next: FlowStep | null, extra: Partial<FlowItem> = {}): FlowItem => ({
-    request: { id: f.id, ref: reqRef(f.id), kind: f.kind, status: f.status, summary: summaryOf(f), ...(f.createdBy ? { createdBy: f.createdBy } : {}) },
+    request: { id: f.id, ref: reqRef(f.id), kind: f.kind, status: f.status, summary: summaryOf(f), ...(f.createdBy ? { createdBy: f.createdBy } : {}), ...(f.source ? { source: f.source } : {}), ...(f.assignee ? { assignee: f.assignee } : {}), ...(f.startedBy ? { startedBy: f.startedBy } : {}), ...(f.priority ? { priority: f.priority } : {}), ...(f.planOnly ? { planOnly: true } : {}) },
+    ...(f.assignee && !f.startedBy && f.status !== 'closed' ? { queued: true } : {}),
     state,
     next,
-    done: state === 'done',
+    // plan_ready: the agent is done (the user reviews the plan; approval re-notifies it).
+    done: state === 'done' || state === 'plan_ready',
     ...extra,
   });
   if (f.status === 'closed') return item('done', null);
@@ -119,6 +124,11 @@ export function flowFor(f: Feedback, snap: FlowSnapshot): FlowItem {
   const live = mine.filter(isOpenWo);
   const waiting = new Set<string>();
   const waitWos: NonNullable<FlowItem['waitingOnWorkOrders']> = [];
+
+  // Plan only: once the work order with the plan exists the agent stops; the user approves in the web UI.
+  if (f.planOnly && mine.some((w) => w.status !== 'cancelled')) {
+    return item('plan_ready', null);
+  }
 
   // Drive open work orders first (their sections / steps / verification / completion).
   for (const w of live) {
@@ -266,8 +276,9 @@ function driveWorkOrder(w: WorkOrder, f: Feedback, snap: FlowSnapshot, now: numb
 
 /** Flow items for every in-flight (not closed) request, oldest first. */
 export function flowAll(snap: FlowSnapshot): FlowItem[] {
+  const rank = (f: Feedback) => (f.priority === 'high' ? 0 : f.priority === 'low' ? 2 : 1);
   return snap.requests
     .filter((f) => f.status !== 'closed')
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    .sort((a, b) => rank(a) - rank(b) || a.createdAt.localeCompare(b.createdAt))
     .map((f) => flowFor(f, snap));
 }

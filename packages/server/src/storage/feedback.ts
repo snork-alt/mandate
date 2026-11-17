@@ -380,6 +380,28 @@ export class FeedbackService {
     await this.repo.update(id, { specMatch: { at: (meta.date ?? new Date()).toISOString(), by: match.by, refs: match.refs.slice(0, 20), ...(match.decision ? { decision: match.decision } : {}) } } as never, meta);
   }
 
+  /** Assign an unstarted request to a client id / `any` (the UI picker; reassign while not started). */
+  async assign(id: string, assignee: string, meta: CommitMeta = {}): Promise<Feedback> {
+    const current = await this.repo.get(id);
+    if (current.status === 'closed') throw new FeedbackClosedError(id, 'modified');
+    await this.repo.update(id, { assignee, assignedAt: (meta.date ?? new Date()).toISOString() } as never, { ...meta, message: meta.message ?? `request: assign ${id} to ${assignee}` });
+    return this.get(id);
+  }
+
+  /** The first agent that starts an assigned request takes it (exclusive). */
+  async markStarted(id: string, client: string, meta: CommitMeta = {}): Promise<Feedback> {
+    await this.repo.update(id, { startedBy: client, startedAt: (meta.date ?? new Date()).toISOString() } as never, { ...meta, message: meta.message ?? `request: ${client} started ${id}` });
+    return this.get(id);
+  }
+
+  /** The user approved the plan of a plan-only request: the agent continues with the implementation. */
+  async approvePlan(id: string, by: string, meta: CommitMeta = {}): Promise<Feedback> {
+    const current = await this.repo.get(id);
+    if (current.status === 'closed') throw new FeedbackClosedError(id, 'modified');
+    await this.repo.update(id, { planOnly: false, planApprovedBy: by, planApprovedAt: (meta.date ?? new Date()).toISOString() } as never, { ...meta, message: meta.message ?? `request: plan of ${id} approved by ${by}` });
+    return this.get(id);
+  }
+
   /** Append a decision the agent took without asking the user (what, why). */
   async addDecision(id: string, d: { text: string; reason: string; by: string }, meta: CommitMeta = {}): Promise<Feedback> {
     const current = await this.repo.get(id);

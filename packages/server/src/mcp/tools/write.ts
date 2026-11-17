@@ -44,6 +44,9 @@ import {
   type TouchedInput,
 } from '@mandate/shared';
 import { slugSchema } from '@mandate/doc';
+import { canonicalRef, extractRefs } from '@mandate/shared/refs';
+import { ANY, deliverAssigned } from '../../flow/assign.js';
+import { newsOfProject } from '../../comments/route.js';
 import { z } from 'zod';
 import { DocWriteService, type DocKind } from '../../storage/doc-writes.js';
 import { coveredCriteria } from '../../storage/work-order-plan.js';
@@ -533,6 +536,10 @@ const workOrderTools: AnyToolDef[] = [
       const commits: string[] = [];
       const id = idOf(a.ref);
       const cw = checkCodeRepos(ctx, (a.git ?? []).map((g) => g.repo), 'git');
+      // Plan-only requests: no claim (no code) until the user approved the plan in the web UI.
+      const wo = await ctx.storage.workOrderService.get(id);
+      const unapproved = (await ctx.storage.feedbackService.list()).find((f) => f.status !== 'closed' && f.planOnly && wo.reason.includes(f.id));
+      if (unapproved) throw new ToolError('plan_not_approved', `plan_not_approved: request ${unapproved.id} is plan-only: the user reviews the plan and approves it in the web UI before any code is written`, `flow_next { request: "${unapproved.id}" } says plan_ready; wait for the request_assigned event (plan approved)`, 'ref', { kind: 'work_order', id });
       await ctx.storage.workOrderService.claim({ id, agent: ctx.commit!.agent, ...(ctx.commit!.branch ? { branch: ctx.commit!.branch } : {}), ...(a.worktree ? { worktree: a.worktree } : {}), ...(a.git ? { git: a.git } : {}) }, metaOf(ctx, commits));
       const o = await overlapWarnings(ctx, id);
       return woResult(ctx, id, commits, { overlaps: o.overlaps }, [...cw, ...o.warnings]);
@@ -671,23 +678,34 @@ const requestTools: AnyToolDef[] = [
     name: 'request_create',
     title: 'Record a request',
     kind: 'write',
-    description: `Record a REQUEST: every instruction the user gives (a feature, change, fix, wish) is one; it needs no approval and starts open. targets: sections it concerns (#Lx-Ly ranges allowed) or verification results (improvement / bug at intake: targets may wait until spec_match; set them with request_update). kind ambiguity | conflict | bug | improvement | question; body (the user's words and the why), quote (the exact text), relatedTo, fromFinding (the audit finding it comes from: spec_wrong / ambiguous findings), source: "comment" (it comes from a comment: relatedTo the commented object and mandate://comments/<id>). Then: spec_match, edit the specs / standards with addresses: [this request], work_order_create with the full plan. Questions for the user go through question_ask.${COMMON}`,
+    uiAllowed: true,
+    description: `Record a REQUEST: every instruction the user gives (a feature, change, fix, wish) is one; it needs no approval and starts open. targets: sections it concerns (#Lx-Ly ranges allowed) or verification results (improvement / bug at intake: targets may wait until spec_match; set them with request_update). kind ambiguity | conflict | bug | improvement | question; body (the user's words and the why), quote (the exact text), relatedTo, fromFinding (the audit finding it comes from: spec_wrong / ambiguous findings), source: "comment" (it comes from a comment: relatedTo the commented object and mandate://comments/<id>); assignee (an agent handle from agents_presence, or "any" = the next free agent: it is told and the first to start it takes it; offline: queued), priority, planOnly (stop after the spec update and the work-order plan; the user reviews), context (mandate:// refs; those written in the body are added). From the web UI (source "ui") the signed-in user files it. Then: spec_match, edit the specs / standards with addresses: [this request], work_order_create with the full plan. Questions for the user go through question_ask.${COMMON}`,
     input: requestCreateInputSchema,
     run: async (a, ctx) => {
       const commits: string[] = [];
       // From an audit finding (spec_wrong / ambiguous): the finding must exist; it records the request in its resolution.
       const from = a.fromFinding ? await ctx.storage.auditService.requireFinding(a.fromFinding) : null;
       const relatedTo = await relatedOf(ctx, a.relatedTo ?? []);
+      const fromUi = ctx.principal?.kind === 'ui';
+      if (a.source === 'ui' && !fromUi) throw new ToolError('forbidden', 'forbidden: source "ui" is for requests filed in the web UI', 'omit source');
+      const news = newsOfProject(ctx);
+      let assignee: string | undefined;
+      if (a.assignee) {
+        const h = a.assignee.trim();
+        assignee = h.toLowerCase() === ANY ? ANY : (news?.presence.resolve(h)[0] ?? h);
+      }
+      const context = [...new Set([...(a.context ?? []).map((c) => canonicalRef(c) ?? c), ...extractRefs(a.body)])].slice(0, 30);
       // MW-11: the item and the finding backlink are written under one hold of the (re-entrant) write lock.
       const f = await ctx.storage.lock.run(async () => {
         const created = await ctx.storage.feedbackService.create(
-          { targets: a.targets.map(target), kind: a.kind, body: a.body, ...(a.quote ? { quote: a.quote } : {}), relatedTo, ...(a.source ? { source: a.source } : {}), ...(from ? { fromFinding: from.uri } : {}) },
+          { targets: a.targets.map(target), kind: a.kind, body: a.body, ...(a.quote ? { quote: a.quote } : {}), relatedTo, ...(fromUi ? { source: 'ui' as const } : a.source ? { source: a.source } : {}), ...(assignee ? { assignee, assignedAt: new Date().toISOString() } : {}), ...(context.length ? { context } : {}), ...(a.priority ? { priority: a.priority } : {}), ...(a.planOnly ? { planOnly: true } : {}), ...(from ? { fromFinding: from.uri } : {}) },
           metaOf(ctx, commits),
         );
         if (from) await ctx.storage.auditService.linkFeedback(from.uri, created.id, ctx.commit!.agent, metaOf(ctx, commits, { Audit: from.audit }));
         return created;
       });
-      return fbResult(ctx, f.id, commits);
+      const delivered = assignee && news ? await deliverAssigned(news, f, 'new') : [];
+      return { ...(await fbResult(ctx, f.id, commits)), ...(assignee ? { assignee, queued: assignee !== ANY && !news?.presence.isOnline(assignee), delivered } : {}) };
     },
   }),
   defineTool({

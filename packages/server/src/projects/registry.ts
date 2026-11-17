@@ -4,6 +4,7 @@
  */
 import type { ProjectSettings } from './settings.js';
 import { mandateHome, type AppConfig, type GitBackendConfig, type ProjectConfig, type RemoteConfig } from '../config.js';
+import { catchUpAssigned } from '../flow/assign.js';
 import { AskService, DbAskStore, MemoryAskStore } from '../agent-ask/service.js';
 import { ActivityBus } from '../events/index.js';
 import { DbNewsStore, MemoryNewsStore, NewsService } from '../news/index.js';
@@ -343,6 +344,8 @@ export function projectOpener(app: Pick<AppConfig, 'embedding'> & { publicUrl?: 
     integrity.start(o.integrityIntervalMs ?? (Number.isFinite(envMs) && process.env.MANDATE_INTEGRITY_INTERVAL_MS ? envMs : 10 * 60_000));
     const idempotency: IdempotencyStore | undefined = !p.idempotencyFile ? undefined : o.serverState ? new DbIdempotencyStore(o.serverState, p.id, p.idempotencyFile) : new FileIdempotencyStore(p.idempotencyFile);
     const news = new NewsService(p.id, o.serverState ? new DbNewsStore(o.serverState.db) : new MemoryNewsStore(), activity);
+    // Requests assigned to an agent (from the web UI): an agent that connects is caught up on what waits for it.
+    news.presence.onConnect((client) => void catchUpAssigned(news, client, () => storage.feedbackService.list()).catch((e) => console.error('request catch-up failed', e)));
     const ctx: ToolContext = {
       project: { id: p.id, name: p.name },
       storage,

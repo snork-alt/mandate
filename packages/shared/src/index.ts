@@ -935,7 +935,19 @@ const feedbackFields = {
   /** Related elements: feedback ids (e.g. a closed item this one follows up on) or element references (DF-7). */
   relatedTo: z.array(relatedRefSchema).default([]),
   /** Where the request came from: `comment` = a comment on an object that turned out to be a change (relatedTo: the object and the comment). */
-  source: z.enum(['comment']).optional(),
+  source: z.enum(['comment', 'ui']).optional(),
+  /** Request-from-the-UI fields (also usable by agents): who should handle it (client id or `any`), refs from @-references, priority, stop after the plan. */
+  assignee: z.string().min(1).max(200).optional(),
+  assignedAt: z.string().optional(),
+  context: z.array(z.string().min(1).max(400)).max(30).optional(),
+  priority: z.enum(['low', 'normal', 'high']).optional(),
+  planOnly: z.boolean().optional(),
+  /** The client that started it (exclusive: server-set by flow_next of the first agent that takes it). */
+  startedBy: z.string().min(1).max(200).optional(),
+  startedAt: z.string().optional(),
+  /** Plan-only requests: the user approved the plan (planOnly is cleared then). */
+  planApprovedBy: z.string().min(1).optional(),
+  planApprovedAt: z.string().optional(),
   /** Author (server-set from the commit's agent / author; legacy items: derived from history). */
   createdBy: z.string().min(1).optional(),
   /** The user who triggered the creation (server-set from the principal; never client input). */
@@ -1036,6 +1048,13 @@ export const updateFeedbackSchema = z.object({
   targets: z.array(feedbackTargetSchema.refine(isSectionTarget, SECTION_HINT)).min(1).optional(),
   specMatch: requestSpecMatchSchema.optional(),
   decisions: z.array(requestDecisionSchema).max(100).optional(),
+  assignee: z.string().min(1).max(200).nullable().optional(),
+  assignedAt: z.string().nullable().optional(),
+  planOnly: z.boolean().optional(),
+  startedBy: z.string().min(1).max(200).optional(),
+  startedAt: z.string().optional(),
+  planApprovedBy: z.string().min(1).optional(),
+  planApprovedAt: z.string().optional(),
 });
 export type UpdateFeedbackInput = z.input<typeof updateFeedbackSchema>;
 
