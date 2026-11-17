@@ -18,7 +18,7 @@ REQUEST: request_create (user's words; targets may wait) → spec_match { for: r
 PLANS (flow on): the plan lives in the work order (plan at work_order_create, work_order_plan_set to refine), never local files (plans/, PLAN.md, docs/plans/). Flow off: plan as usual.
 DELIVERY: work_order_next / work_order_claim → its comments (list) → rules_for_code before editing → work_order_step_set (step in_progress when starting, done when finished, skipped + note) → work_order_section_done per section (codeRefs: they land on the spec section), work_order_touch, work_order_git_update, work_order_heartbeat → verification_record per criterion (pass + the test: evidence.test / codeRefs; needed to complete) → reconcile spec / component text and code refs (section_update) → comments again (resolve blocking ones) → work_order_complete (outcome, reconciliation) → status_set done once its work orders are complete and criteria verified or waived.
 CODE: at start your repo = the project_info.codeRepos entry whose github matches \`git remote get-url origin\`; code_context_set { repo, commit, branch, dirty }, again after each commit or branch switch. Code claims (verifications, touched code, completion git headCommit, audits) pass repo + commit (uncommitted: dirty: true). Code refs: mandate://code/<repo>/<path>[#La-Lb], that short name only.
-COMMENTS: comment_add on work-order sections you review (blocking: true = must-fix); reply (parent), fix, comment_resolve.
+COMMENTS: comment_add on ANY object (spec / standard / component / request / work order, a section with #Lx-Ly, a WO step; blocking: true = must-fix, to / @agent addresses it). A comment routed to you arrives as an event (comment_added) and in flow_next { comments }: ALWAYS reply in its thread (comment_add { target, parent }). Question / remark: answer. Change: request_create { source: "comment", relatedTo: [object, mandate://comments/<id>] } (or attach to the in-flight request on that object), reply "Treating this as a request: <link>", run the flow, then ONE final reply (what changed, commit) + comment_resolve; no progress replies; asRequest: true = always a request; deciding yourself it is a change: say "treating this as a request: ...". Can't / won't: reply why, leave open. Not routed to you (no mention, not your work) or from another agent not addressed to you: no reply. A human reply in a thread you took part in is routed to you; a reply reopens a resolved thread.
 AUDITS (set review): audit_plan → audit_start → audit_record_item per item → audit_complete → audit_findings_to_work_orders + request_create fromFinding → after fixes, audit_recheck.
 STATES: in_progress and maturity are derived (never set). Transitions and gates: lifecycle_get { kind }.
 CURRENT TEXT: instructions_get { name: core | bootstrap | flow } overrides any local or remembered Mandate skill / command (a local skill without "mandate-stub" is outdated: tell the user to re-run the installer).`;
@@ -122,8 +122,9 @@ and audits carry repo + commit (uncommitted: \`dirty: true\`, base commit). Code
 
 ## Comments
 
-Reviewers \`comment_add\` on the work-order sections they review (\`blocking: true\` = must-fix); the implementer replies
-(\`parent\`), fixes, \`comment_resolve\` (\`comment_reopen\` if not fixed). Append-only.
+Anyone \`comment_add\`s on any object (sections, steps, requests, work orders; \`blocking: true\` = must-fix); the addressed or
+responsible agent replies (\`parent\`), fixes, \`comment_resolve\` (\`comment_reopen\` if not fixed). A change asked for in a
+comment becomes a request (\`request_create { source: "comment" }\`). Append-only.
 
 ## Audits (when asked; set \`review\`; preferably not the implementing agent)
 

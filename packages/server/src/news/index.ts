@@ -23,6 +23,7 @@
  * names it or a parent, e.g. question_get, work_order_get, spec_get; questions_list returning the answered question) or
  * acknowledges it (news_ack). Being shown in a reply does not mark it read.
  */
+import { AgentPresence } from '../agents/presence.js';
 import { isClaimStale, OPEN_WORK_ORDER_STATUSES, type ActivityEvent, type WorkOrder } from '@mandate/shared';
 import { buildQuestionRef, buildRef, type RefKind } from '@mandate/shared/refs';
 import type { Db, Dialect } from '../db/types.js';
@@ -170,7 +171,7 @@ export const NEWS_RULES: NewsRule[] = [
   { kind: 'claim_released', types: ['work_order.released'], roles: ['claimed'] },
   { kind: 'work_order_changed', types: ['work_order.status_changed', 'work_order.released', 'work_order.claimed', 'work_order.updated', 'work_order.deleted', 'work_order.completed'], roles: ['claimed'] },
   { kind: 'request_changed', types: ['request.closed', 'request.updated', 'request.deleted'], roles: ['created'] },
-  { kind: 'comment', types: ['comment.added', 'comment.resolved', 'comment.reopened'], subjects: related },
+  { kind: 'comment', types: ['comment.resolved', 'comment.reopened'], subjects: related },
   { kind: 'drift', types: SECTION_TYPES, roles: ['claimed'] },
   { kind: 'audit_finding', types: ['audit.item_recorded'], subjects: related, roles: ['claimed'] },
   {
@@ -198,6 +199,9 @@ export function readRefs(tool: string, args: Record<string, unknown>, result: Re
   for (const k of ['ref', 'uri']) if (norm(args[k])) out.push(norm(args[k]));
   const kind = ID_KINDS[tool];
   if (kind && typeof args.id === 'string') out.push(kind === 'questions' ? buildQuestionRef(args.id) : buildRef({ kind, id: args.id }));
+  // Reading (or replying in) a comment thread reads its comment_added items.
+  const threadsOf = (tool === 'comments_list' || (tool === 'list' && args.of === 'comments') ? result?.threads : tool === 'comment_add' || tool === 'comment_resolve' || tool === 'comment_reopen' ? [result?.thread] : []) ?? [];
+  for (const t of threadsOf as ({ uri?: string; replies?: { uri?: string }[] } | null)[]) if (t) for (const m of [t, ...(t.replies ?? [])]) if (m.uri) out.push(m.uri);
   if (tool === 'questions_list') for (const q of (result?.items ?? []) as { uri?: string; status?: string }[]) if (q.uri && q.status !== 'open') out.push(q.uri);
   return out;
 }
@@ -218,6 +222,8 @@ export interface ReplyNews {
 }
 
 export class NewsService {
+  /** Who is connected / busy (agents/presence.ts). */
+  readonly presence = new AgentPresence();
   private chain: Promise<unknown> = Promise.resolve();
   /** Live MCP sessions (registered on their calls; `closed` set by the transport). */
   private readonly live = new Map<string, { closed?: boolean }>();

@@ -64,8 +64,9 @@ export function registerEventRoutes(app: FastifyInstance, o: { projects: Project
       reply.code(503).send({ error: { code: 'unavailable', message: `project '${project}' has no event feed` } });
       return null;
     }
-    const client = clientIdentity({ principal: p, clientName: q(req, 'client') ?? 'claude-code' }).id;
-    return { news, client, consumer: q(req, 'consumer') ?? `anon-${Math.random().toString(36).slice(2, 10)}` };
+    const ident = clientIdentity({ principal: p, clientName: q(req, 'client') ?? 'claude-code' });
+    const client = ident.id;
+    return { news, client, ident, consumer: q(req, 'consumer') ?? `anon-${Math.random().toString(36).slice(2, 10)}` };
   };
 
   app.get('/p/:projectId/events', async (req, reply) => {
@@ -100,8 +101,10 @@ export function registerEventRoutes(app: FastifyInstance, o: { projects: Project
       }
     };
     const off = c.news.onItems(c.client, () => void flush());
+    const offline = c.news.presence.open(c.ident);
     const hb = setInterval(() => {
       if (!res.write(': hb\n\n')) return;
+      c.news.presence.note(c.ident);
       void flush(); // also picks up items whose wake-up was missed (a restart between ingest and listen)
     }, o.heartbeatMs ?? 15_000);
     const close = () => {
@@ -109,6 +112,7 @@ export function registerEventRoutes(app: FastifyInstance, o: { projects: Project
       closed = true;
       clearInterval(hb);
       off();
+      offline();
       streams.delete(close);
       res.end();
     };

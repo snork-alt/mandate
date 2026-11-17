@@ -671,7 +671,7 @@ const requestTools: AnyToolDef[] = [
     name: 'request_create',
     title: 'Record a request',
     kind: 'write',
-    description: `Record a REQUEST: every instruction the user gives (a feature, change, fix, wish) is one; it needs no approval and starts open. targets: sections it concerns (#Lx-Ly ranges allowed) or verification results (improvement / bug at intake: targets may wait until spec_match; set them with request_update). kind ambiguity | conflict | bug | improvement | question; body (the user's words and the why), quote (the exact text), relatedTo, fromFinding (the audit finding it comes from: spec_wrong / ambiguous findings). Then: spec_match, edit the specs / standards with addresses: [this request], work_order_create with the full plan. Questions for the user go through question_ask.${COMMON}`,
+    description: `Record a REQUEST: every instruction the user gives (a feature, change, fix, wish) is one; it needs no approval and starts open. targets: sections it concerns (#Lx-Ly ranges allowed) or verification results (improvement / bug at intake: targets may wait until spec_match; set them with request_update). kind ambiguity | conflict | bug | improvement | question; body (the user's words and the why), quote (the exact text), relatedTo, fromFinding (the audit finding it comes from: spec_wrong / ambiguous findings), source: "comment" (it comes from a comment: relatedTo the commented object and mandate://comments/<id>). Then: spec_match, edit the specs / standards with addresses: [this request], work_order_create with the full plan. Questions for the user go through question_ask.${COMMON}`,
     input: requestCreateInputSchema,
     run: async (a, ctx) => {
       const commits: string[] = [];
@@ -681,7 +681,7 @@ const requestTools: AnyToolDef[] = [
       // MW-11: the item and the finding backlink are written under one hold of the (re-entrant) write lock.
       const f = await ctx.storage.lock.run(async () => {
         const created = await ctx.storage.feedbackService.create(
-          { targets: a.targets.map(target), kind: a.kind, body: a.body, ...(a.quote ? { quote: a.quote } : {}), relatedTo, ...(from ? { fromFinding: from.uri } : {}) },
+          { targets: a.targets.map(target), kind: a.kind, body: a.body, ...(a.quote ? { quote: a.quote } : {}), relatedTo, ...(a.source ? { source: a.source } : {}), ...(from ? { fromFinding: from.uri } : {}) },
           metaOf(ctx, commits),
         );
         if (from) await ctx.storage.auditService.linkFeedback(from.uri, created.id, ctx.commit!.agent, metaOf(ctx, commits, { Audit: from.audit }));

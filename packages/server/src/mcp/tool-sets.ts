@@ -318,7 +318,7 @@ export const TOOL_SETS: Record<ToolSetName, readonly string[]> = {
     'standard_where_used', 'standard_usage', 'code_rules', 'code_owner', 'architecture_get', 'project_overview',
   ],
   /** Operations: activity, Ask, index and git sync. */
-  admin: ['flow_edit_allowed', 'activity_list', 'activity_subscribe', 'ask', 'ask_status', 'index_status', 'git_status', 'git_push', 'git_pull', 'work_order_touch_from_commits', 'project_overview'],
+  admin: ['flow_edit_allowed', 'agents_presence', 'activity_list', 'activity_subscribe', 'ask', 'ask_status', 'index_status', 'git_status', 'git_push', 'git_pull', 'work_order_touch_from_commits', 'project_overview'],
 };
 
 /** `?tools=` / tools_enable value: set names (comma separated) or `all`. Unknown names are returned separately. */

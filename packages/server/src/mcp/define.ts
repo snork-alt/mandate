@@ -22,6 +22,7 @@ import type { Principal } from '../auth/http.js';
 import { clientIdentity, effective, FLOW_OFF_ALLOWED, flowInstructions, flowOffMessage, type ProjectSettings } from '../projects/settings.js';
 import { newsFallback, readRefs, WATCH_TOOLS, type NewsService } from '../news/index.js';
 import { ToolError, toToolError, toWriteError, withHint, type ToolErrorBody } from './errors.js';
+import { newsOfProject } from '../comments/route.js';
 import { gateSummary, parseRef, CAUSE_TRAILER, CODE_CONTEXT_TRAILER, codeContextLabel, type CodeContext, LEGACY_USER_TRAILER, SERVICE_USER_PREFIX, USER_TRAILER, causeInputSchema } from '@mandate/shared';
 import { CauseError, resolveCauses } from '../storage/causes.js';
 import { collectIntegrity } from '../storage/integrity.js';
@@ -414,6 +415,7 @@ const FLOW_SET_TOOLS = new Set(['flow_set', 'project_flow_set']);
  * news read when it reads the referenced item, detect flow changes, and add the unread items as `news` to the reply.
  */
 async function withNews(def: AnyToolDef, rawArgs: unknown, ctx: ToolContext, res: CallToolResult): Promise<CallToolResult> {
+  notePresence(ctx, rawArgs);
   const news = newsOf(ctx);
   if (!news) return res;
   try {
@@ -431,7 +433,7 @@ async function withNews(def: AnyToolDef, rawArgs: unknown, ctx: ToolContext, res
         else for (const ref of refs) await watch(ref, w.role);
         if (w.then) for (const ref of w.then.refs(body).filter((r): r is string => typeof r === 'string' && r.length > 0)) await watch(ref, w.then.role);
       }
-      if (def.kind === 'read') await news.markReadRefs(me.id, readRefs(def.name, args, body));
+      if (def.kind === 'read' || def.name === 'comment_add') await news.markReadRefs(me.id, readRefs(def.name, args, body));
     }
     if (NO_NOTICE.has(def.name)) return res;
     const notice = await news.notice(me.id, session);
@@ -443,6 +445,20 @@ async function withNews(def: AnyToolDef, rawArgs: unknown, ctx: ToolContext, res
     return { ...res, content: [{ type: 'text', text: text.length <= MAX_TEXT ? text : `${prevText}\n${JSON.stringify({ news: notice })}` }, ...(res.content ?? []).slice(1)], structuredContent: structured };
   } catch {
     return res;
+  }
+}
+
+/** Agent presence: this client called a tool (it is online, under this agent name, on this code repo). Never fails the call. */
+function notePresence(ctx: ToolContext, rawArgs: unknown): void {
+  try {
+    const kind = ctx.principal?.kind;
+    if (kind !== 'user' && kind !== 'key') return;
+    const news = newsOfProject(ctx);
+    if (!news) return;
+    const a = (rawArgs as { agent?: unknown } | null)?.agent;
+    news.presence.note(clientIdentity(ctx), (typeof a === 'string' && a) || ctx.clientName, ctx.session?.codeContext?.repo);
+  } catch {
+    // presence is best effort
   }
 }
 

@@ -376,6 +376,8 @@ export interface CommentView {
   author: { agent: string; user?: string };
   body: string;
   mentions?: string[];
+  to?: string;
+  asRequest?: boolean;
   blocking?: boolean;
   createdAt: string;
 }

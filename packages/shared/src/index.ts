@@ -934,6 +934,8 @@ const feedbackFields = {
   duplicateOf: idSchema.optional(),
   /** Related elements: feedback ids (e.g. a closed item this one follows up on) or element references (DF-7). */
   relatedTo: z.array(relatedRefSchema).default([]),
+  /** Where the request came from: `comment` = a comment on an object that turned out to be a change (relatedTo: the object and the comment). */
+  source: z.enum(['comment']).optional(),
   /** Author (server-set from the commit's agent / author; legacy items: derived from history). */
   createdBy: z.string().min(1).optional(),
   /** The user who triggered the creation (server-set from the principal; never client input). */

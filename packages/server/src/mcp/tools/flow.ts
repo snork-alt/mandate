@@ -3,11 +3,12 @@
  * (a decision the agent took without asking the user) and `flow_edit_allowed` (strict mode: may this agent edit code now).
  * The state machine is flow/next.ts (pure); this file reads the stored state and shapes the result.
  */
-import { isClaimStale, type StoredSpec } from '@mandate/shared';
+import { isClaimStale, replayComments, type CommentThread, type StoredSpec } from '@mandate/shared';
 import { z } from 'zod';
 import { flowAll, flowFor, type FlowItem, type FlowSnapshot } from '../../flow/next.js';
 import { clientIdentity } from '../../projects/settings.js';
 import type { CommitMeta } from '../../storage/index.js';
+import { newsOfProject, routeState, shortTarget, unansweredFor } from '../../comments/route.js';
 import { defineTool, type ToolContext } from '../define.js';
 import { ToolError } from '../errors.js';
 
@@ -15,24 +16,47 @@ const reqId = (v: string) => v.trim().replace(/^@mandate:/, '').replace(/^mandat
 
 async function snapshot(ctx: ToolContext, agent?: string): Promise<FlowSnapshot> {
   const st = ctx.storage;
-  const [requests, workOrders, questions, specList, verifications] = await Promise.all([
+  const [requests, workOrders, questions, specList, verifications, comments] = await Promise.all([
     st.feedbackService.list(),
     st.workOrderService.list(),
     st.questionService.list(),
     st.specs.list() as Promise<StoredSpec[]>,
     st.verifications.list(),
+    st.commentService.lines().then((l) => replayComments(l)),
   ]);
-  return { requests, workOrders, questions, specs: new Map(specList.map((s) => [s.id, s])), verifications, ...(agent ? { agent } : {}) };
+  return { requests, comments, workOrders, questions, specs: new Map(specList.map((s) => [s.id, s])), verifications, ...(agent ? { agent } : {}) };
 }
 
 const compact = (i: FlowItem) => ({ request: i.request.ref, summary: i.request.summary, state: i.state, next: i.next, ...(i.waitingOn ? { waitingOn: i.waitingOn } : {}), ...(i.waitingOnWorkOrders ? { waitingOnWorkOrders: i.waitingOnWorkOrders } : {}) });
+
+const COMMENT_NOTE = `Reply to every comment routed to you, in its thread (comment_add { target, parent }): a question / remark: answer. A change: request_create { source: "comment", relatedTo: [object, comment] } (or attach to the in-flight request on that object), reply "Treating this as a request: <link>", then do the flow; when its work order completes ONE final reply (what changed, commit) and comment_resolve; no progress replies. asRequest: always a request. Can't / won't: reply why, leave open. Comments of other agents: only if addressed to you.`;
+
+/** Unanswered comments routed to the caller, and its converted threads whose request is done. */
+async function commentInbox(ctx: ToolContext, snap: FlowSnapshot) {
+  const news = newsOfProject(ctx);
+  if (!news || !snap.comments || ctx.principal?.kind === 'ui') return null;
+  const me = clientIdentity(ctx).id;
+  const st = await routeState(ctx, news.presence);
+  const view = (t: CommentThread, extra: Record<string, unknown> = {}) => {
+    const msgs = [t, ...t.replies];
+    const last = msgs[msgs.length - 1]!;
+    return { thread: t.id, target: shortTarget(t.target), ...(t.blocking ? { blocking: true } : {}), ...(t.asRequest || msgs.some((m) => m.asRequest) ? { asRequest: true } : {}), messages: msgs.slice(-4).map((m) => ({ id: m.id, by: m.author.user ?? m.author.agent, body: m.body.slice(0, 600) })), last: last.id, ...extra };
+  };
+  const unanswered = unansweredFor(me, snap.comments, st).slice(0, 10).map((t) => view(t));
+  const done = new Set(snap.requests.filter((r) => r.status === 'closed').map((r) => r.id));
+  const converted = snap.comments
+    .filter((t) => t.status === 'open')
+    .flatMap((t) => snap.requests.filter((r) => r.source === 'comment' && done.has(r.id) && (r.relatedTo ?? []).some((x) => [t, ...t.replies].some((m) => x === m.uri))).map((r) => view(t, { request: `mandate://requests/${r.id}`, todo: 'its request is done: reply once with what changed and the commit, then comment_resolve' })))
+    .slice(0, 10);
+  return unanswered.length || converted.length ? { unanswered, converted } : null;
+}
 
 export const flowTools = [
   defineTool({
     name: 'flow_next',
     title: 'Next step of the flow',
     kind: 'read',
-    description: `What to do next, from the stored state (never guess the order): { request, state, next: { tool, args, why } | null, waitingOn?: [question ids], waitingOnWorkOrders?, parallel?: [other actionable requests], done }. With request: that request's next step; do it, then call flow_next again until done or waiting (then continue with parallel items, or report what the user must answer). Without request: every in-flight (not closed) request of this project with its next step (mine: only the ones you created).
+    description: `What to do next, from the stored state (never guess the order): { request, state, next: { tool, args, why } | null, waitingOn?: [question ids], waitingOnWorkOrders?, parallel?: [other actionable requests], done }. Also comments: unanswered comment threads routed to you (reply to each; see commentsNote). With request: that request's next step; do it, then call flow_next again until done or waiting (then continue with parallel items, or report what the user must answer). Without request: every in-flight (not closed) request of this project with its next step (mine: only the ones you created).
 Example: {"request":"fb-0007"}`,
     input: z.object({ request: z.string().trim().min(1).optional(), mine: z.boolean().default(false), agent: z.string().trim().min(1).max(120).optional() }).strict(),
     run: async (a, ctx) => {
@@ -44,17 +68,21 @@ Example: {"request":"fb-0007"}`,
         if (!f) throw new ToolError('not_found', `request '${id}' not found`, 'flow_next {} lists the requests in flight', 'request', { kind: 'document' });
         const item = flowFor(f, snap);
         const parallel = flowAll(snap).filter((x) => x.request.id !== id && x.next).slice(0, 5).map(compact);
-        return { ...item, ...(parallel.length ? { parallel } : {}) };
+        const inbox = await commentInbox(ctx, snap);
+        return { ...item, ...(parallel.length ? { parallel } : {}), ...(inbox ? { comments: inbox, commentsNote: COMMENT_NOTE } : {}) };
       }
       const all = flowAll(snap).filter((i) => !a.mine || (!!me && (i.request.createdBy === me || i.request.createdBy === a.agent)));
       const waitingOn = [...new Set(all.flatMap((i) => i.waitingOn ?? []))];
       const next = all.find((i) => i.next);
+      const inbox = await commentInbox(ctx, snap);
+      const pending = inbox ? inbox.unanswered.length + inbox.converted.length : 0;
       return {
         requests: all.map(compact),
+        ...(inbox ? { comments: inbox, commentsNote: COMMENT_NOTE } : {}),
         ...(next ? { actionable: next.request.ref } : {}),
         ...(waitingOn.length ? { waitingOn } : {}),
-        done: all.length === 0,
-        note: all.length ? (next ? `Work on ${next.request.ref} first: flow_next { request } and do its next step.` : 'Nothing is actionable: the requests wait for the user (waitingOn) or for work orders of other requests.') : 'No request is in flight.',
+        done: all.length === 0 && !pending,
+        note: pending ? `${pending} comment(s) wait for you (comments): reply in their threads first.` : all.length ? (next ? `Work on ${next.request.ref} first: flow_next { request } and do its next step.` : 'Nothing is actionable: the requests wait for the user (waitingOn) or for work orders of other requests.') : 'No request is in flight.',
       };
     },
   }),

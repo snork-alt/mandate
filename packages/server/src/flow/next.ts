@@ -9,6 +9,8 @@
 import {
   blockingQuestions,
   isClaimStale,
+  targetsDoc,
+  type CommentThread,
   type Feedback,
   type PlanStep,
   type Question,
@@ -29,6 +31,7 @@ export type FlowState =
   | 'verify'
   | 'complete'
   | 'close'
+  | 'comments'
   | 'waiting'
   | 'done';
 
@@ -56,6 +59,8 @@ export interface FlowSnapshot {
   /** Specs by id (sections with type / verifiedBy / archived are read). */
   specs: Map<string, Pick<StoredSpec, 'id' | 'status' | 'sections'>>;
   verifications: VerificationRecord[];
+  /** Comment threads (any state): a blocking open one on a request stops its flow until resolved. */
+  comments?: CommentThread[];
   /** The calling agent (claims by other agents are not yours); unknown: every claim is assumed to be yours. */
   agent?: string;
   now?: number;
@@ -100,6 +105,11 @@ export function flowFor(f: Feedback, snap: FlowSnapshot): FlowItem {
     ...extra,
   });
   if (f.status === 'closed') return item('done', null);
+
+  const blockingComments = (snap.comments ?? []).filter((t) => t.status === 'open' && t.blocking && targetsDoc(t.target, reqRef(f.id)));
+  if (blockingComments.length) {
+    return item('comments', { tool: 'comments_list', args: { target: reqRef(f.id) }, why: `${blockingComments.length} blocking comment thread(s) on this request (${blockingComments.map((t) => t.id).join(', ')}): address each (reply in the thread; a change = a request; do the work), then comment_resolve. The request does not move on until they are resolved.` });
+  }
 
   const open = (ref: string) => blockingQuestions(snap.questions, ref).map((q) => q.id);
   const blockedRequest = open(reqRef(f.id));

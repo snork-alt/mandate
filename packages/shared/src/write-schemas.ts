@@ -284,6 +284,8 @@ export const requestCreateInputSchema = z
     body: text(20_000).min(1),
     quote: text(5000).optional(),
     relatedTo: z.array(relatedRef).max(20).optional(),
+    /** `comment`: the request comes from a comment (relatedTo: the commented object and the comment, mandate://comments/<id>). */
+    source: z.enum(['comment']).optional(),
     /** The audit finding this request comes from (spec_wrong / ambiguous): mandate://audits/<id>/findings/<fid>. */
     fromFinding: z
       .string()

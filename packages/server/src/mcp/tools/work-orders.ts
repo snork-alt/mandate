@@ -21,6 +21,8 @@ import {
 import type { CommitMeta } from '../../storage/index.js';
 import { defineTool, type AnyToolDef, type ToolContext } from '../define.js';
 import { ToolError } from '../errors.js';
+import { clientIdentity } from '../../projects/settings.js';
+import { deliverComment, newsOfProject } from '../../comments/route.js';
 import { checkCodeRepos, stampLocations } from '../code-claims.js';
 
 const idOf = (refOrId: string) => parseRef(refOrId)?.id ?? refOrId;
@@ -138,21 +140,38 @@ Example: {"ref":"mandate://work-orders/wo-01jc.../sections/plan"} or {"doc":"wo-
     name: 'comment_add',
     title: 'Add a comment',
     kind: 'write',
-    description: `Comment on a work order or one of its sections (target: mandate://work-orders/<id>[/sections/<sid>]), or reply to a thread (parent: comment id or mandate://comments/<id>). blocking: true marks a must-fix issue (blocks work_order_complete until resolved). Append-only; on a closed work order only replies. @name mentions are recorded.${COMMON}
-Example: {"target":"mandate://work-orders/wo-01jc.../sections/auth-flow","body":"The callback does not check state.","blocking":true}`,
+    uiAllowed: true,
+    description: `Comment on ANY object: a spec / standard / component / request / work order, one of its sections (#Lx-Ly line range ok) or a work-order step; or reply (parent: comment id). target: mandate://specs/<id>/sections/<sid>, mandate://work-orders/<id>/steps/s1, mandate://requests/<id>. blocking: must be resolved before work_order_complete (on a request: flow_next stops on it). to / @mentions address an agent or user, else the responsible agent (claim holder, else the request's agent) is woken; to: any = queue for the next agent. asRequest: handle it as a change request. A reply on a resolved thread reopens it. Result: routing { via, wakes }. Append-only; on a closed work order only replies.${COMMON}
+Example: {"target":"mandate://specs/login/sections/auth-flow#L3-L8","body":"@claude-code should this also cover SSO?"}`,
     input: commentAddInputSchema,
     run: async (a, ctx) => {
       const commits: string[] = [];
-      const c = await ctx.storage.commentService.add(a, author(ctx), metaOf(ctx, commits));
-      const threads = await ctx.storage.commentService.threads(c.target);
+      const svc = ctx.storage.commentService;
+      const parentThread = a.parent ? (await svc.threadOf(a.parent)) : null;
+      const c = await svc.add(a, author(ctx), metaOf(ctx, commits));
+      if (parentThread?.status === 'resolved') await svc.setState(parentThread.id, 'reopen', ctx.commit!.agent, undefined, metaOf(ctx, commits)).catch(() => undefined);
+      const threads = await svc.threads(c.target);
       const thread = threads.find((t) => t.id === c.id || t.replies.some((r) => r.id === c.id)) ?? null;
-      return { ref: buildCommentRef(c.id), uri: buildCommentRef(c.id), ...commitsOf(commits), warnings: [], comment: c, thread };
+      const routing = thread ? await deliverComment(ctx, c, thread) : { via: 'none' as const, clients: [] };
+      // Replying in a thread reads the events it raised for this client.
+      const news = ctx.principal && ctx.principal.kind !== 'ui' ? newsOfProject(ctx) : null;
+      if (news && thread) await news.markReadRefs(clientIdentity(ctx).id, [thread, ...thread.replies].map((m) => m.uri)).catch(() => 0);
+      return {
+        ref: buildCommentRef(c.id),
+        uri: buildCommentRef(c.id),
+        ...commitsOf(commits),
+        warnings: routing.via === 'none' ? ['not routed: no addressee, no responsible agent (it stays visible on the object; address it with to / @mention)'] : [],
+        comment: c,
+        thread,
+        routing: { via: routing.via, wakes: routing.clients },
+      };
     },
   }),
   defineTool({
     name: 'comment_resolve',
     title: 'Resolve a comment thread',
     kind: 'write',
+    uiAllowed: true,
     description: `Resolve a comment thread (id of its root or of any reply), with an optional note. Appends a resolve record (no-op when already resolved).${COMMON}
 Example: {"id":"c-01jc...","note":"Fixed in 3f2a9c1."}`,
     input: commentResolveInputSchema,
@@ -166,6 +185,7 @@ Example: {"id":"c-01jc...","note":"Fixed in 3f2a9c1."}`,
     name: 'comment_reopen',
     title: 'Reopen a comment thread',
     kind: 'write',
+    uiAllowed: true,
     description: `Reopen a resolved comment thread (not on closed work orders). Appends a reopen record (no-op when already open).${COMMON}
 Example: {"id":"c-01jc..."}`,
     input: commentReopenInputSchema,
@@ -179,7 +199,7 @@ Example: {"id":"c-01jc..."}`,
     name: 'comments_list',
     title: 'List comment threads',
     kind: 'read',
-    description: `Comment threads on a work order (all its sections included) or on one section: root comment, replies, status open | resolved (resolvedBy / resolvedAt / note), blocking, mentions; open ones only unless includeResolved. Check them when you pick up or resume a work order and before work_order_complete.
+    description: `Comment threads on any object (a work order / spec / standard / component / request with its sections and steps) or on one section / step: root comment, replies, status open | resolved (resolvedBy / resolvedAt / note), blocking, mentions; open ones only unless includeResolved. Check them when you pick up or resume a work order and before work_order_complete.
 Example: {"target":"mandate://work-orders/wo-01jc..."}`,
     input: commentsListInputSchema,
     run: async (a, ctx) => {

@@ -21,8 +21,8 @@ describe('working agreement budgets', () => {
   });
 
   it('server instructions (CORE_RULES mirror)', () => {
-    expect(tok(CORE_RULES)).toBeLessThanOrEqual(1300); // +111: driven flow, ask only when necessary; +16: plan steps; +30: requests, full plan, test proof; +55: tldr guidance; +46: CURRENT TEXT (instructions_get beats local copies); +15: TOOLS (tool sets)
-    expect(tok(INSTRUCTIONS)).toBeLessThanOrEqual(1560);
+    expect(tok(CORE_RULES)).toBeLessThanOrEqual(1500); // +197: comments on any object routed to agents; +111: driven flow, ask only when necessary; +16: plan steps; +30: requests, full plan, test proof; +55: tldr guidance; +46: CURRENT TEXT (instructions_get beats local copies); +15: TOOLS (tool sets)
+    expect(tok(INSTRUCTIONS)).toBeLessThanOrEqual(1760);
     expect(INSTRUCTIONS).toContain('lifecycle_get');
   });
 

@@ -229,7 +229,9 @@ export function createStorage(git: GitStore, opts: StorageOptions = {}): Storage
   const commentService = new CommentService(git, lock, beforeCommit, hook(null));
   commentService.wire({
     workOrders: wos,
-    docExists: async (kind, id, section) => {
+    docExists: async (kind, id, section, step) => {
+      if (kind === 'requests') return !!(await feedback.get(id).catch(() => null));
+      if (step) return !!(await wos.get(id).catch(() => null))?.planSteps?.some((x: { id: string }) => x.id === step);
       const repo = kind === 'specs' ? specs : kind === 'standards' ? standards : kind === 'components' ? components : kind === 'audits' ? audits : kind === 'work-orders' ? workOrderDocs : null;
       const doc = repo ? await (repo as unknown as MarkdownDirRepository<{ id: string; sections: { id: string }[] }>).get(id).catch(() => null) : null;
       return !!doc && (!section || doc.sections.some((s) => s.id === section));

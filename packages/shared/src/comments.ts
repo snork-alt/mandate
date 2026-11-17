@@ -12,14 +12,41 @@ import type { CommentCounts, CommentThread, CommentView } from './work-orders.js
 
 export const COMMENT_STATE_TYPES = ['resolve', 'reopen'] as const;
 
-/** A target: a work order / doc or one of its sections (canonical, no version / lines). */
+/**
+ * A comment target: any Mandate object, as `mandate://<kind>/<id>[/sections/<sid> | /steps/sN][#Lx-Ly]` with kind
+ * specs | standards | components | work-orders | requests (`#Lx-Ly`: a line range inside a section).
+ */
+const TARGET_RE = /^mandate:\/\/(specs|standards|components|work-orders|requests|feedback)\/([a-z0-9]+(?:-[a-z0-9]+)*)(?:\/(?:sections\/([a-z0-9]+(?:-[a-z0-9]+)*)|steps\/(s\d+)))?(?:#L(\d+)(?:-L(\d+))?)?$/;
+export interface CommentTarget {
+  kind: 'specs' | 'standards' | 'components' | 'work-orders' | 'requests';
+  id: string;
+  sectionId?: string;
+  step?: string;
+  lines?: { start: number; end: number };
+  /** Canonical text (requests, lines kept). */
+  canonical: string;
+  /** The same without lines. */
+  base: string;
+  /** The document / request / work order itself. */
+  doc: string;
+}
+export function parseCommentTarget(input: string): CommentTarget | null {
+  const m = TARGET_RE.exec(input.trim().replace(/^@mandate:/, ''));
+  if (!m) return null;
+  const kind = (m[1] === 'feedback' ? 'requests' : m[1]) as CommentTarget['kind'];
+  const [, , id, sectionId, step, a, b] = m;
+  if (a && !sectionId) return null;
+  const lines = a ? { start: Number(a), end: b ? Number(b) : Number(a) } : undefined;
+  if (lines && (lines.start < 1 || lines.end < lines.start)) return null;
+  const doc = `mandate://${kind}/${id}`;
+  const base = sectionId ? `${doc}/sections/${sectionId}` : step ? `${doc}/steps/${step}` : doc;
+  const canonical = lines ? `${base}#L${lines.start}${lines.end > lines.start ? `-L${lines.end}` : ''}` : base;
+  return { kind, id: id!, ...(sectionId ? { sectionId } : {}), ...(step ? { step } : {}), ...(lines ? { lines } : {}), canonical, base, doc };
+}
 const targetSchema = z
   .string()
   .min(1)
-  .refine((v) => {
-    const r = parseRef(v);
-    return !!r && !r.commit && !r.lines && r.kind !== 'feedback';
-  }, 'a work order (or other document) reference, optionally a section: mandate://work-orders/<id>[/sections/<sid>]');
+  .refine((v) => !!parseCommentTarget(v) || (!!parseRef(v) && parseRef(v)!.kind !== 'feedback' && !parseRef(v)!.commit), 'a Mandate object: mandate://<specs|standards|components|work-orders|requests>/<id>[/sections/<sid> | /steps/sN][#Lx-Ly]');
 
 export const commentRecordSchema = z.object({
   id: idSchema,
@@ -29,6 +56,10 @@ export const commentRecordSchema = z.object({
   author: z.object({ agent: z.string().min(1), user: z.string().min(1).optional() }),
   body: z.string().min(1),
   mentions: z.array(z.string().min(1)).optional(),
+  /** Explicit addressee (`@handle` or a login / agent label; `any`: the next free agent). Set by the web UI picker or by `to`. */
+  to: z.string().min(1).optional(),
+  /** The author wants this handled as a change request (the "Make it a request" checkbox): the agent always runs the flow. */
+  asRequest: z.boolean().optional(),
   /** Must be resolved before the work order can be completed (thread roots only). */
   blocking: z.boolean().optional(),
   createdAt: z.string().min(1),
@@ -84,7 +115,12 @@ export function replayComments(lines: CommentLine[]): CommentThread[] {
 }
 
 /** Does `target` belong to `doc` (the doc itself or one of its sections)? */
-export const targetsDoc = (target: string, doc: string) => target === doc || target.startsWith(`${doc}/sections/`);
+const noLines = (t: string) => t.replace(/#L\d+(?:-L\d+)?$/, '');
+export const targetsDoc = (target: string, doc: string) => {
+  const t = noLines(target);
+  return t === doc || t.startsWith(`${doc}/sections/`) || t.startsWith(`${doc}/steps/`);
+};
+export const targetBase = noLines;
 
 export function commentCounts(threads: CommentThread[]): CommentCounts {
   return {
@@ -106,13 +142,17 @@ const commentRef = z
 
 export const commentAddInputSchema = z
   .object({
-    /** A work order or one of its sections (`mandate://work-orders/<id>[/sections/<sid>]`). */
+    /** Any object: a spec / standard / component / work order / request, or one of its sections or steps (`mandate://specs/<id>/sections/<sid>[#Lx-Ly]`, `mandate://work-orders/<id>/steps/s1`). */
     target: z.string().trim().min(1).max(400),
     body: z.string().trim().min(1).max(20_000),
     /** Reply to a comment (id or mandate://comments/<id>); the reply joins that thread. */
     parent: commentRef.optional(),
     /** Must be resolved before work_order_complete (root comments only). */
     blocking: z.boolean().optional(),
+    /** Addressee: `@login`, an agent handle (see agents_presence) or `any` (queue: the next agent's flow_next picks it up). Default: the responsible agent. */
+    to: z.string().trim().min(1).max(120).optional(),
+    /** Treat as a change request: the agent must run the /mandate flow for it (request_create source comment). */
+    asRequest: z.boolean().optional(),
   })
   .strict();
 export const commentResolveInputSchema = z.object({ id: commentRef, note: z.string().trim().min(1).max(5000).optional() }).strict();
