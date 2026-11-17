@@ -11,7 +11,7 @@ import { z } from 'zod';
 import { authenticate, originOk, type AuthOptions } from '../auth/http.js';
 import type { ProjectConfig } from '../config.js';
 import type { ProjectRegistry } from './registry.js';
-import { effective, FLOW_POLICIES, flowChangedEvent, type ClientRecord, type Policy, type ProjectSettings } from './settings.js';
+import { effective, flowChangedEvent, policyChanges, policyPatchSchema, type ClientRecord, type Policy, type ProjectSettings } from './settings.js';
 
 export interface FlowRouteDeps {
   auth: AuthOptions;
@@ -111,12 +111,12 @@ export function registerFlowRoutes(app: FastifyInstance, d: FlowRouteDeps): void
       const { project } = req.params as { project: string };
       await visible(who.login, project);
       if (!who.admin) throw new HttpError(403, 'forbidden', 'only Mandate admins can change the project policy');
-      const b = z.object({ flowPolicy: z.enum(FLOW_POLICIES).optional(), strictFlow: z.boolean().optional() }).strict().parse(req.body);
-      if (!b.flowPolicy && b.strictFlow === undefined) throw new HttpError(400, 'invalid_input', 'pass flowPolicy or strictFlow');
+      const b = policyPatchSchema.parse(req.body);
+      if (!Object.values(b).some((v) => v !== undefined)) throw new HttpError(400, 'invalid_input', 'pass flowPolicy, strictFlow, commit, branch or push');
       const s = d.settings(project);
       const before = s.policy();
       const policy = await s.setPolicy(b);
-      await emit(project, [...(before.flowPolicy !== policy.flowPolicy ? [`flow policy ${policy.flowPolicy}`] : []), ...(!!before.strictFlow !== !!policy.strictFlow ? [`strict flow ${policy.strictFlow ? 'on' : 'off'}`] : [])], who.login);
+      await emit(project, policyChanges(before, policy), who.login);
       return { policy };
     }),
   );

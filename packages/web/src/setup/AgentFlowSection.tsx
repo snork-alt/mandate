@@ -194,6 +194,50 @@ function PolicyControls({ p, admin }: { p: FlowProject; admin: boolean }) {
           installer when this is on; needs a personal token.
         </Text>
       </div>
+      <div className="flow-policy-row" data-testid={`flow-git-${p.id}`}>
+        <Text size="sm" fw={500}>
+          Git
+        </Text>
+        <Group gap="md" wrap="wrap">
+          <SegmentedControl
+            size="xs"
+            aria-label="Commits"
+            value={p.policy.commit ?? 'auto'}
+            disabled={!admin || m.policy.isPending}
+            onChange={(v) => set({ commit: v as 'auto' | 'ask' })}
+            data={[
+              { value: 'auto', label: 'Commit automatically' },
+              { value: 'ask', label: 'Ask before committing' },
+            ]}
+          />
+          <SegmentedControl
+            size="xs"
+            aria-label="Branch"
+            value={p.policy.branch ?? 'per-request'}
+            disabled={!admin || m.policy.isPending}
+            onChange={(v) => set({ branch: v as 'current' | 'per-request' })}
+            data={[
+              { value: 'per-request', label: 'Branch per request' },
+              { value: 'current', label: 'Current branch' },
+            ]}
+          />
+          <SegmentedControl
+            size="xs"
+            aria-label="Push"
+            value={p.policy.push ?? 'off'}
+            disabled={!admin || m.policy.isPending}
+            onChange={(v) => set({ push: v as 'off' | 'auto' })}
+            data={[
+              { value: 'off', label: 'Never push' },
+              { value: 'auto', label: 'Push and open a PR' },
+            ]}
+          />
+        </Group>
+        <Text size="xs" c="dimmed">
+          Automatic commits are authorised for the Mandate flow only: after each completed step, on <code>mandate/&lt;request id&gt;</code> (branch per request), never amending or forcing. With
+          &quot;ask&quot;, the agent asks once in Mandate (Waiting for you). Pushing and the PR (needs <code>gh</code>) happen at work-order completion and never fail the flow.
+        </Text>
+      </div>
       {!admin && (
         <Text size="xs" c="dimmed">
           Only Mandate admins change the policy.

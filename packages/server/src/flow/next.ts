@@ -13,6 +13,7 @@ import {
   type CommentThread,
   type Feedback,
   type PlanStep,
+  answerText,
   type Question,
   type StoredSpec,
   type VerificationRecord,
@@ -30,6 +31,8 @@ export type FlowState =
   | 'sections'
   | 'verify'
   | 'complete'
+  | 'commit'
+  | 'components'
   | 'close'
   | 'comments'
   | 'plan_ready'
@@ -54,6 +57,8 @@ export interface FlowItem {
   waitingOn?: string[];
   /** Work orders (of other requests) this one waits for, with the request that holds each. */
   waitingOnWorkOrders?: { workOrder: string; request?: string; claimedBy?: string; why: string }[];
+  /** Git rules for this work (commit mode, branch, push, the commit message to use). */
+  git?: { commit: string; branch: string; push: string; message?: string };
   done: boolean;
 }
 
@@ -66,6 +71,18 @@ export interface FlowProgress {
   criteria: { total: number; proved: number };
 }
 
+export interface FlowGit {
+  commit: 'auto' | 'ask';
+  branch: 'current' | 'per-request';
+  push: 'off' | 'auto';
+  /** What the agent reported about its working tree (flow_next code arg or code_context_set): uncommitted changes / no commit yet. */
+  tree?: { dirty?: boolean; noHead?: boolean };
+  /** Number of live components of the project. */
+  components?: number;
+  /** Touched files (`repo:path`) of each work order that no component owns. */
+  unowned?: Record<string, string[]>;
+}
+
 export interface FlowSnapshot {
   requests: Feedback[];
   workOrders: WorkOrder[];
@@ -75,6 +92,8 @@ export interface FlowSnapshot {
   verifications: VerificationRecord[];
   /** Comment threads (any state): a blocking open one on a request stops its flow until resolved. */
   comments?: CommentThread[];
+  /** Git / components context (project settings and what the agent reported); absent: no git guidance. */
+  git?: FlowGit;
   /** The calling agent (claims by other agents are not yours); unknown: every claim is assumed to be yours. */
   agent?: string;
   now?: number;
@@ -165,7 +184,7 @@ export function flowFor(f: Feedback, snap: FlowSnapshot): FlowItem {
   // Drive open work orders first (their sections / steps / verification / completion).
   for (const w of live) {
     const r = driveWorkOrder(w, f, snap, now, waiting, waitWos);
-    if (r) return item(r.state, r.next, { ...(waiting.size ? { waitingOn: [...waiting] } : {}), ...(waitWos.length ? { waitingOnWorkOrders: waitWos } : {}) });
+    if (r) return item(r.state, r.next, { ...(snap.git ? { git: gitInfo(w, f, snap.git) } : {}), ...(waiting.size ? { waitingOn: [...waiting] } : {}), ...(waitWos.length ? { waitingOnWorkOrders: waitWos } : {}) });
   }
   if (live.length) {
     return item('waiting', null, { ...(waiting.size ? { waitingOn: [...waiting] } : {}), ...(waitWos.length ? { waitingOnWorkOrders: waitWos } : {}) });
@@ -234,6 +253,65 @@ export function flowFor(f: Feedback, snap: FlowSnapshot): FlowItem {
   return item('specs', { tool: 'section_update', args: { addresses: [reqRef(f.id)] }, why: 'Nothing left to do for this request: close it (request_close applied | rejected | duplicate) with the reason.' });
 }
 
+function claimGit(w: WorkOrder, f: Feedback, snap: FlowSnapshot): string {
+  const g = snap.git;
+  if (!g) return '';
+  return g.branch === 'per-request' ? ` Git: switch to branch ${branchOf(f)} (git switch ${branchOf(f)} || git switch -c ${branchOf(f)}; from the current branch, reuse it if it exists), then code_context_set.` : ' Git: stay on the current branch.';
+}
+const branchOf = (f: Feedback) => `mandate/${f.id}`;
+const lastDoneStep = (w: WorkOrder) => [...((w.planSteps ?? []) as PlanStep[])].reverse().find((s) => s.status === 'done');
+
+/** The commit message of the work so far: "<request id> <step id>: <step text>" + Request / Work-Order trailers. */
+export function commitMessage(w: WorkOrder, f: Feedback): string {
+  const s = lastDoneStep(w);
+  const head = s ? `${f.id} ${s.id}: ${s.text}` : `${f.id} ${w.id}: ${summaryOf(f)}`;
+  return `${head.replace(/\s+/g, ' ').slice(0, 200)}\n\nRequest: ${f.id}\nWork-Order: ${w.id}`;
+}
+
+function gitInfo(w: WorkOrder, f: Feedback, g: FlowGit): NonNullable<FlowItem['git']> {
+  return { commit: g.commit, branch: g.branch === 'per-request' ? branchOf(f) : 'current', push: g.push, message: commitMessage(w, f) };
+}
+
+/** The question (ask mode) that asks once whether the agent may commit, with the user's answer when there is one. */
+function commitQuestion(w: WorkOrder, snap: FlowSnapshot) {
+  const ref = woRef(w.id);
+  return snap.questions.find((q) => q.purpose === 'decision' && (q.blocks ?? []).includes(ref) && q.questions[0]?.header === COMMIT_HEADER && q.status !== 'cancelled' && q.status !== 'superseded' && q.status !== 'expired');
+}
+const COMMIT_HEADER = 'Commits';
+const COMMIT_MINE = 'I commit myself';
+
+/** A commit step when the work needs a commit (code refs, verifications) and the tree has uncommitted changes or no HEAD. */
+function commitStep(w: WorkOrder, f: Feedback, snap: FlowSnapshot): Driven | null {
+  const g = snap.git;
+  if (!g?.tree?.dirty && !g?.tree?.noHead) return null;
+  const message = commitMessage(w, f);
+  const what = g!.tree!.noHead ? 'The repo has no commit yet: make the initial commit of the work' : 'The working tree has uncommitted changes';
+  const files = 'git add only the files of this work (never unrelated files; see git status), never amend or force';
+  if (g!.commit === 'auto') {
+    return { state: 'commit', next: { tool: 'code_context_set', args: { commit: '<sha of your new commit>', dirty: false }, why: `${what}. Commit policy auto (the user authorised local commits): ${files}; git commit -m with this message:\n${message}\nThen code_context_set { repo, commit: <new HEAD sha>, branch } and pass that commit in code { repo, commit } on the next section_done / verification_record / work_order_complete.` } };
+  }
+  const q = commitQuestion(w, snap);
+  if (q?.status === 'answered') {
+    const ans = answerText(q.answer?.answers[q.questions[0]!.id]);
+    if (ans.startsWith(COMMIT_MINE)) return { state: 'commit', next: { tool: 'news_list', args: { unread: true, wait: 300 }, why: `${what}. The user chose to commit themselves: wait for it (news_list wait), then code_context_set { repo, commit: <HEAD>, dirty: false } once the tree is committed. Do not commit.` } };
+    return { state: 'commit', next: { tool: 'code_context_set', args: { commit: '<sha of your new commit>', dirty: false }, why: `${what}. The user agreed to commits: ${files}; git commit -m with this message:\n${message}\nThen code_context_set { repo, commit: <new HEAD sha> }.` } };
+  }
+  return {
+    state: 'commit',
+    next: {
+      tool: 'question_ask',
+      args: {
+        purpose: 'decision',
+        request: f.id,
+        blocks: [woRef(w.id)],
+        blocking: true,
+        questions: [{ header: COMMIT_HEADER, question: `${what}, and Mandate needs a commit sha for the code refs. May I commit the work of ${f.id} (${message.split('\n')[0]})?`, options: [{ label: 'Commit for me', description: 'Create a local commit with only the files of this work' }, { label: COMMIT_MINE, description: 'You commit; the flow continues when you have' }], recommended: 'Commit for me' }],
+      },
+      why: `${what}. Commit policy ask: do not commit and do not ask in chat; ask once with this question_ask (it shows in Waiting for you and blocks the work order), then flow_next again.`,
+    },
+  };
+}
+
 interface Driven {
   state: FlowState;
   next: FlowStep;
@@ -258,7 +336,7 @@ function driveWorkOrder(w: WorkOrder, f: Feedback, snap: FlowSnapshot, now: numb
       return null;
     }
     if (!claim || !fresh) {
-      return { state: 'claim', next: { tool: 'work_order_claim', args: { ref }, why: `Claim ${w.id}${claim ? ' (its claim is stale: this takes it over)' : ''} (plan: ${w.hasPlan ? 'given' : 'MISSING: work_order_plan_set first'}). Then read its comments and rules_for_code before editing.` } };
+      return { state: 'claim', next: { tool: 'work_order_claim', args: { ref }, why: `Claim ${w.id}${claim ? ' (its claim is stale: this takes it over)' : ''} (plan: ${w.hasPlan ? 'given' : 'MISSING: work_order_plan_set first'}). Then read its comments and rules_for_code before editing.${claimGit(w, f, snap)}` } };
     }
   }
   // Steps first, while sections are open; when every section is done only unfinished steps remain (complete refuses them).
@@ -271,6 +349,11 @@ function driveWorkOrder(w: WorkOrder, f: Feedback, snap: FlowSnapshot, now: numb
     else return { state: 'steps', next: { tool: 'work_order_step_set', args: { ref, step: inProgress.id, status: 'done' }, why: `Finish ${inProgress.id} (${inProgress.text}), then record it done with codeRefs (files / lines you changed).` } };
   }
   const pending = steps.filter((s) => s.status === 'pending');
+  // A finished step is committed before the next one starts.
+  if (pending.length && lastDoneStep(w)) {
+    const c = commitStep(w, f, snap);
+    if (c) return c;
+  }
   for (const s of pending) {
     const b = stepBlocked(s);
     if (b.length) {
@@ -284,6 +367,8 @@ function driveWorkOrder(w: WorkOrder, f: Feedback, snap: FlowSnapshot, now: numb
     const ready = sections.filter((s) => s.status === 'pending' && !secBlocked(s.id).length);
     sections.filter((s) => s.status === 'pending').forEach((s) => secBlocked(s.id).forEach((id) => waiting.add(id)));
     if (ready.length) {
+      const c = commitStep(w, f, snap);
+      if (c) return c;
       return { state: 'sections', next: { tool: 'work_order_section_done', args: { ref, sections: [ready[0]!.id] }, why: `Mark section ${ready[0]!.id} done with notes and codeRefs (the code that implements it); ${ready.length - 1} more section(s) after it.` } };
     }
     return null;
@@ -293,6 +378,13 @@ function driveWorkOrder(w: WorkOrder, f: Feedback, snap: FlowSnapshot, now: numb
   const criteria = coveredCriteria(spec ?? null, sections.filter((s) => s.status !== 'obsolete').map((s) => s.id));
   const specUri = specRef(w.spec);
   const recs = snap.verifications.filter((r) => r.appliedTo === specUri && r.at >= w.createdAt && r.result !== 'skipped');
+  const needsRecord = criteria.some((c) => {
+    const mineRecs = recs.filter((r) => r.criterion === secRef(w.spec, c.id));
+    const last = mineRecs.at(-1);
+    return !last || last.result === 'fail' || ((c.method ?? 'test') === 'test' && !mineRecs.some((r) => r.result === 'pass' && (r.evidence?.test?.trim() || r.codeRefs?.length)));
+  });
+  const commit = commitStep(w, f, snap);
+  if (commit && (needsRecord || (w.kind !== 'review' && w.kind !== 'verify'))) return commit;
   for (const c of criteria) {
     const uri = secRef(w.spec, c.id);
     const mineRecs = recs.filter((r) => r.criterion === uri);
@@ -303,7 +395,12 @@ function driveWorkOrder(w: WorkOrder, f: Feedback, snap: FlowSnapshot, now: numb
       return { state: 'verify', next: { tool: 'verification_record', args: { criterion: uri, appliedTo: specUri, result: 'pass' }, why: `Run the test for criterion ${c.id} (${c.title})${planned.length ? ` [planned: ${planned.join(', ')}]` : ''} and record the result with evidence.test or codeRefs naming it.` } };
     }
   }
-  return { state: 'complete', next: { tool: 'work_order_complete', args: { ref }, why: `Complete ${w.id} with outcome and reconciliation (spec / component text and code refs updated to what was built); resolve blocking comments first.` } };
+  const unowned = snap.git?.unowned?.[w.id] ?? [];
+  if (unowned.length && (snap.git?.components ?? 0) > 0) {
+    return { state: 'components', next: { tool: 'component_update', args: { owns: unowned.slice(0, 10) }, why: `These touched files are owned by no component: ${unowned.slice(0, 10).join(', ')}${unowned.length > 10 ? ` (+${unowned.length - 10})` : ''}. Create or update a component owning these paths (component_create, or add owns globs to the component that holds them with component_update; reuse before creating), then work_order_complete. Generated or vendored files that need no owner: go straight to work_order_complete.` } };
+  }
+  const push = snap.git?.push === 'auto' ? ` Then push the branch${snap.git.branch === 'per-request' ? ` ${branchOf(f)}` : ''} and, if gh is available and a remote exists, open a PR (best effort, never fail the flow on it; record it with work_order_git_update pr).` : '';
+  return { state: 'complete', next: { tool: 'work_order_complete', args: { ref }, why: `Complete ${w.id} with outcome and reconciliation (spec / component text and code refs updated to what was built; pass git [{ repo, headCommit }]); resolve blocking comments first.${push}` } };
 }
 
 /** Flow items for every in-flight (not closed) request, oldest first. */

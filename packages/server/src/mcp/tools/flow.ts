@@ -3,12 +3,12 @@
  * (a decision the agent took without asking the user) and `flow_edit_allowed` (strict mode: may this agent edit code now).
  * The state machine is flow/next.ts (pure); this file reads the stored state and shapes the result.
  */
-import { isClaimStale, replayComments, type CommentThread, type StoredSpec } from '@mandate/shared';
+import { isClaimStale, ownerOf, replayComments, type CommentThread, type StoredComponent, type StoredSpec } from '@mandate/shared';
 import { z } from 'zod';
 import { ANY, assignedSummary, deliverAssigned, mayStart, wakeableAny } from '../../flow/assign.js';
 import { requestAssignInputSchema, requestPlanApproveInputSchema } from '@mandate/shared';
-import { flowAll, flowFor, type FlowItem, type FlowSnapshot } from '../../flow/next.js';
-import { clientIdentity } from '../../projects/settings.js';
+import { flowAll, flowFor, type FlowGit, type FlowItem, type FlowSnapshot } from '../../flow/next.js';
+import { clientIdentity, effective } from '../../projects/settings.js';
 import type { CommitMeta } from '../../storage/index.js';
 import { newsOfProject, routeState, shortTarget, unansweredFor } from '../../comments/route.js';
 import { defineTool, type ToolContext } from '../define.js';
@@ -16,7 +16,12 @@ import { ToolError } from '../errors.js';
 
 const reqId = (v: string) => v.trim().replace(/^@mandate:/, '').replace(/^mandate:\/\/(?:requests|feedback)\//, '');
 
-async function snapshot(ctx: ToolContext, agent?: string): Promise<FlowSnapshot> {
+interface TreeInput {
+  dirty?: boolean | undefined;
+  noHead?: boolean | undefined;
+}
+
+async function snapshot(ctx: ToolContext, agent?: string, tree?: TreeInput): Promise<FlowSnapshot> {
   const st = ctx.storage;
   const [requests, workOrders, questions, specList, verifications, comments] = await Promise.all([
     st.feedbackService.list(),
@@ -26,7 +31,26 @@ async function snapshot(ctx: ToolContext, agent?: string): Promise<FlowSnapshot>
     st.verifications.list(),
     st.commentService.lines().then((l) => replayComments(l)),
   ]);
-  return { requests, comments, workOrders, questions, specs: new Map(specList.map((s) => [s.id, s])), verifications, ...(agent ? { agent } : {}) };
+  const eff = ctx.settings ? effective(ctx.settings.policy(), undefined) : null;
+  const git = eff ? await gitOf(ctx, eff, workOrders, tree) : undefined;
+  return { requests, comments, workOrders, questions, specs: new Map(specList.map((s) => [s.id, s])), verifications, ...(git ? { git } : {}), ...(agent ? { agent } : {}) };
+}
+
+/** Git settings, the tree state the agent reported (flow_next code arg, else its code_context_set) and unowned touched files. */
+async function gitOf(ctx: ToolContext, eff: { commit: 'auto' | 'ask'; branch: 'current' | 'per-request'; push: 'off' | 'auto' }, workOrders: FlowSnapshot['workOrders'], tree?: TreeInput): Promise<FlowGit> {
+  const cc = ctx.session?.codeContext;
+  const dirty = tree?.dirty ?? (tree?.noHead ? undefined : cc?.dirty);
+  const all = (await ctx.storage.components.list().catch(() => [])) as StoredComponent[];
+  const live = all.filter((c) => (c as { status?: string }).status !== 'archived');
+  const unowned: Record<string, string[]> = {};
+  if (live.length) {
+    for (const w of workOrders) {
+      if (!['pending', 'in_progress'].includes(w.status)) continue;
+      const miss = [...new Set((w.touched ?? []).filter((t) => t.change !== 'deleted' && !ownerOf(t.repo, t.path, live)).map((t) => `${t.repo}:${t.path}`))];
+      if (miss.length) unowned[w.id] = miss;
+    }
+  }
+  return { commit: eff.commit, branch: eff.branch, push: eff.push, ...(dirty || tree?.noHead ? { tree: { ...(dirty ? { dirty: true } : {}), ...(tree?.noHead ? { noHead: true } : {}) } } : {}), components: live.length, unowned };
 }
 
 const compact = (i: FlowItem) => ({ request: i.request.ref, summary: i.request.summary, state: i.state, ...(i.queued ? { queued: true } : {}), ...(i.request.assignee ? { assignee: i.request.assignee } : {}), ...(i.request.priority ? { priority: i.request.priority } : {}), ...(i.request.planOnly ? { planOnly: true } : {}), next: i.next, ...(i.waitingOn ? { waitingOn: i.waitingOn } : {}), ...(i.waitingOnWorkOrders ? { waitingOnWorkOrders: i.waitingOnWorkOrders } : {}) });
@@ -58,12 +82,12 @@ export const flowTools = [
     name: 'flow_next',
     title: 'Next step of the flow',
     kind: 'read',
-    description: `What to do next, from the stored state (never guess the order): { request, state, next: { tool, args, why } | null, waitingOn?: [question ids], waitingOnWorkOrders?, parallel?: [other actionable requests], done }. Also comments: unanswered comment threads routed to you (reply to each; see commentsNote). With request: that request's next step; do it, then call flow_next again until done or waiting (then continue with parallel items, or report what the user must answer). Without request: every in-flight (not closed) request of this project with its next step (mine: only the ones you created).
+    description: `What to do next, from the stored state (never guess the order): { request, state, next: { tool, args, why } | null, waitingOn?: [question ids], waitingOnWorkOrders?, parallel?: [other actionable requests], done }. Also comments: unanswered comment threads routed to you (reply to each; see commentsNote). With request: that request's next step; do it, then call flow_next again until done or waiting (then continue with parallel items, or report what the user must answer). Code { dirty: true } (uncommitted changes) or { noHead: true } (repo without a commit) makes the next step a commit (project commit policy: auto = commit now with the given message, ask = a question_ask); report it whenever you changed files since your last commit. Without request: every in-flight (not closed) request of this project with its next step (mine: only the ones you created).
 Example: {"request":"fb-0007"}`,
-    input: z.object({ request: z.string().trim().min(1).optional(), mine: z.boolean().default(false), agent: z.string().trim().min(1).max(120).optional() }).strict(),
+    input: z.object({ request: z.string().trim().min(1).optional(), mine: z.boolean().default(false), agent: z.string().trim().min(1).max(120).optional(), code: z.object({ repo: z.string().trim().min(1).max(200).optional(), commit: z.string().trim().min(7).max(40).optional(), dirty: z.boolean().optional(), noHead: z.boolean().optional() }).strict().optional() }).strict(),
     run: async (a, ctx) => {
       const me = a.agent ?? ctx.clientName;
-      const snap = await snapshot(ctx, a.agent);
+      const snap = await snapshot(ctx, a.agent, a.code);
       const agentCall = ctx.principal?.kind !== 'ui';
       const myId = clientIdentity(ctx).id;
       const presence = newsOfProject(ctx)?.presence;

@@ -510,6 +510,12 @@ export const projectEntrySchema = z
     flow: z.object({ enabled: z.boolean(), approval: z.boolean() }).strict().optional(),
     /** Coding-agent flow policy (admin): required | optional (default; each client chooses) | off (read-only context). */
     flowPolicy: z.enum(['required', 'optional', 'off']).optional(),
+    /** Strict flow (admin, opt-in): the guard hook refuses code edits outside a claimed work order step. */
+    strictFlow: z.boolean().optional(),
+    /** Git during the flow (admin; stored only when not the default): commit auto | ask, branch per-request | current, push off | auto. */
+    commit: z.enum(['auto', 'ask']).optional(),
+    branch: z.enum(['current', 'per-request']).optional(),
+    push: z.enum(['off', 'auto']).optional(),
     /** Approval checkpoint policy (admin): required | optional (default; each client chooses). */
     approvalPolicy: z.enum(['required', 'optional']).optional(),
     /** Per-project overrides of the config.json `git` block. */

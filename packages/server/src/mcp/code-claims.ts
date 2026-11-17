@@ -62,7 +62,7 @@ export function requireCommit(ctx: ToolContext, message: string, hint: string, p
   const reg = registeredCodeRepos(ctx);
   if (!reg) return [];
   if (!reg.length) return [`code_commit_missing: ${message} (accepted: no code repositories are registered yet)`];
-  throw new ToolError('code_commit_required', message, hint, path);
+  throw new ToolError('code_commit_required', message, `${hint}; no commit yet or uncommitted changes: flow_next { request, code: { dirty: true } } (or { noHead: true }) gives the exact commit step for the project's commit policy`, path);
 }
 
 /** Repo of a code location input: `repo:path#L..` string, `{ repo, ... }` object or a mandate://code/<repo>/... ref. */

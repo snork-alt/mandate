@@ -193,7 +193,14 @@ describe('MCP tools (seeded project)', () => {
     const ok = await callTool(tool('flow_policy_set'), { flowPolicy: 'required' }, ui as ToolContext);
     expect(ok.structuredContent).toMatchObject({ policy: P('required') });
     expect((await callTool(tool('flow_policy_set'), { approvalPolicy: 'required' }, ui as ToolContext)).isError).toBe(true);
-    await settings.setPolicy({ flowPolicy: 'optional' });
+    // Git settings: set by the UI admin, exposed in project_info.effective and the instructions.
+    const g = await callTool(tool('flow_policy_set'), { commit: 'ask', push: 'auto', branchMode: 'current' }, ui as ToolContext);
+    expect(g.structuredContent).toMatchObject({ changed: ['commit ask', 'branch current', 'push auto'] });
+    const info = (await fx.call('project_info', {})).body;
+    expect(info.effective).toMatchObject({ commit: 'ask', branch: 'current', push: 'auto' });
+    expect(info.instructions).toContain('commit ask');
+    await settings.setPolicy({ flowPolicy: 'optional', commit: 'auto', branch: 'per-request', push: 'off' });
+    expect((await fx.call('project_info', {})).body.effective).toMatchObject({ commit: 'auto', push: 'off' });
   });
 });
 

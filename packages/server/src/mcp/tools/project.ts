@@ -12,7 +12,7 @@ import { uploadInfo } from '../uploads.js';
 import { checkCodeRepos } from '../code-claims.js';
 import { INSTRUCTION_NAMES, instructionsFor, STUB_VERSION, stubUpdateNotice } from '../stubs.js';
 import { codeContextLabel, codeContextSetInputSchema } from '@mandate/shared';
-import { QUESTIONS_VIA, type PrefPatch, clientIdentity, DEFAULT_POLICY, effective, FLOW_POLICIES, flowInstructions, flowChangedEvent, refusal, type OnOff, type ProjectSettings } from '../../projects/settings.js';
+import { QUESTIONS_VIA, policyChanges, policyPatchSchema, type PrefPatch, clientIdentity, DEFAULT_POLICY, effective, FLOW_POLICIES, flowInstructions, flowChangedEvent, refusal, type OnOff, type ProjectSettings } from '../../projects/settings.js';
 
 const onOff = z.enum(['on', 'off']);
 
@@ -33,7 +33,7 @@ async function info(ctx: ToolContext, reportedStub?: number) {
     project: ctx.project ?? null,
     policy,
     client: { id: c.id, label: c.label, flow: pref?.flow ?? null, questions: pref?.questions ?? null },
-    effective: { flow: eff.flow, questions: eff.questions },
+    effective: { flow: eff.flow, questions: eff.questions, commit: eff.commit, branch: eff.branch, push: eff.push },
     reason: eff.reason,
     instructions: flowInstructions(eff),
     ...(upload ? { upload } : {}),
@@ -63,7 +63,7 @@ async function setPreference(a: PrefPatch, ctx: ToolContext) {
   const e = flowChangedEvent(s.project, fields, { agent: ctx.commit?.agent ?? c.client, ...(user ? { user } : {}), ...(ctx.principal?.kind === 'key' ? { source: ctx.principal.keyName } : {}) }, (await ctx.storage.git.head().catch(() => null)) ?? '');
   if (e) ctx.activity?.emit(e);
   const eff = effective(policy, rec);
-  return { policy, client: { id: c.id, label: c.label, flow: rec.flow, questions: rec.questions }, effective: { flow: eff.flow, questions: eff.questions }, reason: eff.reason, instructions: flowInstructions(eff), changed: fields };
+  return { policy, client: { id: c.id, label: c.label, flow: rec.flow, questions: rec.questions }, effective: { flow: eff.flow, questions: eff.questions, commit: eff.commit, branch: eff.branch, push: eff.push }, reason: eff.reason, instructions: flowInstructions(eff), changed: fields };
 }
 
 const FLOW_SET_DESC = `Turn the Mandate flow on / off, or questions mandate | chat, for THIS client only. Refused (policy_required / policy_off) when the project policy forbids it. Returns policy, preference, effective and instructions (follow them; save to memory). Works with the flow off.
@@ -129,15 +129,16 @@ Example: {"enabled":false}`,
     title: 'Set the project flow policy (admin)',
     kind: 'write',
     uiOnly: true,
-    description: `Web UI admins only: the project flow policy. flowPolicy: required | optional (default, each client chooses) | off (read-only); strictFlow: true = the guard hook refuses code edits outside a claimed work order step.
+    description: `Web UI admins only: the project flow policy. flowPolicy: required | optional (default, each client chooses) | off (read-only); strictFlow: guard hook refuses edits outside a claimed step; commit auto|ask; branchMode per-request|current; push off|auto.
 Example: {"flowPolicy":"required"}`,
-    input: z.object({ flowPolicy: z.enum(FLOW_POLICIES).optional(), strictFlow: z.boolean().optional() }).strict(),
+    input: policyPatchSchema.omit({ branch: true }).extend({ branchMode: policyPatchSchema.shape.branch }).strict(),
     run: async (a, ctx) => {
       const s = settingsOf(ctx);
-      if (!a.flowPolicy && a.strictFlow === undefined) throw new ToolError('validation', 'pass flowPolicy or strictFlow', 'e.g. {"flowPolicy":"required"}', 'flowPolicy');
+      if (!Object.values(a).some((v) => v !== undefined)) throw new ToolError('validation', 'pass flowPolicy, strictFlow, commit, branchMode or push', 'e.g. {"flowPolicy":"required"}', 'flowPolicy');
       const before = s.policy();
-      const policy = await s.setPolicy(a);
-      const fields = [...(before.flowPolicy !== policy.flowPolicy ? [`flow policy ${policy.flowPolicy}`] : []), ...(!!before.strictFlow !== !!policy.strictFlow ? [`strict flow ${policy.strictFlow ? 'on' : 'off'}`] : [])];
+      const { branchMode, ...rest } = a;
+      const policy = await s.setPolicy({ ...rest, ...(branchMode ? { branch: branchMode } : {}) });
+      const fields = policyChanges(before, policy);
       const login = ctx.principal?.kind === 'ui' ? ctx.principal.user.login : undefined;
       const e = flowChangedEvent(s.project, fields, { agent: 'mandate-ui', ...(login ? { user: login } : {}) }, (await ctx.storage.git.head().catch(() => null)) ?? '');
       if (e) ctx.activity?.emit(e);
@@ -160,7 +161,7 @@ Example: {}`,
       const policy = s.policy();
       const clients = (await s.clients.list(s.project, filter)).map((r) => {
         const eff = effective(policy, r);
-        return { ...r, effective: { flow: eff.flow, questions: eff.questions }, you: r.id === me.id };
+        return { ...r, effective: { flow: eff.flow, questions: eff.questions, commit: eff.commit, branch: eff.branch, push: eff.push }, you: r.id === me.id };
       });
       return { policy, clients };
     },

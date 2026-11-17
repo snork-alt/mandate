@@ -12,6 +12,10 @@ export interface Policy {
   flowPolicy: 'required' | 'optional' | 'off';
   /** Strict flow (opt-in): code edits need a claimed work order step (the `mandate guard` hook). */
   strictFlow?: boolean;
+  /** Git during the flow (absent = default): commit auto | ask, branch per-request | current, push off | auto. */
+  commit?: 'auto' | 'ask';
+  branch?: 'current' | 'per-request';
+  push?: 'off' | 'auto';
 }
 export interface FlowClient {
   id: string;

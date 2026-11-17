@@ -87,6 +87,17 @@ Your repo name: the \`project_info.codeRepos\` entry whose \`github\` matches \`
 code locations (\`work_order_touch\` / \`work_order_section_done\` \`code\`), \`work_order_complete\` (\`git\` headCommit)
 and audits carry repo + commit (uncommitted: \`dirty: true\`, base commit). Code refs: \`mandate://code/<repo>/<path>[#La-Lb]\`.
 
+## Git
+
+Follow \`effective\` \`commit\` / \`branch\` / \`push\` (\`instructions\` has the rules). Never wait for a commit sha:
+\`flow_next { request, code: { dirty: true } }\` (or \`noHead: true\`) gives the commit step; send it after changing files.
+- \`commit\` auto: local commits are authorised in the flow. Claim: switch to \`mandate/<request-id>\` (create or reuse;
+  \`branch\` current: stay). After each step commit \`<request id> <step id>: <step text>\` + trailers \`Request:\` /
+  \`Work-Order:\`, only that work's files; no amend / force; no commits yet: make the initial one. Push only with \`push\`
+  auto (branch + best-effort PR at completion, never fail the flow on it).
+- \`commit\` ask: \`question_ask\` once (purpose \`decision\`, blocks the work order), not in chat.
+- Unowned touched files: flow_next adds a component step (nothing if the project has no components).
+
 ## States (transitions and gates: \`lifecycle_get { kind }\`)
 
 - Never set derived states (\`in_progress\`, maturity). Spec \`ready\` needs a criterion per section (\`ready_gate\`).

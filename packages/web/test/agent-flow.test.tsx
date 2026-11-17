@@ -63,6 +63,27 @@ describe('Settings → Agent flow', () => {
     expect(((await screen.findByLabelText('Strict flow')) as HTMLInputElement).disabled).toBe(true);
   });
 
+  it('git: commit / branch / push switches (PUT patch); read-only for others', async () => {
+    const calls = serve({ mode: 'server', admin: true, user: 'ada', projects: [{ id: 'web', name: 'Web', policy: { flowPolicy: 'optional' }, mine: [client({})] }] });
+    mount();
+    const ask = (await screen.findByLabelText('Ask before committing')) as HTMLInputElement;
+    expect((screen.getByLabelText('Commit automatically') as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText('Branch per request') as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText('Never push') as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(ask);
+    await vi.waitFor(() => expect(calls.some((c) => c.method === 'PUT' && c.url.includes('/policy') && JSON.stringify(c.body) === '{"commit":"ask"}')).toBe(true));
+    fireEvent.click(screen.getByLabelText('Push and open a PR'));
+    await vi.waitFor(() => expect(calls.some((c) => c.method === 'PUT' && JSON.stringify(c.body) === '{"push":"auto"}')).toBe(true));
+    fireEvent.click(screen.getByLabelText('Current branch'));
+    await vi.waitFor(() => expect(calls.some((c) => c.method === 'PUT' && JSON.stringify(c.body) === '{"branch":"current"}')).toBe(true));
+    cleanup();
+    serve({ mode: 'server', admin: false, user: 'ada', projects: [{ id: 'web', name: 'Web', policy: { flowPolicy: 'optional', commit: 'ask' }, mine: [client({})] }] });
+    mount();
+    const ro = (await screen.findByLabelText('Ask before committing')) as HTMLInputElement;
+    expect(ro.checked).toBe(true);
+    expect(ro.disabled).toBe(true);
+  });
+
   it('locked by policy: state with "enforced by policy"; admins see all clients', async () => {
     serve({
       mode: 'server', admin: true, user: 'ada',

@@ -142,7 +142,8 @@ export function checkIntegrity(
   out.push(...auditIssues(m, opts.audits ?? []));
   for (const [id, reasons] of opts.drift ?? []) if (reasons.length) out.push(issue('done_spec_drift', `mandate://specs/${id}`, `${id} is done but drifted: ${reasons.map((r) => r.split(':')[0]).join('; ')}`));
   const cov = coverage(m, opts.audits ?? []);
-  for (const r of cov.unowned) out.push(issue('unowned_code_ref', r.uri, `${r.repo}:${r.path} is not owned by any component`));
+  // A project without components has no ownership map to complete: nothing to report (info only, no warning).
+  if ((m.components ?? []).length) for (const r of cov.unowned) out.push(issue('unowned_code_ref', r.uri, `${r.repo}:${r.path} is not owned by any component`, 'create or update a component owning these paths (component_create, or add owns globs with component_update)'));
   for (const g of cov.emptyGlobs) out.push(issue('owns_matches_nothing', `mandate://components/${g.component}`, `${g.component} owns ${g.repo}:${g.glob}, which matches no referenced code`));
   for (const [id, gaps] of componentGaps(m)) for (const g of gaps) out.push(issue(g.rule, `mandate://components/${id}`, g.message, g.hint));
   for (const [id, warnings] of opts.feedbackWarnings ?? []) for (const w of warnings) if (w.startsWith('Tampered')) out.push(issue('feedback_tampered', `mandate://requests/${id}`, w));
