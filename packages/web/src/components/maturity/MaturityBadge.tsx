@@ -12,11 +12,11 @@ import './maturity.css';
 
 const OVERLAY_LABEL: Record<MaturityOverlayKind, string> = { archived: 'Archived', failing: 'Failing', drifted: 'Drifted', blocked: 'Blocked', stale: 'Stale' };
 
-/** Six-step segmented meter (filled up to the step). */
+/** Five-step segmented meter (filled up to the step). */
 export function MaturityMeter({ stepIndex, tone, audited }: { stepIndex: number; tone: SpecMaturity['tone']; audited?: boolean }) {
   return (
     <span className="maturity-meter" data-tone={tone} aria-hidden="true">
-      {[1, 2, 3, 4, 5, 6].map((i) => (
+      {[1, 2, 3, 4, 5].map((i) => (
         <span key={i} className="maturity-seg" data-on={i <= stepIndex || undefined} />
       ))}
       {audited && <IconCheck size={10} stroke={3} className="maturity-check" />}
@@ -48,7 +48,7 @@ export function MaturityDetails({ m }: { m: SpecMaturity }) {
       <div className="maturity-details-head">
         <MaturityMeter stepIndex={m.stepIndex} tone={m.tone} audited={m.step === 'audited'} />
         <strong>{m.label}</strong>
-        <span className="faint">step {m.stepIndex}/6</span>
+        <span className="faint">step {m.stepIndex}/5</span>
       </div>
       <dl className="maturity-facts">
         <dt>Sections</dt>

@@ -58,9 +58,8 @@ export function specMaturity(i: MaturityInput): SpecMaturity {
   if (spec.status === 'draft') step = 'draft';
   else if (sections.total > 0 && implemented === 0 && inProgress === 0 && spec.status !== 'done') step = 'specified';
   else if (implemented < sections.total && spec.status !== 'done') step = 'in_progress';
-  else if (!criteria.total || criteria.verified < criteria.total) step = 'implemented';
   else if (i.lastAudit && i.lastAudit.result !== 'in_progress' && !i.lastAudit.stale && i.lastAudit.openMust === 0 && i.lastAudit.openShould === 0) step = 'audited';
-  else step = 'verified';
+  else step = 'implemented';
 
   const overlays: MaturityOverlay[] = [];
   const specUri = buildRef({ kind: 'specs', id: spec.id });

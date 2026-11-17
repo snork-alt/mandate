@@ -13,7 +13,7 @@ import { sortItems } from '../src/components/SortMenu';
 installDom();
 vi.mock('../src/mcp/client', () => ({ callTool: vi.fn(async () => ({})), McpToolError: class extends Error {}, onNotification: () => () => undefined, onConnectionChange: () => () => undefined }));
 
-const LABEL: Record<MaturityStep, string> = { draft: 'Draft', specified: 'Specified', in_progress: 'In progress · 3/5', implemented: 'Implemented', verified: 'Verified', audited: 'Audited' };
+const LABEL: Record<MaturityStep, string> = { draft: 'Draft', specified: 'Specified', in_progress: 'In progress · 3/5', implemented: 'Implemented', audited: 'Audited' };
 const mat = (step: MaturityStep, overlays: MaturityOverlayKind[] = [], o: Partial<SpecMaturity> = {}): SpecMaturity => ({
   step,
   stepIndex: MATURITY_STEPS.indexOf(step) + 1,
@@ -61,7 +61,7 @@ describe.each(['light', 'dark'] as const)('maturity badge (%s)', (scheme) => {
 
 describe('maturity details (hover breakdown)', () => {
   it('lists sections, criteria, audit, overlays with links and stored vs derived status', () => {
-    const m = mat('verified', ['failing', 'blocked'], {
+    const m = mat('audited', ['failing', 'blocked'], {
       audit: { id: 'a1', uri: buildRef({ kind: 'audits', id: 'a1' }), at: new Date().toISOString(), auditor: { agent: 'codex' }, result: 'warn', openFindings: 2, openMust: 0, openShould: 2, stale: true, commitsSince: 3 },
     });
     const { container } = render(<R><MaturityDetails m={m} /></R>);
@@ -88,10 +88,10 @@ describe('maturity details (hover breakdown)', () => {
 describe('maturity filter, sort and component roll-up', () => {
   const spec = (id: string, m?: SpecMaturity, affects: string[] = []) =>
     ({ id, title: id, updatedAt: '', createdAt: '', versionCount: 0, maturity: m, sections: [{ id: 's', links: affects.map((c) => ({ rel: 'affects', to: buildRef({ kind: 'components', id: c }) })) }] }) as unknown as Spec;
-  const specs = [spec('a', mat('verified')), spec('b', mat('draft')), spec('c', mat('implemented', ['failing'])), spec('d', mat('in_progress', ['blocked'])), spec('e', mat('audited', ['archived'])), spec('f')];
+  const specs = [spec('a', mat('audited')), spec('b', mat('draft')), spec('c', mat('implemented', ['failing'])), spec('d', mat('in_progress', ['blocked'])), spec('e', mat('audited', ['archived'])), spec('f')];
 
   it('filters by step or overlay', () => {
-    expect(specs.filter((s) => matchesMaturityFilter(s, ['verified'])).map((s) => s.id)).toEqual(['a']);
+    expect(specs.filter((s) => matchesMaturityFilter(s, ['audited'])).map((s) => s.id)).toEqual(['a', 'e']);
     expect(specs.filter((s) => matchesMaturityFilter(s, ['failing', 'draft'])).map((s) => s.id)).toEqual(['b', 'c']);
     expect(specs.filter((s) => matchesMaturityFilter(s, [])).length).toBe(6);
   });
@@ -102,14 +102,14 @@ describe('maturity filter, sort and component roll-up', () => {
   });
 
   it('component: least mature step, worst overlay of the specs affecting it (archived ignored)', () => {
-    const list = [spec('a', mat('verified'), ['auth']), spec('c', mat('implemented', ['stale']), ['auth', 'db']), spec('e', mat('draft', ['archived']), ['auth'])];
+    const list = [spec('a', mat('audited'), ['auth']), spec('c', mat('implemented', ['stale']), ['auth', 'db']), spec('e', mat('draft', ['archived']), ['auth'])];
     const cm = componentMaturity(list, ['auth'])!;
     expect(cm.step).toBe('implemented');
     expect(cm.overlay).toBe('stale');
     expect(cm.tone).toBe('orange');
     expect(cm.specs.map((s) => s.id)).toEqual(['a', 'c']);
     expect(componentMaturity(list, ['billing'])).toBeNull();
-    expect(componentMaturity([spec('a', mat('verified'), ['db'])], ['parent', 'db'])!.tone).toBe('green');
+    expect(componentMaturity([spec('a', mat('audited'), ['db'])], ['parent', 'db'])!.tone).toBe('green');
   });
 });
 
@@ -131,7 +131,7 @@ describe('maturity badge: accessible, focusable breakdown (X5)', () => {
     // A click (tap) toggles it too, and does not bubble to an enclosing row link.
     const onRow = vi.fn();
     cleanup();
-    render(<R><div onClick={onRow}><MaturityBadge m={mat('verified')} /></div></R>);
+    render(<R><div onClick={onRow}><MaturityBadge m={mat('audited')} /></div></R>);
     fireEvent.click(screen.getByTestId('maturity-trigger'));
     await waitFor(() => expect(screen.getByTestId('maturity-stored')).toBeTruthy());
     expect(onRow).not.toHaveBeenCalled();

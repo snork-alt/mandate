@@ -393,11 +393,11 @@ const ENTRIES: LifecycleEntry[] = [
   },
   {
     kind: 'maturity',
-    states: ['draft', 'specified', 'in_progress', 'implemented', 'verified', 'audited'],
+    states: ['draft', 'specified', 'in_progress', 'implemented', 'audited'],
     initial: 'draft',
     terminal: [],
     frozen: [],
-    derived: ['draft', 'specified', 'in_progress', 'implemented', 'verified', 'audited'],
+    derived: ['draft', 'specified', 'in_progress', 'implemented', 'audited'],
     table: {},
     enforced: false,
     steps: [],

@@ -32,9 +32,9 @@ describe('maturity ladder', () => {
     expect(run({ workOrders: [wo([{ id: 'a', status: 'done' }], { kind: 'review' })] }).step).toBe('specified');
   });
 
-  it('verified needs every must criterion verified or waived and none stale; should / upcoming do not gate', () => {
+  it('there is no verified step: a done spec is implemented, criteria only drive the counts and the stale overlay', () => {
     const done = spec('done');
-    expect(run({ spec: done, verification: ver([crit('verified')], [crit('waived'), crit('unverified', { level: 'should' }), crit('unverified', { upcoming: true })]) })).toMatchObject({ step: 'verified', tone: 'green', criteria: { total: 2, verified: 2, waived: 1 } });
+    expect(run({ spec: done, verification: ver([crit('verified')], [crit('waived'), crit('unverified', { level: 'should' }), crit('unverified', { upcoming: true })]) })).toMatchObject({ step: 'implemented', tone: 'blue', criteria: { total: 2, verified: 2, waived: 1 } });
     const stale = run({ spec: done, verification: ver([crit('verified'), crit('stale')]) });
     expect(stale).toMatchObject({ step: 'implemented', tone: 'orange', criteria: { stale: 1 } });
     expect(stale.overlays.map((o) => o.kind)).toEqual(['stale']);
@@ -43,10 +43,10 @@ describe('maturity ladder', () => {
 
   it('audited needs a completed, non-stale audit without open must / should findings', () => {
     const base = { spec: spec('done'), verification: ver([crit('verified')]) };
-    expect(run({ ...base, lastAudit: audit() })).toMatchObject({ step: 'audited', stepIndex: 6, tone: 'green' });
-    expect(run({ ...base, lastAudit: audit({ openShould: 1, result: 'warn', openFindings: 1 }) }).step).toBe('verified');
+    expect(run({ ...base, lastAudit: audit() })).toMatchObject({ step: 'audited', stepIndex: 5, tone: 'green' });
+    expect(run({ ...base, lastAudit: audit({ openShould: 1, result: 'warn', openFindings: 1 }) }).step).toBe('implemented');
     const st = run({ ...base, lastAudit: audit({ stale: true, commitsSince: 4 }) });
-    expect(st.step).toBe('verified');
+    expect(st.step).toBe('implemented');
     expect(st.overlays[0]).toMatchObject({ kind: 'stale', reason: expect.stringMatching(/4 commits since/), refs: ['mandate://audits/au'] });
   });
 
@@ -61,7 +61,7 @@ describe('maturity ladder', () => {
     expect(m.overlays.map((o) => o.kind)).toEqual(['archived', 'failing', 'drifted', 'blocked', 'stale']);
     expect(m.tone).toBe('grey');
     const f = run({ spec: spec('done'), verification: ver([crit('verified')]), lastAudit: audit({ openMust: 1, result: 'fail' }), blockedSections: ['a'] });
-    expect(f).toMatchObject({ step: 'verified', tone: 'red' });
+    expect(f).toMatchObject({ step: 'implemented', tone: 'red' });
     expect(f.overlays.map((o) => o.kind)).toEqual(['failing', 'blocked']);
     expect(f.overlays[0]!.reason).toMatch(/1 open must finding/);
     expect(run({ blockedSections: ['b'] })).toMatchObject({ step: 'specified', tone: 'orange' });

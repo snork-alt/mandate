@@ -15,7 +15,7 @@ let counts = zero;
 const overview = {
   head: null,
   at: new Date().toISOString(),
-  maturity: { total: 0, archived: 0, steps: { draft: 0, specified: 0, in_progress: 0, implemented: 0, verified: 0, audited: 0 }, overlays: { failing: 0, drifted: 0, blocked: 0, stale: 0 } },
+  maturity: { total: 0, archived: 0, steps: { draft: 0, specified: 0, in_progress: 0, implemented: 0, audited: 0 }, overlays: { failing: 0, drifted: 0, blocked: 0, stale: 0 } },
   attention: { failing: 0, drifted: 0, blocked: 0, stale: 0, mustFindings: 0, staleClaims: 0, failedWorkOrders: 0, integrityErrors: 0, integrityWarnings: 0, integritySnoozed: 0, specs: [] },
   inProgress: [],
   inProgressTotal: 0,

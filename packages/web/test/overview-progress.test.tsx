@@ -18,7 +18,7 @@ const NOW = Date.now();
 const ago = (min: number) => new Date(NOW - min * 60_000).toISOString();
 const mat = (step: SpecMaturity['step'], implemented: number, total: number, inProgress = 1): SpecMaturity => ({
   step,
-  stepIndex: ['draft', 'specified', 'in_progress', 'implemented', 'verified', 'audited'].indexOf(step) + 1,
+  stepIndex: ['draft', 'specified', 'in_progress', 'implemented', 'audited'].indexOf(step) + 1,
   label: step === 'in_progress' ? `In progress · ${implemented}/${total}` : step,
   tone: 'lilac',
   sections: { implemented, total, inProgress },
@@ -27,7 +27,7 @@ const mat = (step: SpecMaturity['step'], implemented: number, total: number, inP
   overlays: [],
   storedStatus: 'active',
 });
-const steps0 = { draft: 0, specified: 0, in_progress: 2, implemented: 0, verified: 0, audited: 0 };
+const steps0 = { draft: 0, specified: 0, in_progress: 2, implemented: 0, audited: 0 };
 const wo = (id: string, spec: string, specTitle: string, extra: Partial<ProjectOverview['inProgress'][number]> = {}): ProjectOverview['inProgress'][number] => ({
   id,
   title: `Work ${id}`,

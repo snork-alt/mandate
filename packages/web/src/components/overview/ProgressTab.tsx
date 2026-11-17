@@ -406,7 +406,7 @@ export function SpecsMoving({ moves, loading, now }: { moves: SpecMove[]; loadin
         </div>
       ) : moves.length === 0 ? (
         <Empty icon={<IconStairsUp size={18} stroke={1.5} />} title={`No spec changed step in the last ${MOVING_HOURS} hours`}>
-          Specs show up here when they move up the maturity ladder (specified, in progress, implemented, verified, audited).
+          Specs show up here when they move up the maturity ladder (specified, in progress, implemented, audited).
         </Empty>
       ) : (
         <Capped
