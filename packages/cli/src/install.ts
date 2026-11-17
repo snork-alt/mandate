@@ -10,6 +10,7 @@ import { applyChanges, JsoncError, type Change } from './edits.js';
 import { caddySnippet, nginxSnippet } from './proxy.js';
 import { platformService, serviceSpec } from './service.js';
 import { health, waitHealthy } from './serverlink.js';
+import { pushRemoveAll } from './push.js';
 import { publicUrlProblem, readSettings, writeSettings, type ServerSettings } from './settings.js';
 import { c, fail, info, ok, Prompter, spinner, step, warn, type Out } from './ui.js';
 import { envChange, instructionFiles, KNOWN_INSTRUCTION_FILES, listProjects, projectKeys, rcChanges, readManifest, sectionChange, writeManifest } from './wiring.js';
@@ -278,7 +279,10 @@ export function uninstallChanges(ctx: Ctx, agents: AgentDef[] = AGENTS): (Change
   // User scope: every given agent, wired or not (removal only touches Mandate's own entries / files).
   for (const ag of agents) {
     const t = ag.userMcp?.(ctx);
-    if (t) changes.push(safe(() => mcpRemove(ag, t, ...mandateServersIn(ag, t))));
+    // Claude Code: also the event channel entries and hooks (push.ts).
+    const push = ag.id === 'claude-code' ? pushRemoveAll(ctx) : { names: [], changes: [] };
+    if (t) changes.push(safe(() => mcpRemove(ag, t, ...mandateServersIn(ag, t), ...push.names)));
+    changes.push(...push.changes);
   }
   const others = AGENTS.filter((a) => !agents.includes(a) && a.detect(ctx));
   const keepRoots = [...new Set(others.flatMap((a) => a.skillDirs(ctx)).map((d) => path.dirname(d)))];

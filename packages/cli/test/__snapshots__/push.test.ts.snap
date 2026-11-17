@@ -1,0 +1,51 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`connect: Claude Code event delivery wiring > writes the channel server and the hooks (snapshot), idempotently 1`] = `
+"{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "mandate events --pending --format=claude --project web --url https://mandate.example.com",
+            "timeout": 15
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "mandate watch --rewake --project web --url https://mandate.example.com",
+            "asyncRewake": true
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "mandate watch --rewake --project web --url https://mandate.example.com",
+            "asyncRewake": true
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "mandate watch --rewake --project web --url https://mandate.example.com",
+            "asyncRewake": true
+          }
+        ]
+      }
+    ]
+  }
+}
+"
+`;

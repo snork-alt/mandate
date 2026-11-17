@@ -5,6 +5,11 @@ import { main as keysMain } from '../../server/scripts/mandate.js';
 import { bool, parseArgs } from './args.js';
 import { cmdDoctor, cmdLogs, cmdOpen, cmdRestart, cmdSetupUrl, cmdStart, cmdStatus, cmdStop, cmdUpdate } from './commands.js';
 import { cmdConnect } from './connect.js';
+import { cmdChannel } from './channel.js';
+import { cmdChannelLogin } from './login.js';
+import { cmdEvents } from './events.js';
+import { cmdClaude } from './push.js';
+import { cmdWatch } from './watch.js';
 import { cmdBootstrap } from './bootstrap.js';
 import { inventory, printInventory } from './inventory.js';
 import { BIN, makeCtx, PKG_NAME, PKG_VERSION } from './context.js';
@@ -22,7 +27,11 @@ ${c.bold('Commands')}
   install [--yes] [--public-url URL] [--port N] [--bind ADDR]
           [--behind-proxy|--no-behind-proxy] [--no-service] [--no-open] [--no-agents]
           [--agents a,b] [--agents-only] [--no-global] [--dry-run]
-  connect [--project <id>] [--url <server>] [--agents a,b] [--remove] [--dry-run]
+  connect [--project <id>] [--url <server>] [--agents a,b] [--push channels|rewake|off] [--remove] [--dry-run]
+  claude [claude args]             Claude Code with the Mandate event channel (answered questions wake an idle session)
+  channel login --project <id>     store a personal token for the event stream (channel / hooks)
+  events --pending [--format claude|text|json] --project <id> --url <server>   events missed (SessionStart hook)
+  watch --rewake --project <id> --url <server>   asyncRewake hook: block until an event arrives, exit 2 with its text
   start [--foreground] [--port N] · stop · restart · status [--json]
   logs [-f] [-n N]                 server log
   open [--print]                   open the UI (setup wizard, or a one-time sign-in link)
@@ -84,6 +93,14 @@ export async function run(argv: string[], env: NodeJS.ProcessEnv = process.env, 
     }
     case 'bootstrap':
       return cmdBootstrap(ctx, a, out);
+    case 'channel':
+      return a.positional[0] === 'login' ? cmdChannelLogin(rt, a) : cmdChannel(ctx, a);
+    case 'events':
+      return cmdEvents(ctx, a, out);
+    case 'watch':
+      return cmdWatch(ctx, a, out);
+    case 'claude':
+      return cmdClaude(ctx, a, (s) => out.err(s));
     case 'key':
     case 'session':
       return keysMain([a.cmd, ...a.rest], { ...env, MANDATE_HOME: ctx.mandateHome }, (s) => out.log(s.replaceAll('npm run mandate --', BIN)));
