@@ -135,8 +135,6 @@ function implied(e: ActivityEvent): { from: MaturityStep; to: MaturityStep } | n
     case 'work_order.section_done':
     case 'work_order.completed':
       return BUILD_KINDS.has(d.kind) ? { from: 'in_progress', to: 'implemented' } : null;
-    case 'audit.completed':
-      return { from: 'implemented', to: 'audited' };
     default:
       return null;
   }

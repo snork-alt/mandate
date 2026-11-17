@@ -53,10 +53,12 @@ export interface Policy {
   components?: ComponentMode;
   /** Strict flow (opt-in): the `mandate guard` hook refuses code edits unless the agent holds a claimed work order with a step in progress. */
   strictFlow?: boolean;
+  /** Audit after work orders (opt-in, stored only when 'on'): work_order_complete queues an audit of the sections it changed. */
+  auditAfterWorkOrder?: 'off' | 'on';
 }
 /** Body of the policy PUT / flow_policy_set. */
 export const policyPatchSchema = z
-  .object({ flowPolicy: z.enum(['required', 'optional', 'off']).optional(), strictFlow: z.boolean().optional(), commit: z.enum(COMMIT_MODES).optional(), branch: z.enum(BRANCH_MODES).optional(), push: z.enum(PUSH_MODES).optional(), components: z.enum(COMPONENT_MODES).optional() })
+  .object({ flowPolicy: z.enum(['required', 'optional', 'off']).optional(), strictFlow: z.boolean().optional(), commit: z.enum(COMMIT_MODES).optional(), branch: z.enum(BRANCH_MODES).optional(), push: z.enum(PUSH_MODES).optional(), components: z.enum(COMPONENT_MODES).optional(), auditAfterWorkOrder: z.enum(['off', 'on']).optional() })
   .strict();
 /** Human labels of what a policy patch changed (activity event, tool result). */
 export function policyChanges(before: Policy, after: Policy): string[] {
@@ -65,6 +67,7 @@ export function policyChanges(before: Policy, after: Policy): string[] {
   const a = g(after);
   return [
     ...(before.flowPolicy !== after.flowPolicy ? [`flow policy ${after.flowPolicy}`] : []),
+    ...((before.auditAfterWorkOrder ?? 'off') !== (after.auditAfterWorkOrder ?? 'off') ? [`audit after work order ${after.auditAfterWorkOrder ?? 'off'}`] : []),
     ...(!!before.strictFlow !== !!after.strictFlow ? [`strict flow ${after.strictFlow ? 'on' : 'off'}`] : []),
     ...(b.commit !== a.commit ? [`commit ${a.commit}`] : []),
     ...(b.branch !== a.branch ? [`branch ${a.branch}`] : []),
@@ -213,7 +216,7 @@ export function refusal(policy: Policy, patch: PrefPatch): { code: 'policy_requi
 
 /* ------------------------------------------------------------------ policy (projects.json) */
 
-type Entry = { id: string; flowPolicy?: FlowPolicy; strictFlow?: boolean; commit?: CommitMode; branch?: BranchMode; push?: PushMode; components?: ComponentMode; approvalPolicy?: ApprovalPolicy; flow?: { enabled?: boolean; approval?: boolean } };
+type Entry = { id: string; flowPolicy?: FlowPolicy; strictFlow?: boolean; commit?: CommitMode; branch?: BranchMode; push?: PushMode; components?: ComponentMode; auditAfterWorkOrder?: 'on'; approvalPolicy?: ApprovalPolicy; flow?: { enabled?: boolean; approval?: boolean } };
 
 /** Policy of a registry entry (legacy `flow.enabled: false` → off; anything else → optional). */
 export function policyOf(e: Entry | undefined): Policy {
@@ -221,6 +224,7 @@ export function policyOf(e: Entry | undefined): Policy {
   return {
     flowPolicy: e.flowPolicy ?? (e.flow?.enabled === false ? 'off' : 'optional'),
     ...(e.strictFlow ? { strictFlow: true } : {}),
+    ...(e.auditAfterWorkOrder === 'on' ? { auditAfterWorkOrder: 'on' as const } : {}),
     ...(e.commit && e.commit !== DEFAULT_GIT.commit ? { commit: e.commit } : {}),
     ...(e.branch && e.branch !== DEFAULT_GIT.branch ? { branch: e.branch } : {}),
     ...(e.push && e.push !== DEFAULT_GIT.push ? { push: e.push } : {}),
@@ -440,6 +444,10 @@ export function projectSettings(store: ProjectsStore, id: string, clients: Clien
           if (patch.strictFlow) next.strictFlow = true;
           else delete next.strictFlow;
         }
+        if (patch.auditAfterWorkOrder !== undefined) {
+          if (patch.auditAfterWorkOrder === 'on') next.auditAfterWorkOrder = 'on';
+          else delete next.auditAfterWorkOrder;
+        }
         for (const k of ['commit', 'branch', 'push'] as const) {
           if (patch[k] === undefined) continue;
           if (patch[k] === DEFAULT_GIT[k]) delete next[k];
@@ -454,6 +462,8 @@ export function projectSettings(store: ProjectsStore, id: string, clients: Clien
         e.flowPolicy = next.flowPolicy;
         if (next.strictFlow) e.strictFlow = true;
         else delete e.strictFlow;
+        if (next.auditAfterWorkOrder === 'on') e.auditAfterWorkOrder = 'on';
+        else delete e.auditAfterWorkOrder;
         for (const k of ['commit', 'branch', 'push'] as const) {
           if (next[k]) (e as Record<string, unknown>)[k] = next[k];
           else delete e[k];

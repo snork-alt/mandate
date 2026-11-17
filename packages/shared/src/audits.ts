@@ -14,7 +14,8 @@ import { sectionSchema } from '@mandate/doc';
 import { idSchema } from './base.js';
 import { parseNodeUri, parseRef } from './refs.js';
 
-export const AUDIT_STATUSES = ['in_progress', 'completed', 'abandoned'] as const;
+/** requested = asked from the web UI (or after a work order), queued for the assigned agent; it becomes in_progress when the agent starts. */
+export const AUDIT_STATUSES = ['requested', 'in_progress', 'completed', 'abandoned'] as const;
 export type AuditStatus = (typeof AUDIT_STATUSES)[number];
 export const AUDIT_ITEM_RESULTS = ['pass', 'fail', 'partial', 'n_a'] as const;
 export type AuditItemResult = (typeof AUDIT_ITEM_RESULTS)[number];
@@ -117,6 +118,12 @@ export const auditFrontmatterSchema = z.object({
   completedAt: z.string().min(1).optional(),
   abandonedAt: z.string().min(1).optional(),
   abandonReason: z.string().optional(),
+  /** Requested audits: the agent client id it is assigned to (exclusive: only it may start it), who asked, when, why. */
+  assignee: z.string().min(1).optional(),
+  requestedBy: z.string().min(1).optional(),
+  requestedAt: z.string().min(1).optional(),
+  /** `work-order:<id>` when queued by the auditAfterWorkOrder setting. */
+  trigger: z.string().min(1).optional(),
   /** Counts (server-computed on every write): items per level and result, findings per status. */
   counts: z
     .object({
@@ -221,11 +228,24 @@ export interface Audit {
   status: AuditStatus;
   summary?: string;
   reason?: string;
+  /** Requested audits: the agent client id it is assigned to, the user who asked. */
+  assignee?: string;
+  requestedBy?: string;
+  requestedAt?: string;
+  trigger?: string;
+  /** Live progress: checklist items recorded / total and (spec audits) sections checked / total. */
+  progress: AuditProgress;
   items: AuditItem[];
   counts: Record<AuditLevel, LevelCounts>;
   findings: Record<FindingStatus, number> & { total: number; openMust: number; openShould: number; openMay: number };
   outcome: AuditOutcome;
   staleness?: AuditStaleness;
+}
+
+/** Items recorded / total and the sections of the scope whose items are all recorded. */
+export interface AuditProgress {
+  items: { done: number; total: number };
+  sections: { done: number; total: number };
 }
 
 /** Compact audit summary (lists, spec rows, `lastAudit`). */
@@ -247,6 +267,8 @@ export interface AuditSummary {
   outcome: AuditOutcome;
   counts: Record<AuditLevel, LevelCounts>;
   findings: Audit['findings'];
+  assignee?: string;
+  progress: AuditProgress;
   stale: boolean;
   staleReasons: string[];
   commitsSince: number;
@@ -359,6 +381,20 @@ export const auditStartInputSchema = z
     code: auditCodeSchema.optional(),
     /** The overview so far (scope, what you will inspect); completed by audit_complete. */
     overview: text(50_000).optional(),
+    /** The audit this agent was asked to do (event audit_requested): starts THAT audit instead of creating one. */
+    request: z.string().trim().min(1).max(200).optional(),
+  })
+  .strict();
+/** audit_request (web UI / agents): queue an audit for an agent. */
+export const auditRequestInputSchema = z
+  .object({
+    target: auditTargetSchema,
+    /** An agent handle (agents_presence). */
+    assignee: z.string().trim().min(1).max(120),
+    /** Why (shown to the agent), e.g. "Outdated: changed since implemented". */
+    note: z.string().trim().max(1000).optional(),
+    /** Section audits: what a clean result clears (outdated | upstream), for the agent's information. */
+    trigger: z.string().trim().max(200).optional(),
   })
   .strict();
 export const auditRecordItemInputSchema = z

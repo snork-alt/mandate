@@ -4,7 +4,7 @@ import { MemoryRouter, Route, Routes } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MantineProvider } from '@mantine/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { buildFindingRef, buildRef, type Audit, type AuditFinding, type AuditSummary, type LastAudit, type LevelCounts, type SpecAudits, type StandardAudits } from '@mandate/shared';
+import { auditIndicator, buildFindingRef, buildRef, type Audit, type AuditFinding, type AuditSummary, type LastAudit, type LevelCounts, type SpecAudits, type StandardAudits } from '@mandate/shared';
 import { installDom } from './dom';
 import { AuditIndicator, AuditsPanel, ComplianceView, LastAuditLine } from '../src/components/audits/panels';
 import { AuditDetailPage } from '../src/pages/AuditPages';
@@ -336,8 +336,10 @@ describe('audit helpers', () => {
     ];
     expect(sortItems(specs, 'audited').map((s) => s.title)).toEqual(['a', 'c', 'b']);
     expect(specs.filter((s) => matchesAuditFilter(s, ['never'])).map((s) => s.title)).toEqual(['a']);
-    expect(specs.filter((s) => matchesAuditFilter(s, ['stale'])).map((s) => s.title)).toEqual(['c']);
-    expect(specs.filter((s) => matchesAuditFilter(s, ['open'])).map((s) => s.title)).toEqual(['c']);
+    expect(specs.filter((s) => matchesAuditFilter(s, ['outdated'])).map((s) => s.title)).toEqual([]);
+    expect(specs.filter((s) => matchesAuditFilter(s, ['findings'])).map((s) => s.title)).toEqual(['c']);
+    expect(specs.filter((s) => matchesAuditFilter(s, ['passed'])).map((s) => s.title)).toEqual(['b']);
+    expect(auditIndicator(last({ stale: true, openFindings: 0, openMust: 0, openShould: 0 }))).toBe('outdated');
     expect(KIND_LABEL.fix).toBe('Fix');
   });
 

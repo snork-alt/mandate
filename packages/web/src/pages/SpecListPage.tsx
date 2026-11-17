@@ -45,7 +45,6 @@ const STEP_COLOR: Record<string, string> = {
   specified: 'var(--app-text-muted)',
   in_progress: 'var(--mantine-color-lilac-5, var(--mantine-primary-color-filled))',
   implemented: 'var(--mantine-color-blue-5)',
-  audited: 'var(--mantine-color-teal-7)',
 };
 
 /**
@@ -129,12 +128,13 @@ export function SpecListPage() {
         label: o.label,
         count: o.count,
         group: o.value in STEP_INDEX ? 'Stage' : 'Flags',
-        icon: <MaturityMeter stepIndex={o.value in STEP_INDEX ? STEP_INDEX[o.value]! : 5} tone={o.tone} />,
+        icon: <MaturityMeter stepIndex={o.value in STEP_INDEX ? STEP_INDEX[o.value]! : 4} tone={o.tone} />,
       })),
       audit: [
+        { value: 'passed', label: 'Audit passed', icon: <AuditDot tone="pass" />, count: all.filter((s) => matchesAuditFilter(s, ['passed'])).length },
+        { value: 'findings', label: 'Audit has findings', icon: <AuditDot tone="fail" />, count: all.filter((s) => matchesAuditFilter(s, ['findings'])).length },
+        { value: 'outdated', label: 'Audit outdated', icon: <AuditDot tone="stale" />, count: all.filter((s) => matchesAuditFilter(s, ['outdated'])).length },
         { value: 'never', label: 'Never audited', icon: <AuditDot tone="none" />, count: all.filter((s) => matchesAuditFilter(s, ['never'])).length },
-        { value: 'stale', label: 'Stale', icon: <AuditDot tone="stale" />, count: all.filter((s) => matchesAuditFilter(s, ['stale'])).length },
-        { value: 'open', label: 'Has open findings', icon: <AuditDot tone="fail" />, count: all.filter((s) => matchesAuditFilter(s, ['open'])).length },
       ],
     };
   }, [all]);

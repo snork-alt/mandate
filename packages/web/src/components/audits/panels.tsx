@@ -7,7 +7,7 @@ import { TimeAgo } from '../TimeAgo';
 import { CommitHash } from '../copy';
 import { absoluteTime } from '../../lib/time';
 import { sectionHref } from '../../lib/links';
-import { FINDING_STATUS_LABEL, OUTCOME_META, RESULT_LABEL, auditPath, auditorLabel, lastAuditTone, plural } from '../../lib/audits';
+import { FINDING_STATUS_LABEL, OUTCOME_META, RESULT_LABEL, auditIndicatorLabel, auditPath, auditorLabel, lastAuditTone, plural } from '../../lib/audits';
 import { AuditDot, AuditTrend, FindingCard, ItemResultIcon, LevelCountsTable, OutcomeBadge, StaleBadge } from './parts';
 
 /* ---------------------------------------------------------------- spec header + row */
@@ -50,7 +50,7 @@ export function AuditIndicator({ last }: { last?: LastAudit | null }) {
   const tone = lastAuditTone(last);
   const tip = (
     <div>
-      <div style={{ fontWeight: 600 }}>Audited · {OUTCOME_META[last.result].label}</div>
+      <div style={{ fontWeight: 600 }}>{auditIndicatorLabel(last)}</div>
       <div>
         {absoluteTime(last.at)} · {auditorLabel(last.auditor)}
       </div>
@@ -60,7 +60,7 @@ export function AuditIndicator({ last }: { last?: LastAudit | null }) {
   );
   return (
     <Tooltip label={tip} multiline maw={300}>
-      <span className="row-indicator audit-indicator" data-tone={tone} aria-label={`Audited ${shortAge(last.at)} ago`}>
+      <span className="row-indicator audit-indicator" data-tone={tone} aria-label={`${auditIndicatorLabel(last)}, ${shortAge(last.at)} ago`}>
         <AuditDot tone={tone} size={7} />
         {shortAge(last.at)}
       </span>

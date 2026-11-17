@@ -55,6 +55,7 @@ export const FEEDBACK_TRANSITIONS: Record<FeedbackStatus, FeedbackStatus[]> = {
 };
 /** Completed and abandoned audits are frozen (only finding resolutions / re-checks change). */
 export const AUDIT_TRANSITIONS: Record<AuditStatus, AuditStatus[]> = {
+  requested: ['in_progress', 'abandoned'],
   in_progress: ['completed', 'abandoned'],
   completed: [],
   abandoned: [],
@@ -393,11 +394,11 @@ const ENTRIES: LifecycleEntry[] = [
   },
   {
     kind: 'maturity',
-    states: ['draft', 'specified', 'in_progress', 'implemented', 'audited'],
+    states: ['draft', 'specified', 'in_progress', 'implemented'],
     initial: 'draft',
     terminal: [],
     frozen: [],
-    derived: ['draft', 'specified', 'in_progress', 'implemented', 'audited'],
+    derived: ['draft', 'specified', 'in_progress', 'implemented'],
     table: {},
     enforced: false,
     steps: [],

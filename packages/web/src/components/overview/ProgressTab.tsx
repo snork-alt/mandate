@@ -183,7 +183,7 @@ function SpecBar({ m }: { m: SpecMaturity }) {
 function StepPill({ step }: { step: MaturityStep }) {
   return (
     <span className="maturity-badge" data-tone={STEP_TONE[step]} data-size="sm" data-step={step}>
-      <MaturityMeter stepIndex={MATURITY_STEPS.indexOf(step) + 1} tone={STEP_TONE[step]} audited={step === 'audited'} />
+      <MaturityMeter stepIndex={MATURITY_STEPS.indexOf(step) + 1} tone={STEP_TONE[step]} />
       <span className="maturity-label">{MATURITY_LABELS[step]}</span>
     </span>
   );
@@ -406,7 +406,7 @@ export function SpecsMoving({ moves, loading, now }: { moves: SpecMove[]; loadin
         </div>
       ) : moves.length === 0 ? (
         <Empty icon={<IconStairsUp size={18} stroke={1.5} />} title={`No spec changed step in the last ${MOVING_HOURS} hours`}>
-          Specs show up here when they move up the maturity ladder (specified, in progress, implemented, audited).
+          Specs show up here when they move up the maturity ladder (specified, in progress, implemented).
         </Empty>
       ) : (
         <Capped

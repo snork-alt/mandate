@@ -129,7 +129,7 @@ Example: {"enabled":false}`,
     title: 'Set the project flow policy (admin)',
     kind: 'write',
     uiOnly: true,
-    description: `Web UI admins only: the project flow policy. flowPolicy: required | optional (default, each client chooses) | off (read-only); strictFlow: guard hook refuses edits outside a claimed step; commit auto|ask; branchMode per-request|current; push off|auto; components required|optional.
+    description: `Web UI admins only: the project flow policy. flowPolicy: required | optional (default, each client chooses) | off (read-only); strictFlow: guard hook refuses edits outside a claimed step; commit auto|ask; branchMode per-request|current; push off|auto; components required|optional; auditAfterWorkOrder off|on (work_order_complete queues an audit of the changed sections for the same agent).
 Example: {"flowPolicy":"required"}`,
     input: policyPatchSchema.omit({ branch: true }).extend({ branchMode: policyPatchSchema.shape.branch }).strict(),
     run: async (a, ctx) => {

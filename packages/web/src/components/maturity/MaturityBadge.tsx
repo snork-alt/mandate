@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode, type SyntheticEvent } from 'react';
 import { Popover } from '@mantine/core';
-import { IconCheck } from '@tabler/icons-react';
 import { Link } from 'react-router';
 import { type MaturityOverlayKind, type SpecMaturity } from '@mandate/shared';
 import { sectionHref } from '../../lib/links';
@@ -12,14 +11,13 @@ import './maturity.css';
 
 const OVERLAY_LABEL: Record<MaturityOverlayKind, string> = { archived: 'Archived', failing: 'Failing', drifted: 'Drifted', blocked: 'Blocked', stale: 'Stale' };
 
-/** Five-step segmented meter (filled up to the step). */
-export function MaturityMeter({ stepIndex, tone, audited }: { stepIndex: number; tone: SpecMaturity['tone']; audited?: boolean }) {
+/** Four-step segmented meter (filled up to the step). */
+export function MaturityMeter({ stepIndex, tone }: { stepIndex: number; tone: SpecMaturity['tone'] }) {
   return (
     <span className="maturity-meter" data-tone={tone} aria-hidden="true">
-      {[1, 2, 3, 4, 5].map((i) => (
+      {[1, 2, 3, 4].map((i) => (
         <span key={i} className="maturity-seg" data-on={i <= stepIndex || undefined} />
       ))}
-      {audited && <IconCheck size={10} stroke={3} className="maturity-check" />}
     </span>
   );
 }
@@ -46,9 +44,9 @@ export function MaturityDetails({ m }: { m: SpecMaturity }) {
   return (
     <div className="maturity-details" onClick={stop}>
       <div className="maturity-details-head">
-        <MaturityMeter stepIndex={m.stepIndex} tone={m.tone} audited={m.step === 'audited'} />
+        <MaturityMeter stepIndex={m.stepIndex} tone={m.tone} />
         <strong>{m.label}</strong>
-        <span className="faint">step {m.stepIndex}/5</span>
+        <span className="faint">step {m.stepIndex}/4</span>
       </div>
       <dl className="maturity-facts">
         <dt>Sections</dt>
@@ -144,7 +142,7 @@ export function MaturityBadge({ m, size = 'md' }: { m: SpecMaturity; size?: 'sm'
   return (
     <WithDetails m={m}>
       <span className="maturity-badge" role="img" data-tone={m.tone} data-size={size} data-step={m.step} aria-label={`Maturity: ${m.label}${o ? ` · ${OVERLAY_LABEL[o.kind]}` : ''}`}>
-        <MaturityMeter stepIndex={m.stepIndex} tone={m.tone} audited={m.step === 'audited'} />
+        <MaturityMeter stepIndex={m.stepIndex} tone={m.tone} />
         <span className="maturity-label">{m.label}</span>
         {o && (
           <span className="maturity-marker" data-kind={o.kind}>
@@ -162,7 +160,7 @@ export function MaturityDot({ m, details = true }: { m: SpecMaturity; details?: 
   const o = m.overlays[0];
   const el = (
     <span className="maturity-dot" data-tone={m.tone} aria-label={`Maturity: ${m.label}${o ? ` · ${OVERLAY_LABEL[o.kind]}` : ''}`} role="img">
-      <MaturityMeter stepIndex={m.stepIndex} tone={m.tone} audited={m.step === 'audited'} />
+      <MaturityMeter stepIndex={m.stepIndex} tone={m.tone} />
     </span>
   );
   return details ? <WithDetails m={m}>{el}</WithDetails> : el;

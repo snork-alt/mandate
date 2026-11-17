@@ -41,13 +41,12 @@ describe('maturity ladder', () => {
     expect(run({ spec: done, verification: ver([]) }).step).toBe('implemented');
   });
 
-  it('audited needs a completed, non-stale audit without open must / should findings', () => {
+  it('there is no audited step: the audit does not change the step or the overlays', () => {
     const base = { spec: spec('done'), verification: ver([crit('verified')]) };
-    expect(run({ ...base, lastAudit: audit() })).toMatchObject({ step: 'audited', stepIndex: 5, tone: 'green' });
-    expect(run({ ...base, lastAudit: audit({ openShould: 1, result: 'warn', openFindings: 1 }) }).step).toBe('implemented');
-    const st = run({ ...base, lastAudit: audit({ stale: true, commitsSince: 4 }) });
+    expect(run({ ...base, lastAudit: audit() })).toMatchObject({ step: 'implemented', stepIndex: 4, tone: 'blue' });
+    const st = run({ ...base, lastAudit: audit({ stale: true, commitsSince: 4, openMust: 1, result: 'fail' }) });
     expect(st.step).toBe('implemented');
-    expect(st.overlays[0]).toMatchObject({ kind: 'stale', reason: expect.stringMatching(/4 commits since/), refs: ['mandate://audits/au'] });
+    expect(st.overlays).toEqual([]);
   });
 
   it('overlay precedence: archived > failing > drifted > blocked > stale; the step is kept', () => {
@@ -59,11 +58,12 @@ describe('maturity ladder', () => {
       drift: ['1 criteria changed since done'],
     });
     expect(m.overlays.map((o) => o.kind)).toEqual(['archived', 'failing', 'drifted', 'blocked', 'stale']);
+    expect(m.audit).toMatchObject({ openMust: 2 });
     expect(m.tone).toBe('grey');
-    const f = run({ spec: spec('done'), verification: ver([crit('verified')]), lastAudit: audit({ openMust: 1, result: 'fail' }), blockedSections: ['a'] });
+    const f = run({ spec: spec('done'), verification: ver([crit('failing')]), blockedSections: ['a'] });
     expect(f).toMatchObject({ step: 'implemented', tone: 'red' });
     expect(f.overlays.map((o) => o.kind)).toEqual(['failing', 'blocked']);
-    expect(f.overlays[0]!.reason).toMatch(/1 open must finding/);
+    expect(f.overlays[0]!.reason).toMatch(/1 must criterion failing/);
     expect(run({ blockedSections: ['b'] })).toMatchObject({ step: 'specified', tone: 'orange' });
   });
 });

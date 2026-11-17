@@ -18,6 +18,8 @@ export interface Policy {
   push?: 'off' | 'auto';
   /** Component ownership: required (default) | optional. */
   components?: 'required' | 'optional';
+  /** Queue an audit of the changed sections when a work order completes (default off). */
+  auditAfterWorkOrder?: 'on' | 'off';
 }
 export interface FlowClient {
   id: string;

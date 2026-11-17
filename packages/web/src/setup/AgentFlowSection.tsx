@@ -194,6 +194,22 @@ function PolicyControls({ p, admin }: { p: FlowProject; admin: boolean }) {
           installer when this is on; needs a personal token.
         </Text>
       </div>
+      <div className="flow-policy-row" data-testid={`flow-audit-${p.id}`}>
+        <Text size="sm" fw={500}>
+          Audit after work orders
+        </Text>
+        <Switch
+          size="sm"
+          checked={p.policy.auditAfterWorkOrder === 'on'}
+          disabled={!admin || m.policy.isPending}
+          onChange={(e) => set({ auditAfterWorkOrder: e.currentTarget.checked ? 'on' : 'off' })}
+          aria-label="Audit after work orders"
+          label={p.policy.auditAfterWorkOrder === 'on' ? 'On' : 'Off'}
+        />
+        <Text size="xs" c="dimmed">
+          Off by default. When on, completing a work order queues an audit of the sections it changed, assigned to the same agent (it appears on the spec page and in Audits).
+        </Text>
+      </div>
       <div className="flow-policy-row" data-testid={`flow-git-${p.id}`}>
         <Text size="sm" fw={500}>
           Git

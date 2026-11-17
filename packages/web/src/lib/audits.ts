@@ -9,7 +9,7 @@ import type {
   FindingStatus,
   LastAudit,
 } from '@mandate/shared';
-import { parseAuditCodeRef } from '@mandate/shared';
+import { auditIndicator, parseAuditCodeRef } from '@mandate/shared';
 import { mentionOf, parseNodeUri } from '@mandate/shared/refs';
 import { appOrigin } from '../project';
 import type { CopyTarget } from './refs';
@@ -96,9 +96,15 @@ export const openFindings = (s: Pick<AuditSummary, 'findings'>) => s.findings.op
 export const byLastAudited = (a: { lastAudit?: LastAudit | null }, b: { lastAudit?: LastAudit | null }) =>
   (a.lastAudit?.at ?? '').localeCompare(b.lastAudit?.at ?? '');
 
-export type AuditFilter = 'never' | 'stale' | 'open';
+export type AuditFilter = 'passed' | 'findings' | 'outdated' | 'never';
+/** The audit filter of the spec list: passed / findings / outdated (spec or code changed since) / never ('stale' and 'open' are the old names). */
 export function matchesAuditFilter(s: { lastAudit?: LastAudit | null }, f: string[]): boolean {
   if (!f.length) return true;
-  const la = s.lastAudit;
-  return f.some((x) => (x === 'never' ? !la : x === 'stale' ? !!la?.stale : x === 'open' ? (la?.openFindings ?? 0) > 0 : false));
+  const st = auditIndicator(s.lastAudit);
+  return f.some((x) => (x === 'never' ? st === 'never' : x === 'passed' ? st === 'passed' : x === 'findings' || x === 'open' ? st === 'findings' : x === 'outdated' || x === 'stale' ? st === 'outdated' : false));
+}
+/** Label of the audit indicator: "Audit passed", "Audit: 2 findings", "Audit outdated", "Never audited". */
+export function auditIndicatorLabel(a: LastAudit | null | undefined): string {
+  const st = auditIndicator(a);
+  return st === 'never' ? 'Never audited' : st === 'passed' ? 'Audit passed' : st === 'outdated' ? 'Audit outdated' : `Audit: ${plural(a!.openMust + a!.openShould, 'finding')}`;
 }

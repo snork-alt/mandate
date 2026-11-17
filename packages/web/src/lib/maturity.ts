@@ -26,7 +26,7 @@ export function compareMaturity(a: { maturity?: SpecMaturity; title: string }, b
 }
 
 export const maturityOptions = (specs: { maturity?: SpecMaturity }[]) => [
-  ...(['draft', 'specified', 'in_progress', 'implemented', 'audited'] as MaturityStep[]).map((s) => ({
+  ...(['draft', 'specified', 'in_progress', 'implemented'] as MaturityStep[]).map((s) => ({
     value: s,
     label: MATURITY_LABELS[s],
     tone: STEP_TONE[s],

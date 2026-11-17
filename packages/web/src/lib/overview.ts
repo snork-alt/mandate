@@ -98,7 +98,6 @@ export const STEP_COLOR: Record<string, string> = {
   in_progress: 'var(--mantine-color-lilac-5, var(--mantine-primary-color-filled))',
   implemented: 'var(--mantine-color-blue-5)',
   verified: 'var(--mantine-color-teal-5)',
-  audited: 'var(--mantine-color-teal-7)',
 };
 
 /* ---------------------------------------------------------------- tabs */

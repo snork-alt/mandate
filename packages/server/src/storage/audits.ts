@@ -19,6 +19,7 @@ import {
   type AuditOverview,
   type AuditPlan,
   type AuditPlanItem,
+  type AuditProgress,
   type AuditStaleness,
   type AuditSummary,
   type ComponentAuditStatus,
@@ -116,7 +117,7 @@ export function auditCounts(a: Pick<StoredAudit, 'sections'>) {
 
 /** pass / warn (should) / fail (must): failing items without a resolution of all their findings, or open findings. */
 export function auditOutcome(a: Pick<StoredAudit, 'status' | 'sections'>): AuditOutcome {
-  if (a.status === 'in_progress') return 'in_progress';
+  if (a.status === 'in_progress' || a.status === 'requested') return 'in_progress';
   if (a.status === 'abandoned') return 'abandoned';
   const items = a.sections.filter(isItem);
   const bad = (lvl: AuditLevel) => items.some((s) => s.level === lvl && (itemFailing(s) || (s.findings ?? []).some((f) => findingStatus(f) === 'open')));
@@ -162,7 +163,7 @@ export class AuditService {
     if (current) {
       if (current.target !== next.target || current.commit !== next.commit || current.startedAt !== next.startedAt) throw new AuditError('audit_frozen', 'target, commit and startedAt of an audit never change');
       if (current.status !== next.status && !AUDIT_TRANSITIONS[current.status].includes(next.status)) throw new AuditError('audit_frozen', `audit ${next.id}: ${current.status} -> ${next.status} is not allowed (start a new audit to re-audit)`);
-      if (current.status !== 'in_progress') {
+      if (current.status === 'completed' || current.status === 'abandoned') {
         if (frozenView({ ...next }) !== frozenView({ ...current })) {
           throw new AuditError('audit_frozen', `audit ${next.id} is ${current.status}: only finding resolutions and re-checks can change (start a new audit to re-audit)`);
         }
@@ -174,7 +175,7 @@ export class AuditService {
           if (!next.sections.some((x) => (x.findings ?? []).some((g) => g.id === f.id))) throw new AuditError('audit_frozen', `finding ${f.id} is linked to a work order / feedback and cannot be removed`);
         }
       }
-    } else if (next.status !== 'in_progress') throw invalid('audits start in_progress');
+    } else if (next.status !== 'in_progress' && next.status !== 'requested') throw invalid('audits start requested or in_progress');
     return { ...next, sections: next.sections.map(cleanSection), counts: auditCounts(next) };
   }
 
@@ -210,7 +211,7 @@ export class AuditService {
     const audits = (await this.list()).filter((a) => a.target === core.target);
     const views = await Promise.all(audits.map((a) => this.view(a, m, { staleness: false })));
     const completed = views.filter((a) => a.status === 'completed').sort((a, b) => (b.completedAt ?? '').localeCompare(a.completedAt ?? ''));
-    const prog = views.find((a) => a.status === 'in_progress');
+    const prog = views.find((a) => a.status === 'in_progress' || a.status === 'requested');
     const last = completed[0] ? { ...completed[0], staleness: await this.staleness(audits.find((a) => a.id === completed[0]!.id)!, m) } : null;
     return {
       ...core,
@@ -449,12 +450,36 @@ export class AuditService {
       status: a.status,
       ...(a.summary ? { summary: a.summary } : {}),
       ...(a.abandonReason ? { reason: a.abandonReason } : {}),
+      ...(a.assignee ? { assignee: a.assignee } : {}),
+      ...(a.requestedBy ? { requestedBy: a.requestedBy } : {}),
+      ...(a.requestedAt ? { requestedAt: a.requestedAt } : {}),
+      ...(a.trigger ? { trigger: a.trigger } : {}),
+      progress: this.progressOf(a, targetDoc as StoredSpec | StoredStandard | undefined),
       items,
       counts: { must: c.must, should: c.should, may: c.may },
       findings: { ...c.findings, total: all.length, openMust: openAt('must'), openShould: openAt('should'), openMay: openAt('may') },
       outcome: auditOutcome(a),
       ...(opts.staleness === false ? {} : { staleness: await this.staleness(a, model) }),
     };
+  }
+
+  /** Items recorded / total, and (spec audits) the sections of the scope whose own items are all recorded. */
+  private progressOf(a: StoredAudit, doc: StoredSpec | StoredStandard | undefined): AuditProgress {
+    const items = a.sections.filter(isItem);
+    const done = items.filter((s) => (s.result ?? 'pending') !== 'pending');
+    const recorded = new Set(done.map((s) => s.ref));
+    const out: AuditProgress = { items: { done: done.length, total: items.length }, sections: { done: 0, total: 0 } };
+    const t = parseRef(a.target);
+    if (t?.kind !== 'specs' || !doc) return out;
+    const spec = doc as StoredSpec;
+    for (const s of spec.sections) {
+      if (s.archived || isCriterion(s)) continue;
+      const mine = items.filter((i) => i.ref === sectionUri('specs', spec.id, s.id) || s.verifiedBy.some((v) => i.ref === sectionUri('specs', spec.id, v)) );
+      if (!mine.length) continue;
+      out.sections.total++;
+      if (mine.every((i) => recorded.has(i.ref))) out.sections.done++;
+    }
+    return out;
   }
 
   summaryOf(a: Audit): AuditSummary {
@@ -475,6 +500,8 @@ export class AuditService {
       outcome: a.outcome,
       counts: a.counts,
       findings: a.findings,
+      ...(a.assignee ? { assignee: a.assignee } : {}),
+      progress: a.progress,
       stale: a.staleness?.stale ?? false,
       staleReasons: a.staleness?.reasons ?? [],
       commitsSince: a.staleness?.commitsSince ?? 0,
@@ -634,7 +661,7 @@ export class AuditService {
     for (let i = 2; ; i++) if (!used.has(`${base}-${i}`)) return `${base}-${i}`;
   }
 
-  async start(input: { target: string; commit?: string; code?: AuditCode; overview?: string }, who: { agent: string; user?: string }, meta: CommitMeta = {}): Promise<StoredAudit> {
+  async start(input: { target: string; commit?: string; code?: AuditCode; overview?: string }, who: { agent: string; user?: string }, meta: CommitMeta = {}, req?: { assignee: string; requestedBy?: string; trigger?: string }): Promise<StoredAudit> {
     const m = await this.deps.model();
     const t = await this.targetDoc(input.target, m);
     if (t.spec?.status === 'archived') throw invalid(`${t.uri} is archived`);
@@ -684,11 +711,29 @@ export class AuditService {
       commit,
       ...(input.code ? { code: input.code } : {}),
       auditor: { agent: who.agent, ...(who.user ? { user: who.user } : {}) },
-      status: 'in_progress' as const,
+      status: req ? ('requested' as const) : ('in_progress' as const),
       startedAt: now.toISOString(),
+      ...(req ? { assignee: req.assignee, ...(req.requestedBy ? { requestedBy: req.requestedBy } : {}), requestedAt: now.toISOString(), ...(req.trigger ? { trigger: req.trigger } : {}) } : {}),
       sections,
     };
-    return this.repo.create(doc as never, { ...meta, message: meta.message ?? `audit: start ${id} (${t.uri.replace('mandate://', '')})`, trailers: { ...meta.trailers, Audit: id } });
+    return this.repo.create(doc as never, { ...meta, message: meta.message ?? `audit: ${req ? 'request' : 'start'} ${id} (${t.uri.replace('mandate://', '')})`, trailers: { ...meta.trailers, Audit: id } });
+  }
+
+  /**
+   * The assigned agent starts the audit it was asked to do (audit_start { request }): requested -> in_progress, the
+   * auditor and the audited code are recorded. Exclusive: only the assignee (client id `me` or one of its handles) may.
+   */
+  async begin(input: { auditId: string; code?: AuditCode }, who: { agent: string; user?: string }, me: { id: string; handles?: string[] }, meta: CommitMeta = {}): Promise<StoredAudit> {
+    return this.repo.modify(
+      input.auditId,
+      (a) => {
+        if (a.status === 'in_progress' && a.assignee && a.assignee !== me.id) throw new AuditError('already_taken', `audit ${a.id} was already started by ${a.auditor.agent}`);
+        if (a.status !== 'requested' && a.status !== 'in_progress') throw new AuditError('audit_frozen', `audit ${a.id} is ${a.status}`);
+        if (a.assignee && a.assignee !== me.id && !(me.handles ?? []).includes(a.assignee)) throw new AuditError('not_assigned', `audit ${a.id} is assigned to ${a.assignee}`);
+        return { ...a, status: 'in_progress', auditor: { agent: who.agent, ...(who.user ? { user: who.user } : {}) }, ...(input.code ? { code: input.code } : {}), assignee: me.id } as StoredAudit;
+      },
+      { ...meta, message: meta.message ?? `audit: start ${input.auditId}`, trailers: { ...meta.trailers, Audit: input.auditId } },
+    );
   }
 
   private sectionOfModel(uri: string, m: Model): Section | undefined {
@@ -701,7 +746,9 @@ export class AuditService {
     return this.requireInProgress(await this.repo.get(id));
   }
 
+  /** Recording against a requested audit starts it (the agent that was asked to do it). */
   private requireInProgress(a: StoredAudit): StoredAudit {
+    if (a.status === 'requested') return { ...a, status: 'in_progress' };
     if (a.status !== 'in_progress') throw new AuditError('audit_frozen', `audit ${a.id} is ${a.status}: items can only be recorded while in progress (re-check findings with audit_recheck, or start a new audit)`);
     return a;
   }
@@ -733,7 +780,7 @@ export class AuditService {
     const audit = await this.repo.modify(
       input.auditId,
       (a) => {
-        this.requireInProgress(a);
+        const cur = this.requireInProgress(a);
         const item = this.itemFor(a, input.ref);
         itemId = item.id;
         const used = a.sections.flatMap((s) => (s.findings ?? []).map((f) => f.id)).filter((id) => !(item.findings ?? []).some((f) => f.id === id));
@@ -754,7 +801,7 @@ export class AuditService {
           );
         }
         const next: Item = { ...item, result: input.result, body: notes, findings: stored };
-        return { ...a, sections: a.sections.map((s) => (s.id === item.id ? next : s)) };
+        return { ...cur, sections: a.sections.map((s) => (s.id === item.id ? next : s)) };
       },
       { ...meta, get message() { return meta.message ?? `audit: ${input.result} ${itemId} in ${input.auditId}`; }, trailers: { ...meta.trailers, Audit: input.auditId } } as CommitMeta,
     );

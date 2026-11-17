@@ -302,7 +302,7 @@ export const requestCreateInputSchema = z
     quote: text(5000).optional(),
     relatedTo: z.array(relatedRef).max(20).optional(),
     /** `comment`: the request comes from a comment (relatedTo: the commented object and the comment, mandate://comments/<id>). */
-    source: z.enum(['comment', 'ui']).optional(),
+    source: z.enum(['comment', 'ui', 'audit']).optional(),
     /** Who handles it: a client id / handle of an agent (presence), or `any` (the next free agent). Queued while it is offline. */
     assignee: line(200).optional(),
     /** Objects the request refers to (@-references: mandate:// refs, `repo:path` code refs); also extracted from the body. */

@@ -80,7 +80,7 @@ it, the standards it follows and the code it owns.
 <img src="docs/media/overview.gif" alt="The Mandate overview: spec maturity across the project, what needs attention, and questions from coding agents waiting for a decision" />
 
 The Overview answers "how far along are we, and what is waiting on me?". The maturity bar shows every spec on the ladder
-*Draft → Specified → In progress → Implemented → Verified → Audited*, with overlays for **failing**, **drifted**,
+*Draft → Specified → In progress → Implemented → Audited*, with overlays for **failing**, **drifted**,
 **blocked** and **stale**. **Action needed** collects every human decision in one list: open questions from agents,
 legacy waivers, draft standards, stale claims, drifted done specs, contradicted audits and integrity issues. **In progress**
 shows claimed work orders with their branches and heartbeats; **Health** shows verification and audit coverage.

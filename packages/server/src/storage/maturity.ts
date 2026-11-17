@@ -58,26 +58,17 @@ export function specMaturity(i: MaturityInput): SpecMaturity {
   if (spec.status === 'draft') step = 'draft';
   else if (sections.total > 0 && implemented === 0 && inProgress === 0 && spec.status !== 'done') step = 'specified';
   else if (implemented < sections.total && spec.status !== 'done') step = 'in_progress';
-  else if (i.lastAudit && i.lastAudit.result !== 'in_progress' && !i.lastAudit.stale && i.lastAudit.openMust === 0 && i.lastAudit.openShould === 0) step = 'audited';
   else step = 'implemented';
 
   const overlays: MaturityOverlay[] = [];
   const specUri = buildRef({ kind: 'specs', id: spec.id });
   if (spec.status === 'archived') overlays.push({ kind: 'archived', reason: 'The spec is archived (no longer in force).', refs: [specUri] });
   const failing = gating.filter((c) => c.state === 'failing');
-  const mustFindings = i.lastAudit?.openMust ?? 0;
-  if (failing.length || mustFindings) {
-    const parts = [failing.length ? `${failing.length} must criteri${failing.length === 1 ? 'on' : 'a'} failing (${failing.map((c) => c.title).join(', ')})` : '', mustFindings ? `${mustFindings} open must finding${mustFindings === 1 ? '' : 's'} in the last audit` : ''].filter(Boolean);
-    overlays.push({ kind: 'failing', reason: `${parts.join('; ')}.`, refs: [...failing.map((c) => c.uri), ...(mustFindings && i.lastAudit ? [i.lastAudit.uri] : [])] });
-  }
+  if (failing.length) overlays.push({ kind: 'failing', reason: `${failing.length} must criteri${failing.length === 1 ? 'on' : 'a'} failing (${failing.map((c) => c.title).join(', ')}).`, refs: failing.map((c) => c.uri) });
   if (i.drift.length) overlays.push({ kind: 'drifted', reason: `Done, but the gate no longer holds: ${i.drift.join('; ')}.`, refs: [specUri] });
   if (i.blockedSections.length) overlays.push({ kind: 'blocked', reason: `${i.blockedSections.length} section(s) depend on work that is not implemented: ${i.blockedSections.join(', ')}.`, refs: i.blockedSections.map((s) => buildRef({ kind: 'specs', id: spec.id, sectionId: s })) });
   const staleCrit = gating.filter((c) => c.state === 'stale' || c.state === 'unknown');
-  const staleAudit = !!i.lastAudit?.stale;
-  if (staleCrit.length || staleAudit) {
-    const parts = [staleCrit.length ? `${staleCrit.length} verification${staleCrit.length === 1 ? ' is' : 's are'} stale (${staleCrit.map((c) => c.title).join(', ')})` : '', staleAudit ? `the last audit is stale (${i.lastAudit!.commitsSince} commits since)` : ''].filter(Boolean);
-    overlays.push({ kind: 'stale', reason: `${parts.join('; ')}.`, refs: [...staleCrit.map((c) => c.uri), ...(staleAudit ? [i.lastAudit!.uri] : [])] });
-  }
+  if (staleCrit.length) overlays.push({ kind: 'stale', reason: `${staleCrit.length} verification${staleCrit.length === 1 ? ' is' : 's are'} stale (${staleCrit.map((c) => c.title).join(', ')}).`, refs: staleCrit.map((c) => c.uri) });
 
   const label = step === 'in_progress' ? `${MATURITY_LABELS[step]} · ${implemented}/${sections.total}` : MATURITY_LABELS[step];
   return {

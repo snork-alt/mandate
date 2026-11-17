@@ -51,7 +51,7 @@ export function ComponentMaturityDot({ ids }: { ids: string[] }) {
   return (
     <Tooltip label={tip} multiline maw={300} withinPortal>
       <span className="maturity-dot" data-tone={cm.tone} role="img" aria-label={`Maturity: ${MATURITY_LABELS[cm.step]}${cm.overlay ? ` · ${OVERLAY_LABEL[cm.overlay]}` : ''}`}>
-        <MaturityMeter stepIndex={cm.stepIndex} tone={cm.tone} audited={cm.step === 'audited'} />
+        <MaturityMeter stepIndex={cm.stepIndex} tone={cm.tone} />
       </span>
     </Tooltip>
   );

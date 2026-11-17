@@ -946,7 +946,7 @@ const feedbackFields = {
   /** Related elements: feedback ids (e.g. a closed item this one follows up on) or element references (DF-7). */
   relatedTo: z.array(relatedRefSchema).default([]),
   /** Where the request came from: `comment` = a comment on an object that turned out to be a change (relatedTo: the object and the comment). */
-  source: z.enum(['comment', 'ui']).optional(),
+  source: z.enum(['comment', 'ui', 'audit']).optional(),
   /** Request-from-the-UI fields (also usable by agents): who should handle it (client id or `any`), refs from @-references, priority, stop after the plan. */
   assignee: z.string().min(1).max(200).optional(),
   assignedAt: z.string().optional(),

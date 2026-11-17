@@ -65,8 +65,8 @@ export const specListInputSchema = z
     verification: list(z.enum(VERIFICATION_FILTER_STATES), 5).optional(),
     /** Audit state: never (no completed audit), stale, open_findings, or the last outcome (fail | warn | pass). */
     audit: list(z.enum(['never', 'stale', 'open_findings', 'fail', 'warn', 'pass']), 6).optional(),
-    /** Maturity step (draft | specified | in_progress | implemented | audited) or overlay (failing | drifted | blocked | stale | archived). */
-    maturity: list(z.enum(['draft', 'specified', 'in_progress', 'implemented', 'audited', 'failing', 'drifted', 'blocked', 'stale', 'archived']), 11).optional(),
+    /** Maturity step (draft | specified | in_progress | implemented) or overlay (failing | drifted | blocked | stale | archived). */
+    maturity: list(z.enum(['draft', 'specified', 'in_progress', 'implemented', 'failing', 'drifted', 'blocked', 'stale', 'archived']), 11).optional(),
     /** Case-insensitive substring of the id or title. */
     q: shortText(200).optional(),
     ...page,
