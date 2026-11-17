@@ -158,3 +158,33 @@ describe('Ask subagent', () => {
     expect(readFileSync(file(ctx), 'utf8')).toContain('mine');
   });
 });
+
+describe('Audit subagent', () => {
+  const file = (ctx: ReturnType<typeof tempCtx>) => path.join(ctx.home, '.claude', 'agents', 'mandate-audit.md');
+  const args = ['connect', '--yes', '--no-repo', '--url', URL, '--project', 'web', '--agents', 'claude-code'];
+
+  it('connect writes a read-only subagent with the audit tools (snapshot); --remove and uninstall delete it', async () => {
+    const ctx = tempCtx();
+    expect(await run(args, envOf(ctx), capture(), ctx.dir)).toBe(0);
+    const md = readFileSync(file(ctx), 'utf8');
+    const tools = /^tools: (.*)$/m.exec(md)![1]!.split(', ');
+    expect(tools.slice(0, 3)).toEqual(['Read', 'Grep', 'Glob']);
+    for (const t of ['audit_plan', 'audit_start', 'audit_record_item', 'audit_complete', 'search']) expect(tools).toContain(`mcp__mandate-web__${t}`);
+    expect(tools.join()).not.toMatch(/Edit|Write|Bash|request_create|comment_add|work_order|audit_request|question_ask/);
+    expect(md).toMatch(/^model: sonnet$/m);
+    expect(md).toMatchSnapshot();
+    expect(await run(args, envOf(ctx), capture(), ctx.dir)).toBe(0); // idempotent
+    expect(await run([...args, '--remove'], envOf(ctx), capture(), ctx.dir)).toBe(0);
+    expect(existsSync(file(ctx))).toBe(false);
+    expect(await run(args, envOf(ctx), capture(), ctx.dir)).toBe(0);
+    applyChanges(uninstallChanges(ctx), { dryRun: false, out: capture() });
+    expect(existsSync(file(ctx))).toBe(false);
+  });
+
+  it('a user-owned agent file of that name is left alone', async () => {
+    const ctx = tempCtx();
+    write(file(ctx), '---\nname: mandate-audit\n---\nmine\n');
+    expect(await run(args, envOf(ctx), capture(), ctx.dir)).toBe(0);
+    expect(readFileSync(file(ctx), 'utf8')).toContain('mine');
+  });
+});

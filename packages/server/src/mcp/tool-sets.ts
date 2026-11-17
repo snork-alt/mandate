@@ -299,8 +299,8 @@ export const TOOL_SETS: Record<ToolSetName, readonly string[]> = {
     'work_order_create', 'work_order_cancel',
     'work_order_next', 'work_order_claim', 'work_order_heartbeat', 'work_order_plan_set', 'work_order_task_set', 'work_order_touch', 'work_order_git_update', 'work_order_complete', 'work_order_fail', 'work_order_release',
     'verification_record', 'question_ask', 'question_cancel', 'comment_add', 'comment_resolve',
-    'status_set', 'section_update', 'section_reverify', 'section_accept', 'section_link_ack', 'rules_for_code', 'news_list', 'news_ack',
-    'audit_request', 'audit_plan', 'audit_start', 'audit_record_item', 'audit_complete', 'audit_get',
+    'status_set', 'section_update', 'section_reverify', 'section_link_ack', 'rules_for_code', 'news_list', 'news_ack',
+    'audit_plan', 'audit_start', 'audit_record_item', 'audit_complete',
     'ask_pending', 'ask_answer', 'upload_url_create', 'architecture_get', 'code_owner', 'standard_usage', 'graph_neighbors',
   ],
   /** Legacy set name: its tools moved to core (listed by default). */
@@ -312,7 +312,7 @@ export const TOOL_SETS: Record<ToolSetName, readonly string[]> = {
   ],
   /** Audits, reviews and human decisions. */
   review: [
-    'audit_plan', 'audit_start', 'audit_record_item', 'audit_complete', 'audit_abandon', 'audit_findings_to_work_orders', 'audit_recheck', 'audit_finding_relink', 'audit_findings', 'audit_overview',
+    'audit_request', 'section_accept', 'audit_plan', 'audit_start', 'audit_record_item', 'audit_complete', 'audit_abandon', 'audit_findings_to_work_orders', 'audit_recheck', 'audit_finding_relink', 'audit_findings', 'audit_overview',
     'comment_reopen', 'rule_check_plan', 'spec_diff_since_implemented', 'request_close', 'request_update', 'integrity_snooze', 'question_answer', 'work_order_touch_from_commits',
   ],
   /** Why and impact: the knowledge graph, lineage, history and code / text search. */

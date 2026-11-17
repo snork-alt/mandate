@@ -22,9 +22,9 @@ const strip = ({ news: _n, ...b }: Record<string, any>) => b;
 const names = async (c: Awaited<ReturnType<typeof connect>>) => (await c.listTools()).tools.map((t) => t.name);
 
 describe('sets', () => {
-  it('the default list is core (the whole request flow) and has at most 56 tools', async () => {
+  it('the default list is core (the whole request flow) and has at most 61 tools', async () => {
     const listed = await names(fx.client);
-    expect(listed.length).toBeLessThanOrEqual(56);
+    expect(listed.length).toBeLessThanOrEqual(61);
     expect(listed.sort()).toEqual([...TOOL_SETS.core].sort());
     expect(DEFAULT_SETS).toEqual(['core']);
   });
@@ -42,7 +42,7 @@ describe('sets', () => {
     const boot = await connect(new URL(`${fx.url.href}?tools=bootstrap,nope`));
     const listed = await names(boot);
     expect(listed).toEqual(expect.arrayContaining([...TOOL_SETS.core, ...TOOL_SETS.bootstrap]));
-    expect(listed).not.toContain('audit_plan');
+    expect(listed).not.toContain('audit_findings');
     await boot.close();
     const all = await connect(new URL(`${fx.url.href}?tools=all`));
     expect((await names(all)).length).toBe(AGENT_TOOLS.length);
@@ -57,18 +57,18 @@ describe('sets', () => {
     });
     // The request flow (create, section_insert, request_create, work_order_create, ...) is listed by default.
     expect(await names(c)).toEqual(expect.arrayContaining(['create', 'section_insert', 'request_create', 'request_close', 'work_order_create']));
-    expect(await names(c)).not.toContain('audit_plan');
+    expect(await names(c)).not.toContain('audit_findings');
     const r = await c.callTool({ name: 'tools_enable', arguments: { sets: ['review'] } });
     expect(r.isError).toBeFalsy();
     const body = r.structuredContent as { enabled: string[]; added: string[] };
     expect(body.enabled).toEqual(['core', 'review']);
-    expect(body.added).toEqual(expect.arrayContaining(['audit_plan', 'question_answer']));
+    expect(body.added).toEqual(expect.arrayContaining(['audit_findings', 'question_answer']));
     expect(changed).toBe(1);
-    expect(await names(c)).toEqual(expect.arrayContaining(['audit_plan', ...TOOL_SETS.core]));
+    expect(await names(c)).toEqual(expect.arrayContaining(['audit_findings', ...TOOL_SETS.core]));
     // Nothing new: no notification. Other sessions keep their own list. The old intake set adds nothing.
     await c.callTool({ name: 'tools_enable', arguments: { sets: ['intake'] } });
     expect(changed).toBe(1);
-    expect(await names(fx.client)).not.toContain('audit_plan');
+    expect(await names(fx.client)).not.toContain('audit_findings');
     const bad = await c.callTool({ name: 'tools_enable', arguments: { sets: ['bogus'] } });
     expect(bad.isError).toBe(true);
     await c.close();

@@ -116,7 +116,7 @@ comment becomes a request (\`request_create\` with source "comment"). Append-onl
 Every comment on an object carries \`view\`: what the user saw (implementation state incl. Outdated and the implemented
 commit, status, the badges with their meaning, the text they selected). Answer from it; never say you cannot see the UI.
 Badges: **Outdated** = an implemented section whose text changed since: wording only \`section_update { editorial: { reason } }\`
-(stays implemented); same behaviour, checked \`section_reverify { ref, codeRefs, verifications }\`; new behaviour: a work order task
+(stays implemented; give changeSummary: 1-2 plain sentences, no code); upstream change without impact \`section_link_ack\`; same behaviour, checked \`section_reverify { ref, codeRefs, verifications }\` (or a full audit); new behaviour: a work order task
 (\`flow_next\` says so); **Implemented @x** = implemented at spec commit x, unchanged;
 **Not implemented** = no work order has implemented it; **Waiting for you** = needs a decision only the user can make;
 **Plan ready** = a plan-only request awaiting the user's approval; **Queued** = assigned to an agent that has not
@@ -132,6 +132,13 @@ editorial, re-verify, start the request).
 \`audit_plan\` → \`audit_start\` → \`audit_record_item\` per item (notes: how you checked, \`repo:path#Lx-Ly\`) →
 \`audit_complete\` → \`audit_findings_to_work_orders\` + \`request_create { fromFinding }\` → after the
 fixes, \`audit_recheck\`. What needs one: \`list { of: "specs", audit: ["never", "stale"] }\`.
+
+Audits requested from the web UI (the audit-request event, or queued after a work order when the project setting
+\`auditAfterWorkOrder\` is on) are FULL audits (every section, own and inherited criteria), done by the \`mandate-audit\`
+subagent in the background: \`audit_start { request }\` → \`audit_record_item\` per item → \`audit_complete\`. Findings feed the flow:
+code_deviates becomes a request assigned to you (\`request_assigned\`: \`/mandate resume <id>\`), spec_wrong / ambiguous a question
+for the user. A clean audit moves the implemented marker of the sections it confirms, acknowledges their upstream links and
+refreshes their out-of-date test results (clears Outdated / Upstream changed).
 
 ## Reference
 

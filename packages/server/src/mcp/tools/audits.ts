@@ -88,7 +88,7 @@ Example: {"target":"mandate://specs/login-sso","code":{"repo":"app","commit":"3f
     run: async (a, ctx) => {
       const commits: string[] = [];
       if (a.request) {
-        // The agent that was asked to do it (event audit_requested) starts THAT audit.
+        // The agent that was asked to do it (audit-request event) starts THAT audit.
         const news = newsOfProject(ctx);
         const me = clientIdentity(ctx);
         const cw = a.code ? checkClaim(ctx, a.code, 'code') : [];
@@ -110,7 +110,7 @@ Example: {"target":"mandate://specs/login-sso","code":{"repo":"app","commit":"3f
     title: 'Request an audit from an agent',
     kind: 'write',
     uiAllowed: true,
-    description: `Queue a FULL audit (every section, own and inherited criteria) of a spec or standard for an agent: assignee = an agent handle (agents_presence). It is created in state requested and the agent is told (event audit_requested; an offline agent is caught up when it connects, the audit stays queued). The agent starts it with audit_start { request } and records items; progress shows on the spec page. Findings become requests (code deviates) or questions for the user (spec wrong / ambiguous).
+    description: `Queue a FULL audit (every section, own and inherited criteria) of a spec or standard for an agent: assignee = an agent handle (agents_presence). It is created in state requested and the agent is told (audit-request event; an offline agent is caught up when it connects, the audit stays queued). The agent starts it with audit_start { request } and records items; progress shows on the spec page. Findings become requests (code deviates) or questions for the user (spec wrong / ambiguous).
 Example: {"target":"mandate://specs/login-sso","assignee":"claude-code@mbp"}`,
     input: auditRequestInputSchema,
     run: async (a, ctx) => {
