@@ -33,7 +33,7 @@ describe('installer: connect --url (user scope)', () => {
     expect(existsSync(path.join(ctx.mandateHome, 'env.sh'))).toBe(false); // no token anywhere
     // Idempotent: a second run updates in place (one entry).
     expect(await run(args, envOf(ctx), capture(), ctx.dir)).toBe(0);
-    expect(Object.keys(claudeJson(ctx).mcpServers)).toEqual(['mandate-web']);
+    expect(Object.keys(claudeJson(ctx).mcpServers)).toEqual(['mandate-web', 'mandate_events_web']); // + the event channel (push.ts)
     expect(codexToml(ctx).match(/\[mcp_servers\.mandate-web\]/g)).toHaveLength(1);
     // --remove (the installer's --uninstall)
     expect(await run([...args, '--remove'], envOf(ctx), capture(), ctx.dir)).toBe(0);
@@ -89,7 +89,7 @@ describe('one Mandate server per config file', () => {
     const out = capture();
     expect(await run(['connect', '--yes', '--no-repo', '--url', 'https://mandate.example.com', '--project', 'web', '--agents', 'claude-code'], envOf(ctx), out, ctx.dir)).toBe(0);
     const j = claudeJson(ctx);
-    expect(Object.keys(j.mcpServers).sort()).toEqual(['elsewhere', 'github', 'mandate-web']);
+    expect(Object.keys(j.mcpServers).sort()).toEqual(['elsewhere', 'github', 'mandate-web', 'mandate_events_web']);
     expect(j.numStartups).toBe(1);
     expect(out.text().split('\n').filter((l) => l.includes('replaced mandate-wafrpay, mandate-wafrpay2, wafr3'))).toHaveLength(1);
   });
@@ -111,7 +111,7 @@ describe('one Mandate server per config file', () => {
     write(path.join(ctx.home, '.claude.json'), `${JSON.stringify({ mcpServers: { 'mandate-web': { type: 'http', url: 'https://mandate.example.com/p/web/mcp' }, github: { type: 'http', url: 'https://x' } } }, null, 2)}\n`);
     expect(await run(['connect', '--yes', '--repo', '--url', 'https://mandate.example.com', '--project', 'web', '--agents', 'claude-code,codex'], envOf(ctx), capture(), repo)).toBe(0);
     expect(Object.keys(JSON.parse(readFileSync(path.join(repo, '.mcp.json'), 'utf8')).mcpServers).sort()).toEqual(['elsewhere', 'github', 'mandate-web']);
-    expect(Object.keys(claudeJson(ctx).mcpServers)).toEqual(['github']);
+    expect(Object.keys(claudeJson(ctx).mcpServers).sort()).toEqual(['github', 'mandate_events_web']);
     expect(codexToml(ctx)).toContain('[mcp_servers.mandate-web]');
   });
 });

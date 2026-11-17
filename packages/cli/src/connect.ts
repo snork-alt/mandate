@@ -12,6 +12,8 @@ import { BIN, envFile, type Ctx } from './context.js';
 import { applyChanges, JsoncError, type Change } from './edits.js';
 import { disconnectChanges, pickAgents, type Runtime } from './install.js';
 import { claudeFlowWiring } from './claude-flow.js';
+import { resolveToken } from './events.js';
+import { channelName, pushChanges, pushMode, type PushMode } from './push.js';
 import { publicUrlProblem, readSettings } from './settings.js';
 import { c, fail, info, ok, warn } from './ui.js';
 import { envChange, instructionFiles, listProjects, rcChanges, readEnvKeys, readManifest, repoSection, sectionChange, writeManifest } from './wiring.js';
@@ -136,6 +138,13 @@ async function connectRemote(rt: Runtime, a: Args, repo: string, url: string): P
   const agents = pickAgents(ctx, a);
   const server = makeServer(base, project);
   const v = envVarFor(project);
+  let push: PushMode;
+  try {
+    push = pushMode(a);
+  } catch (e) {
+    out.err(fail((e as Error).message));
+    return 2;
+  }
 
   if (bool(a, 'remove')) {
     const changes: (Change | null)[] = [];
@@ -146,6 +155,7 @@ async function connectRemote(rt: Runtime, a: Args, repo: string, url: string): P
     if (wireRepo) changes.push(...disconnectChanges(ctx, repo, project));
     changes.push(...claudeFlowWiring(ctx, agents, { project, url: base, repo: wireRepo ? repo : undefined, remove: true }));
     applyChanges(changes, { dryRun: rt.dryRun, out, home: ctx.home });
+    applyChanges(pushChanges(ctx, project, base, 'off', true), { dryRun: rt.dryRun, out, home: ctx.home }); // event channel + hooks (a second step: same files)
     if (!rt.dryRun) {
       const m = readManifest(ctx);
       writeManifest(ctx, { ...m, repos: m.repos.filter((r) => !(r.project === project && (r.repo === repo || r.repo === `user:${base}`))) });
@@ -205,6 +215,9 @@ async function connectRemote(rt: Runtime, a: Args, repo: string, url: string): P
   if (bool(a, 'strict-flow') && oauth) skipped.push(`strict flow: the edit guard (${BIN} guard) authenticates with a personal token; connect with --auth token for it to enforce (without one it lets edits through)`);
   for (const x of skipped) out.log(warn(x));
   applyChanges([...changes, ...keyChanges], { dryRun: rt.dryRun, out, home: ctx.home });
+  // Claude Code only: event delivery (channel entry + hooks; `--push off` removes an earlier setup). A second step: same files.
+  const claude = agents.some((x) => x.id === 'claude-code');
+  if (claude) applyChanges(pushChanges(ctx, project, base, push), { dryRun: rt.dryRun, out, home: ctx.home });
   if (!rt.dryRun) {
     const m = readManifest(ctx);
     const entry = wireRepo ? repo : `user:${base}`;
@@ -224,6 +237,12 @@ async function connectRemote(rt: Runtime, a: Args, repo: string, url: string): P
       else if (ag.id === 'codex') out.log(`  ${ag.label}: run ${c.cyan(`codex mcp login ${server.name}`)}, then ${c.bold('Allow')} in the browser`);
       else out.log(`  ${ag.label}: it opens the sign-in page on first use of ${c.bold(server.name)}; choose ${c.bold('Allow')}`);
     }
+  }
+  if (claude && push !== 'off') {
+    out.log(`\n${c.bold('Event delivery (Claude Code)')}`);
+    if (push === 'channels') out.log(`  start Claude Code with ${c.cyan(`${BIN} claude`)} ${c.dim(`(= claude --dangerously-load-development-channels server:${channelName(project)}): answered questions and other news wake an idle session`)}`);
+    out.log(`  ${push === 'channels' ? 'plain `claude` sessions' : 'sessions'} get the same through hooks (wake-up at the next turn end / start, and a catch-up at session start)`);
+    if (!rt.dryRun && !resolveToken(ctx, project)) out.log(warn(`events need a personal token (the sign-in of your agent cannot be shared): web UI → Connect agent → Personal tokens, then ${c.cyan(`${BIN} channel login --project ${project}`)}`));
   }
   out.log(`\n${c.bold('Verify')}`);
   if (agents.some((x) => x.id === 'claude-code')) out.log(`  ${c.cyan('claude mcp list')}   ${c.dim(`shows ${server.name} as connected${oauth ? ' (after signing in)' : ''}`)}`);

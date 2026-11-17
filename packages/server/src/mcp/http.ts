@@ -25,6 +25,7 @@ import { registerUploadRoutes, UploadService } from './uploads.js';
 import { listDecisions } from '../storage/decisions.js';
 import { createMcpServer, MCP_VERSION } from './server.js';
 import { parseToolSets } from './tool-sets.js';
+import { registerEventRoutes } from './events.js';
 
 export type { ActivityEvent };
 
@@ -210,6 +211,8 @@ export function registerMcp(app: FastifyInstance, opts: McpRouteOptions): McpHub
   app.delete('/mcp', streamOrDelete(unscoped));
 
   registerUiRoutes(app, opts, hostOk);
+  // Push event stream for agents that do not surface MCP notifications (Claude Code channel / rewake hook).
+  registerEventRoutes(app, { projects, gate: async (req, reply, project) => { const g = await gate(req, reply, project); return g ? { principal: g.principal } : null; }, ...(opts.sseKeepAliveMs ? { heartbeatMs: opts.sseKeepAliveMs } : {}) });
   // Section uploads (curl): PUT /p/<id>/sections/... (bearer) and PUT /p/<id>/uploads/<token> (one-time URL).
   registerUploadRoutes(app, { projects, auth: opts.auth, ...(opts.perms ? { perms: opts.perms } : {}), uploads, hostOk, ...(opts.baseUrl ? { baseUrl: opts.baseUrl } : {}), samePrincipal });
 

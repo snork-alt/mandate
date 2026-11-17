@@ -1,5 +1,5 @@
 /** Minimal argv parsing: `--flag`, `--no-flag`, `--key value`, `--key=value`, `-y`, `-f`, `-n N`. */
-const VALUE_FLAGS = new Set(['for', 'auth', 'mode', 'public-url', 'port', 'bind', 'project', 'agents', 'lines', 'ssh', 'name', 'ttl-minutes', 'out', 'file', 'from', 'url', 'scope', 'run', 'stage', 'area', 'area-status', 'work-order', 'retention-days', 'days']);
+const VALUE_FLAGS = new Set(['for', 'auth', 'mode', 'public-url', 'port', 'bind', 'project', 'agents', 'lines', 'ssh', 'name', 'ttl-minutes', 'out', 'file', 'from', 'url', 'scope', 'run', 'stage', 'area', 'area-status', 'work-order', 'retention-days', 'days', 'push', 'token', 'consumer', 'format', 'since', 'client', 'timeout']);
 const SHORT: Record<string, string> = { y: 'yes', f: 'follow', n: 'lines', h: 'help' };
 
 export interface Args {
