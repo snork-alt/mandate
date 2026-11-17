@@ -218,7 +218,7 @@ describe('blast_radius', () => {
     await ok('spec_section_link_add', { ref: `mandate://specs/${dep}/sections/design`, rel: 'depends_on', to: `mandate://specs/${base}/sections/design` });
     await ok('spec_section_link_add', { ref: `mandate://specs/${base}/sections/design`, rel: 'follows', to: `mandate://standards/${std}/sections/r-one` });
     await ok('request_create', { targets: [`mandate://specs/${base}/sections/overview`], kind: 'bug', body: 'Broken.' });
-    await ok('work_order_create', { spec: base, kind: 'implement', plan: { tasks: [{ text: 'Do it.', sections: ['design'] }] }, sections: ['design'] });
+    await ok('work_order_create', { spec: base, kind: 'implement', plan: { tasks: [{ text: 'Do it.', sections: ['design'], proves: [`${std}/r-one`] }], tests: [{ name: 't', proves: [`${std}/r-one`] }] }, sections: ['design'] });
     await fx.index.ensureFresh();
     const b = await read('blast_radius', { ref: `mandate://specs/${base}` });
     expect(b.dependentSpecs.map((x: { uri: string }) => x.uri)).toContain(`mandate://specs/${dep}`);

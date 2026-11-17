@@ -122,7 +122,7 @@ export function RefMentionBox({
         onChange={(e) => {
           setDismissed(null);
           setActive(0);
-          // A pasted `@mandate:mandate://...` mention becomes the bare reference (what chips render and the server extracts).
+          // A pasted `@mandate:` mention becomes the bare reference (what chips render and the server extracts).
           onChange(normalizeMentions(e.currentTarget.value));
         }}
         onKeyDown={(e) => {

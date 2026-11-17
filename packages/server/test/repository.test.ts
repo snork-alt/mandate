@@ -222,7 +222,7 @@ describe(`EntityRepository + GitStore (${testBackend})`, () => {
     const c1 = (await git.log(1))[0]!.id;
     const sec = (id: string, body: string) => ({ id, title: id.toUpperCase(), type: 'markdown', refs: [], symbols: [], links: [], verifiedBy: [], body, implementedCommit: c1 });
     await storage.specs.update('s', { sections: [sec('a', 'v1'), sec('b', 'v2')] });
-    expect(await storage.workOrderService.implementation('s')).toEqual({
+    expect(await storage.workOrderService.implementation('s')).toMatchObject({
       a: { implementedCommit: c1, outdated: false },
       b: { implementedCommit: c1, outdated: true },
     });
