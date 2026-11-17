@@ -14,6 +14,7 @@ import {
   auditListInputSchema,
   auditOverviewInputSchema,
   auditPlanInputSchema,
+  auditRequestInputSchema,
   auditRecheckInputSchema,
   auditRecordItemInputSchema,
   auditStartInputSchema,
@@ -27,6 +28,9 @@ import { slugSchema } from '@mandate/doc';
 import { z } from 'zod';
 import type { CommitMeta } from '../../storage/index.js';
 import { defineTool, type AnyToolDef, type ToolContext } from '../define.js';
+import { clientIdentity } from '../../projects/settings.js';
+import { newsOfProject, seedKnownClients } from '../../comments/route.js';
+import { afterAuditComplete, deliverAuditRequested } from '../../flow/audit-flow.js';
 import { checkClaim, checkCodeRepos, repoOfLocation, requireCommit } from '../code-claims.js';
 
 function metaOf(ctx: ToolContext, commits: string[], extra: Record<string, string> = {}): CommitMeta {
@@ -83,12 +87,45 @@ Example: {"target":"mandate://specs/login-sso","code":{"repo":"app","commit":"3f
     input: auditStartInputSchema,
     run: async (a, ctx) => {
       const commits: string[] = [];
+      if (a.request) {
+        // The agent that was asked to do it (event audit_requested) starts THAT audit.
+        const news = newsOfProject(ctx);
+        const me = clientIdentity(ctx);
+        const cw = a.code ? checkClaim(ctx, a.code, 'code') : [];
+        const id = a.request.replace(/^mandate:\/\/audits\//, '');
+        await ctx.storage.auditService.begin({ auditId: id, ...(a.code ? { code: a.code } : {}) }, auditor(ctx), { id: me.id, handles: news?.presence.get(me.id)?.label ? [news.presence.get(me.id)!.label] : [] }, metaOf(ctx, commits));
+        return { ...(await result(ctx, id, commits)), warnings: cw };
+      }
       // The audited code is a claim about code: repo (registered) + commit.
       const warnings: string[] = a.code ? checkClaim(ctx, a.code, 'code') : requireCommit(ctx, 'an audit asserts the state of code: pass code { repo, commit } (the code you audit)', 'code: { "repo": "<short name from project_info.codeRepos>", "commit": "<sha>" }', 'code');
-      const doc = await ctx.storage.auditService.start(a, auditor(ctx), metaOf(ctx, commits));
-      const plan = await ctx.storage.auditService.plan(a.target);
+      const target = a.target!;
+      const doc = await ctx.storage.auditService.start({ ...a, target }, auditor(ctx), metaOf(ctx, commits));
+      const plan = await ctx.storage.auditService.plan(target);
       if (plan.inProgress && plan.inProgress.id !== doc.id) warnings.push(`another audit of this target is in progress: ${plan.inProgress.uri}`);
       return { ...(await result(ctx, doc.id, commits)), warnings };
+    },
+  }),
+  defineTool({
+    name: 'audit_request',
+    title: 'Request an audit from an agent',
+    kind: 'write',
+    uiAllowed: true,
+    description: `Queue a FULL audit (every section, own and inherited criteria) of a spec or standard for an agent: assignee = an agent handle (agents_presence). It is created in state requested and the agent is told (event audit_requested; an offline agent is caught up when it connects, the audit stays queued). The agent starts it with audit_start { request } and records items; progress shows on the spec page. Findings become requests (code deviates) or questions for the user (spec wrong / ambiguous).
+Example: {"target":"mandate://specs/login-sso","assignee":"claude-code@mbp"}`,
+    input: auditRequestInputSchema,
+    run: async (a, ctx) => {
+      const commits: string[] = [];
+      const c = ctx.commit!;
+      const news = newsOfProject(ctx);
+      const h = a.assignee.trim();
+      const assignee = news?.presence.resolve(h)[0] ?? h;
+      const label = news?.presence.get(assignee)?.label ?? assignee;
+      const by = ctx.principal?.kind === 'ui' ? ctx.principal.user.login : undefined;
+      const doc = await ctx.storage.auditService.start({ target: a.target, ...(a.note ? { overview: a.note } : {}) }, { agent: label }, metaOf(ctx, commits), { assignee, ...(by ? { requestedBy: by } : {}), ...(a.trigger ? { trigger: a.trigger } : {}) });
+      const { audit } = await ctx.storage.auditService.get(doc.id);
+      if (news) await seedKnownClients(ctx, news.presence);
+      const delivered = await deliverAuditRequested(news, audit, a.note);
+      return { ...(await result(ctx, doc.id, commits)), assignee, queued: !news?.presence.isOnline(assignee), delivered, agent: c.agent };
     },
   }),
   defineTool({
@@ -113,7 +150,8 @@ Example: {"target":"mandate://specs/login-sso","code":{"repo":"app","commit":"3f
     run: async (a, ctx) => {
       const commits: string[] = [];
       await ctx.storage.auditService.complete(a, metaOf(ctx, commits));
-      return result(ctx, a.auditId, commits);
+      const flow = await afterAuditComplete(ctx, a.auditId, metaOf(ctx, commits));
+      return result(ctx, a.auditId, commits, { flow, note: flow.requests.length || flow.questions.length ? `Findings fed the flow: ${flow.requests.length} request(s) (assigned to the auditing agent: run /mandate resume <id>) and ${flow.questions.length} question(s) for the user.` : undefined });
     },
   }),
   defineTool({

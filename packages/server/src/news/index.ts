@@ -201,6 +201,8 @@ export function readRefs(tool: string, args: Record<string, unknown>, result: Re
   if (kind && typeof args.id === 'string') out.push(kind === 'questions' ? buildQuestionRef(args.id) : buildRef({ kind, id: args.id }));
   // Starting / resuming a request reads its request_assigned items.
   if (tool === 'flow_next' && typeof args.request === 'string') out.push(`mandate://requests/${args.request.trim().replace(/^@mandate:/, '').replace(/^mandate:\/\/(?:requests|feedback)\//, '')}`);
+  // Starting the audit that was asked for reads its audit_requested item.
+  if (tool === 'audit_start' && typeof args.request === 'string') out.push(`mandate://audits/${args.request.trim().replace(/^mandate:\/\/audits\//, '')}`);
   // Reading (or replying in) a comment thread reads its comment_added items.
   const threadsOf = (tool === 'comments_list' || (tool === 'list' && args.of === 'comments') ? result?.threads : tool === 'comment_add' || tool === 'comment_resolve' || tool === 'comment_reopen' ? [result?.thread] : []) ?? [];
   for (const t of threadsOf as ({ uri?: string; replies?: { uri?: string }[] } | null)[]) if (t) for (const m of [t, ...(t.replies ?? [])]) if (m.uri) out.push(m.uri);

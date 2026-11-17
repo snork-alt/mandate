@@ -374,7 +374,7 @@ export const auditTargetSchema = z
 export const auditPlanInputSchema = z.object({ target: auditTargetSchema }).strict();
 export const auditStartInputSchema = z
   .object({
-    target: auditTargetSchema,
+    target: auditTargetSchema.optional(),
     /** Mandate commit to take the checklist at (default HEAD; stored as a full sha). */
     commit: z.string().regex(/^[0-9a-f]{4,40}$/).optional(),
     /** The code you audit (repo, commit, branch): strongly recommended. */
@@ -384,7 +384,8 @@ export const auditStartInputSchema = z
     /** The audit this agent was asked to do (event audit_requested): starts THAT audit instead of creating one. */
     request: z.string().trim().min(1).max(200).optional(),
   })
-  .strict();
+  .strict()
+  .refine((v) => !!v.target || !!v.request, { message: 'give target (a spec or standard) or request (the audit you were asked to do)' });
 /** audit_request (web UI / agents): queue an audit for an agent. */
 export const auditRequestInputSchema = z
   .object({

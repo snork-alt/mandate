@@ -4,6 +4,7 @@
  * services (inside the write lock), the whole document validated before the commit. Every write returns the
  * canonical refs, the commit(s), warnings and, for section edits, the resulting section with its derived states.
  */
+import { queueAuditAfterWorkOrder } from '../../flow/audit-flow.js';
 import {
   allSectionsFinished,
   isClaimStale,
@@ -678,7 +679,8 @@ const workOrderTools: AnyToolDef[] = [
         }
       }
       const { warnings } = await ctx.storage.workOrderService.complete(id, ctx.commit!.agent, { outcome: a.outcome, reconciliation: a.reconciliation, git: a.git, touched: pre.touched, codeLinks: pre.links }, metaOf(ctx, commits));
-      return woResult(ctx, id, commits, pre.links.length ? { codeLinks: pre.links } : {}, [...pre.warnings, ...warnings]);
+      const auditId = await queueAuditAfterWorkOrder(ctx, id, metaOf(ctx, []));
+      return woResult(ctx, id, commits, { ...(pre.links.length ? { codeLinks: pre.links } : {}), ...(auditId ? { auditQueued: `mandate://audits/${auditId}` } : {}) }, [...pre.warnings, ...warnings]);
     },
   }),
   defineTool({
