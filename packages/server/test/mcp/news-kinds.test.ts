@@ -80,7 +80,7 @@ describe('review_outcome', () => {
   const implemented = async (login: string, session: string, title: string) => {
     const a = agent(login, session);
     const s = await spec(a, title);
-    const wo = await ok(a, 'work_order_create', { plan: { steps: ['P.'] }, spec: s.ref, sections: [s.section], kind: 'implement' });
+    const wo = await ok(a, 'work_order_create', { plan: { tasks: [{ text: 'P.', sections: [s.section] }] }, spec: s.ref, sections: [s.section], kind: 'implement' });
     await ok(a, 'work_order_claim', { ref: wo.ref });
     await ok(a, 'work_order_complete', { ref: wo.ref, outcome: 'Built it.' });
     return s;

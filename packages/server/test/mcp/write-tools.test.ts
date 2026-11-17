@@ -206,7 +206,7 @@ describe('error codes', () => {
 
   it('claim_conflict and stale_claim', async () => {
     const id = await newSpec({ criteria: false });
-    const wo = await ok('work_order_create', { plan: { steps: ['The plan.'] }, spec: id, sections: ['overview'], kind: 'implement' });
+    const wo = await ok('work_order_create', { plan: { tasks: [{ text: 'The plan.', sections: ['overview'] }] }, spec: id, sections: ['overview'], kind: 'implement' });
     await ok('work_order_claim', { ref: wo.ref, agent: 'agent-a' });
     expect((await fail('work_order_claim', { ref: wo.ref, agent: 'agent-b' })).code).toBe('claim_conflict');
     expect((await fail('work_order_section_done', { ref: wo.ref, sections: ['overview'], agent: 'agent-b' })).code).toBe('claim_conflict');
@@ -259,7 +259,7 @@ describe('error codes', () => {
     // append_only (no tool can update a result; the storage error maps to append_only).
     expect(toWriteError(new AppendOnlyError('append_only: verification records cannot be updated')).code).toBe('append_only');
     // A referenced section cannot vanish; archiving is the way.
-    const wo = await ok('work_order_create', { plan: { steps: ['The plan.'] }, spec: id, sections: ['design'], kind: 'implement' });
+    const wo = await ok('work_order_create', { plan: { tasks: [{ text: 'The plan.', sections: ['design'] }] }, spec: id, sections: ['design'], kind: 'implement' });
     expect(wo.ref).toMatch(/^mandate:\/\/work-orders\//);
     const spec = await fx.storage.specs.get(id);
     await expect(fx.storage.specs.update(id, { sections: spec.sections.filter((s) => s.id !== 'design') } as never, { agent: AGENT })).rejects.toMatchObject({ code: 'section_referenced' });
@@ -352,7 +352,7 @@ describe('done gate', () => {
 describe('claims and work_order_next', () => {
   it('two clients race for the only eligible work order: exactly one wins', async () => {
     const id = await newSpec({ criteria: false });
-    await ok('work_order_create', { plan: { steps: ['The plan.'] }, spec: id, sections: ['overview'], kind: 'implement', priority: 'p0' });
+    await ok('work_order_create', { plan: { tasks: [{ text: 'The plan.', sections: ['overview'] }] }, spec: id, sections: ['overview'], kind: 'implement', priority: 'p0' });
     const c2 = await connect(fx.url, 'racer-2');
     const call = async (client: typeof fx.client, agent: string) =>
       (await client.callTool({ name: 'work_order_next', arguments: { agent, spec: id } })).structuredContent as Record<string, any>;
@@ -368,8 +368,8 @@ describe('claims and work_order_next', () => {
     const up = await newSpec({ criteria: false });
     const id = await newSpec({ criteria: false });
     await ok('spec_section_link_add', { ref: `mandate://specs/${id}/sections/design`, to: `mandate://specs/${up}/sections/design`, rel: 'depends_on' });
-    const blocked = await ok('work_order_create', { plan: { steps: ['The plan.'] }, spec: id, sections: ['design'], kind: 'implement', priority: 'p0' });
-    const low = await ok('work_order_create', { plan: { steps: ['The plan.'] }, spec: id, sections: ['overview'], kind: 'implement', priority: 'p3' });
+    const blocked = await ok('work_order_create', { plan: { tasks: [{ text: 'The plan.', sections: ['design'] }] }, spec: id, sections: ['design'], kind: 'implement', priority: 'p0' });
+    const low = await ok('work_order_create', { plan: { tasks: [{ text: 'The plan.', sections: ['overview'] }] }, spec: id, sections: ['overview'], kind: 'implement', priority: 'p3' });
     const r = await ok('work_order_next', { spec: id, agent: 'picker' });
     expect(r.ref).toBe(low.ref);
     expect(r.skipped).toEqual(expect.arrayContaining([expect.objectContaining({ id: blocked.ref.split('/').pop(), reason: expect.stringMatching(/blocked/) })]));
@@ -419,7 +419,7 @@ describe('read-your-write', () => {
 describe('full agent workflow', () => {
   it('next -> claim -> read -> edit -> verify -> section_done -> complete, with feedback filed and closed', async () => {
     const id = await newSpec();
-    const wo = await ok('work_order_create', { plan: { steps: ['The plan.'], files: ['src/works.ts'], tests: [{ name: 'works', ref: 'app:tests/works.spec.ts', proves: ['ac-works'] }], risks: ['none'] }, spec: id, sections: ['design', 'ac-works'], kind: 'implement', priority: 'p0', note: 'build it' });
+    const wo = await ok('work_order_create', { plan: { tasks: [{ text: 'The plan.', sections: ['design', 'ac-works'] }], files: ['src/works.ts'], tests: [{ name: 'works', ref: 'app:tests/works.spec.ts', proves: ['ac-works'] }], risks: ['none'] }, spec: id, sections: ['design', 'ac-works'], kind: 'implement', priority: 'p0', note: 'build it' });
     const agent = 'workflow-agent@ci';
     const next = await ok('work_order_next', { agent, spec: id, branch: 'feat/flow' });
     expect(next.ref).toBe(wo.ref);

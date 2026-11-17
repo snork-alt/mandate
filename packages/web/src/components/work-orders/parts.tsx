@@ -383,16 +383,16 @@ export function GitPanel({ git, claims }: { git: GitContext[]; claims: PastClaim
 }
 
 /** Done / total sections bar. */
-export function SectionProgress({ done, total }: { done: number; total: number }) {
+export function SectionProgress({ done, total, unit = 'sections' }: { done: number; total: number; unit?: string }) {
   const pct = total ? Math.round((done / total) * 100) : 0;
   return (
-    <Tooltip label={`${done}/${total} sections done`} openDelay={300}>
+    <Tooltip label={`${done}/${total} ${unit} done`} openDelay={300}>
       <div className="wo-progress">
         <div className="embed-progress" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
           <span style={{ width: `${pct}%` }} />
         </div>
         <span className="small faint">
-          {done}/{total} sections
+          {done}/{total} {unit}
         </span>
       </div>
     </Tooltip>

@@ -51,6 +51,7 @@ async function newSpec() {
   });
   return id;
 }
+const planFor = (sections: string[]) => ({ ...PLAN, tasks: [{ text: 'Write the code', sections }, { text: 'Write the test', proves: ['ac-works'] }] });
 const PLAN = { steps: ['Write the code', 'Write the test'], files: ['src/a.ts', 'tests/a.test.ts'], tests: [{ name: 'it works', ref: 'app:tests/a.test.ts#L1-L20', proves: ['ac-works'] }], risks: ['flaky clock'] };
 
 describe('requests (formerly feedback)', () => {
@@ -118,7 +119,7 @@ describe('the work order carries the full plan', () => {
     expect((await fail('work_order_create', { ...base, kind: 'implement' })).code).toBe('plan_required');
     const text = await fail('work_order_create', { ...base, kind: 'update', plan: '1. just text' });
     expect(text.code).toBe('plan_required');
-    expect(text.hint).toMatch(/steps, files, tests/);
+    expect(text.hint).toMatch(/tasks.*files.*tests/);
     expect((await fail('work_order_create', { ...base, kind: 'fix' })).code).toBe('plan_required');
     await ok('work_order_create', { spec: id, sections: ['overview'], kind: 'review', plan: 'Review it.' });
     // Fast path (kind fix, one section) needs none.
@@ -128,15 +129,19 @@ describe('the work order carries the full plan', () => {
   it('tests map to the criteria they prove: unknown ids and uncovered criteria are refused with the valid ids', async () => {
     const id = await newSpec();
     const base = { spec: id, sections: ['design'], kind: 'implement' };
-    const unknown = await fail('work_order_create', { ...base, plan: { steps: ['x'], tests: [{ name: 't', proves: ['ac-nope'] }] } });
+    const unknown = await fail('work_order_create', { ...base, plan: { tasks: [{ text: 'x', sections: ['design'] }], tests: [{ name: 't', proves: ['ac-nope'] }] } });
     expect(unknown.code).toBe('plan_invalid');
     expect(unknown.message).toMatch(/ac-nope.*not an acceptance criterion.*ac-works/s);
-    const none = await fail('work_order_create', { ...base, plan: { steps: ['x'] } });
+    const none = await fail('work_order_create', { ...base, plan: { tasks: [{ text: 'x', sections: ['design'] }] } });
     expect(none.message).toMatch(/no planned test proves ac-works/);
-    const wo = await ok('work_order_create', { ...base, plan: PLAN });
+    const unlinked = await fail('work_order_create', { ...base, plan: { tasks: ['x'], tests: PLAN.tests } });
+    expect(unlinked.code).toBe('plan_invalid');
+    expect(unlinked.message).toMatch(/no task covers section design/);
+    expect(unlinked.message).toMatch(/no task proves criterion ac-works/);
+    const wo = await ok('work_order_create', { ...base, plan: planFor(['design']) });
     const w = await read('work_order_get', { ref: wo.ref });
     expect(w.item.planTests).toEqual(PLAN.tests);
-    expect(w.doc.plan).toContain('**Steps**');
+    expect(w.doc.plan).toContain('**Tasks**');
     expect(w.doc.plan).toContain('it works');
     expect(w.doc.plan).toContain('ac-works');
     expect(w.doc.plan).toContain('flaky clock');
@@ -161,7 +166,7 @@ describe('criteria are proved by tests; sections point at their work order', () 
     const fb = await ok('request_create', { targets: [`mandate://specs/${id}/sections/design`], kind: 'improvement', body: 'Build the design.' });
     await read('spec_match', { request: 'Build the design.', for: fb.ref });
     await ok('spec_section_update', { ref: `mandate://specs/${id}/sections/design`, body: 'The design, v2.', addresses: [fb.ref] });
-    const wo = await ok('work_order_create', { spec: id, sections: ['design', 'ac-works'], kind: 'implement', plan: PLAN, reason: [fb.ref] });
+    const wo = await ok('work_order_create', { spec: id, sections: ['design', 'ac-works'], kind: 'implement', plan: planFor(['design', 'ac-works']), reason: [fb.ref] });
     const woId = wo.ref.split('/').pop()!;
     await ok('work_order_claim', { ref: wo.ref });
     await ok('work_order_section_done', { ref: wo.ref, sections: ['design', 'ac-works'], codeRefs: ['app:src/a.ts#L3-L9'] });
@@ -208,10 +213,10 @@ describe('criteria are proved by tests; sections point at their work order', () 
     const sec = async () => (await fx.storage.specs.get(id)).sections.find((s) => s.id === 'design')!;
     const prove = async (woRef: string) => ok('verification_record', { criterion: `mandate://specs/${id}/sections/ac-works`, code: { repo: 'app', commit: 'abc1234' }, result: 'pass', method: 'test', evidence: { test: 'tests/a.test.ts' }, workOrder: woRef });
 
-    const first = await ok('work_order_create', { spec: id, sections: ['design'], kind: 'implement', plan: PLAN });
+    const first = await ok('work_order_create', { spec: id, sections: ['design'], kind: 'implement', plan: planFor(['design']) });
     await ok('work_order_claim', { ref: first.ref });
     const sd = await ok('work_order_section_done', { ref: first.ref, sections: ['design'], codeRefs: [{ repo: 'app', path: 'src/a.ts', lines: ['3-9'], symbols: ['doIt'], change: 'added' }, 'app:src/b.ts#L1-L4'] });
-    expect(sd.commits.length).toBe(2); // spec (implementedCommit, implementedBy, refs) + work order
+    expect(sd.commits.length).toBe(3); // the covering task done + spec (implementedCommit, implementedBy, refs) + work order
     let s = await sec();
     expect(s.implementedBy).toBe(first.ref.split('/').pop());
     expect(s.implementedCommit).toBeTruthy();
@@ -221,7 +226,7 @@ describe('criteria are proved by tests; sections point at their work order', () 
     await ok('work_order_complete', { ref: first.ref, outcome: 'v1' });
 
     // An update work order: a.ts lines move, b.ts is renamed, a symbol is added; deduplicated.
-    const upd = await ok('work_order_create', { spec: id, sections: ['design'], kind: 'update', plan: PLAN });
+    const upd = await ok('work_order_create', { spec: id, sections: ['design'], kind: 'update', plan: planFor(['design']) });
     await ok('work_order_claim', { ref: upd.ref });
     await ok('work_order_section_done', { ref: upd.ref, sections: ['design'], codeRefs: [{ repo: 'app', path: 'src/a.ts', lines: ['20-30'], symbols: ['doIt', 'again'], change: 'modified' }, { repo: 'app', path: 'src/c.ts', change: 'renamed', from: 'src/b.ts' }] });
     s = await sec();
@@ -237,7 +242,7 @@ describe('criteria are proved by tests; sections point at their work order', () 
     await ok('work_order_complete', { ref: upd.ref, outcome: 'v2' });
 
     // A fix that deletes a file.
-    const fix = await ok('work_order_create', { spec: id, sections: ['design'], kind: 'fix', plan: PLAN });
+    const fix = await ok('work_order_create', { spec: id, sections: ['design'], kind: 'fix', plan: planFor(['design']) });
     await ok('work_order_claim', { ref: fix.ref });
     await ok('work_order_section_done', { ref: fix.ref, sections: ['design'], codeRefs: [{ repo: 'app', path: 'src/c.ts', change: 'deleted' }] });
     s = await sec();
@@ -247,7 +252,7 @@ describe('criteria are proved by tests; sections point at their work order', () 
 
   it('warns (does not refuse) when an implement / update / fix section is done without code refs, and says why', async () => {
     const id = await newSpec();
-    const wo = await ok('work_order_create', { spec: id, sections: ['design'], kind: 'implement', plan: PLAN });
+    const wo = await ok('work_order_create', { spec: id, sections: ['design'], kind: 'implement', plan: planFor(['design']) });
     await ok('work_order_claim', { ref: wo.ref });
     const sd = await ok('work_order_section_done', { ref: wo.ref, sections: ['design'] });
     const w = (sd.warnings as string[]).find((x) => /no code refs/.test(x));

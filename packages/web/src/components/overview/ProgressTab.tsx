@@ -74,7 +74,7 @@ function AgentFaceMark({ agent, at }: { agent: string; at?: string }) {
 const releaseAction = (w: OverviewWorkOrder, now: number): ItemAction[] =>
   w.claim?.stale && !(w.sections.total > 0 && w.sections.done >= w.sections.total) ? [{ id: 'release', label: 'Release claim', primary: true, dialog: { type: 'release', ref: buildRef({ kind: 'work-orders', id: w.id }), title: w.id, agent: w.claim.agent, heartbeat: compactTime(w.claim.heartbeatAt, now) } }] : [];
 
-/** "2/5 Write the tests", "plan · 4 steps", "plan done", "no plan yet". */
+/** "2/5 Write the tests", "plan · 4 tasks", "plan done", "no plan yet". */
 function PlanStep({ w }: { w: OverviewWorkOrder }) {
   const p = w.plan;
   if (!w.hasPlan) return <span className="ov-muted">No plan yet</span>;
@@ -82,7 +82,7 @@ function PlanStep({ w }: { w: OverviewWorkOrder }) {
   if (p.current) {
     const active = p.steps?.find((x) => x.id === p.current!.id)?.status === 'in_progress';
     return (
-      <span className="pg-step" title={`Plan step ${p.current.index} of ${p.total}${active ? ' (in progress)' : ''}`} data-step-status={active ? 'in_progress' : 'pending'}>
+      <span className="pg-step" title={`Task ${p.current.index} of ${p.total}${active ? ' (in progress)' : ''}`} data-step-status={active ? 'in_progress' : 'pending'}>
         <b>
           {p.current.index}/{p.total}
         </b>{' '}
@@ -91,7 +91,7 @@ function PlanStep({ w }: { w: OverviewWorkOrder }) {
     );
   }
   if (p.done !== undefined) return <span className="pg-step">Plan done · {p.total}/{p.total}</span>;
-  return <span className="ov-muted">Plan · {plural(p.total, 'step')}</span>;
+  return <span className="ov-muted">Plan · {plural(p.total, 'task')}</span>;
 }
 
 /* ---------------------------------------------------------------- agents today */

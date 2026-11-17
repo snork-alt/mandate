@@ -195,7 +195,7 @@ Example: {"ref":"fb-0007","text":"Remember-me lasts 30 days","reason":"the exist
     name: 'flow_edit_allowed',
     title: 'May I edit code now?',
     kind: 'read',
-    description: `Strict flow (project setting strictFlow): { allowed, reason, activeWorkOrder?, step? }. Code edits are allowed while you hold a claimed work order with a step in progress (flow_next says how to get there). Always allowed when strict flow is off, the flow is off for your client, or repo is not a code repo of this project. Used by the \`mandate guard\` hook.
+    description: `Strict flow (project setting strictFlow): { allowed, reason, activeWorkOrder?, step? }. Code edits are allowed while you hold a claimed work order with a task in progress (flow_next says how to get there). Always allowed when strict flow is off, the flow is off for your client, or repo is not a code repo of this project. Used by the \`mandate guard\` hook.
 Example: {"repo":"app","path":"src/login.ts"}`,
     input: z.object({ repo: z.string().trim().min(1).max(200).optional(), path: z.string().trim().min(1).max(1000).optional(), agent: z.string().trim().min(1).max(120).optional() }).strict(),
     run: async (a, ctx) => {
@@ -212,14 +212,14 @@ Example: {"repo":"app","path":"src/login.ts"}`,
       const wos = (await ctx.storage.workOrderService.list()).filter((w) => w.claim && !isClaimStale(w.claim) && (!a.agent || w.claim.agent === a.agent));
       for (const w of wos) {
         const step = (w.planSteps ?? []).find((x) => x.status === 'in_progress');
-        if (step) return { allowed: true, reason: `work order ${w.id} is claimed with step ${step.id} in progress`, activeWorkOrder: `mandate://work-orders/${w.id}`, step: step.id };
+        if (step) return { allowed: true, reason: `work order ${w.id} is claimed with task ${step.id} in progress`, activeWorkOrder: `mandate://work-orders/${w.id}`, task: step.id, step: step.id };
       }
       const claimed = wos[0];
       return {
         allowed: false,
         reason: claimed
-          ? `work order ${claimed.id} is claimed but no step is in progress: work_order_step_set { ref, step, status: "in_progress" } for the step you are about to implement, then edit`
-          : 'no claimed work order: run flow_next (or /mandate <request>) and follow it: request, specs, work order, claim, a step in progress; then edit',
+          ? `work order ${claimed.id} is claimed but no task is in progress: work_order_task_set { ref, task, status: "in_progress" } for the task you are about to implement, then edit`
+          : 'no claimed work order: run flow_next (or /mandate <request>) and follow it: request, specs, work order, claim, a task in progress; then edit',
         ...(claimed ? { activeWorkOrder: `mandate://work-orders/${claimed.id}` } : {}),
       };
     },

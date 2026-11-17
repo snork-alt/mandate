@@ -80,7 +80,7 @@ async function setup(opts: { kind?: string; plan?: string; sections?: string[]; 
           spec,
           sections,
           kind,
-          ...(opts.plan !== undefined ? { plan: full ? { steps: [opts.plan] } : opts.plan } : {}),
+          ...(opts.plan !== undefined ? { plan: full ? { tasks: [{ text: opts.plan, sections }] } : opts.plan } : {}),
           ...(opts.fastPath ? { fastPath: true } : {}),
         });
   const created = await wo;
@@ -143,7 +143,6 @@ describe('work orders as documents', () => {
     await ok('work_order_heartbeat', { ref, git: [{ repo: 'app', headCommit: 'abc1234' }] });
     expect(commitCount()).toBe(before + 1);
   });
-
   it('completion needs an outcome; closed work orders are frozen except PR status / merge fields', async () => {
     const { ref, id } = await setup({ plan: 'p' });
     await ok('work_order_claim', { ref, git: [{ repo: 'app', branch: 'wo/x', baseBranch: 'main', pr: { number: 7, status: 'open', url: 'https://example.com/pr/7' } }] });

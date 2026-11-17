@@ -162,5 +162,5 @@ export async function finishAllSteps(storage: Storage, ref: string, agent?: stri
   const id = ref.split('/').pop()!;
   const doc = await storage.workOrderService.doc(id).catch(() => null);
   const open = doc ? stepsOf(doc, sectionBody(doc, 'plan')).filter((x) => x.status === 'pending' || x.status === 'in_progress') : [];
-  if (doc && open.length) await storage.workOrderService.stepSet(id, doc.claim?.agent ?? agent ?? 'agent', open.map((x) => ({ step: x.id, status: 'done' as const }))).catch(() => undefined);
+  if (doc && open.length) await storage.workOrderService.stepSet(id, doc.claim?.agent ?? agent ?? 'agent', open.map((x) => ({ step: x.id, status: 'done' as const })), {}, { sync: false }).catch(() => undefined);
 }

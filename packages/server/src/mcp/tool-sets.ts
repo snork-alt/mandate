@@ -180,6 +180,9 @@ export const ALIASES: Record<string, string> = {
   feedback_create: 'request_create',
   feedback_update: 'request_update',
   feedback_close: 'request_close',
+  // Work orders have tasks only: the old step / section tools stay callable.
+  work_order_step_set: 'work_order_task_set',
+  work_order_section_done: 'work_order_task_set',
 };
 
 /* ---------------------------------------------------------------- routing */
@@ -294,7 +297,7 @@ export const TOOL_SETS: Record<ToolSetName, readonly string[]> = {
     'flow_next', 'request_create', 'request_update', 'request_close', 'request_assign', 'request_plan_approve', 'request_decision_add', 'spec_match',
     'create', 'update_meta', 'archive', 'section_insert', 'section_move', 'section_link_add', 'section_link_remove',
     'work_order_create', 'work_order_cancel',
-    'work_order_next', 'work_order_claim', 'work_order_heartbeat', 'work_order_plan_set', 'work_order_step_set', 'work_order_touch', 'work_order_git_update', 'work_order_section_done', 'work_order_complete', 'work_order_fail', 'work_order_release',
+    'work_order_next', 'work_order_claim', 'work_order_heartbeat', 'work_order_plan_set', 'work_order_task_set', 'work_order_touch', 'work_order_git_update', 'work_order_complete', 'work_order_fail', 'work_order_release',
     'verification_record', 'question_ask', 'question_cancel', 'comment_add', 'comment_resolve',
     'status_set', 'section_update', 'rules_for_code', 'news_list', 'news_ack',
     'ask_pending', 'ask_answer', 'upload_url_create', 'architecture_get', 'code_owner', 'standard_usage', 'graph_neighbors',

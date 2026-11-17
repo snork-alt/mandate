@@ -13,10 +13,10 @@ import type { CommentCounts, CommentThread, CommentView } from './work-orders.js
 export const COMMENT_STATE_TYPES = ['resolve', 'reopen'] as const;
 
 /**
- * A comment target: any Mandate object, as `mandate://<kind>/<id>[/sections/<sid> | /steps/sN][#Lx-Ly]` with kind
+ * A comment target: any Mandate object, as `mandate://<kind>/<id>[/sections/<sid> | /tasks/tN][#Lx-Ly]` with kind
  * specs | standards | components | work-orders | requests (`#Lx-Ly`: a line range inside a section).
  */
-const TARGET_RE = /^mandate:\/\/(specs|standards|components|work-orders|requests|feedback)\/([a-z0-9]+(?:-[a-z0-9]+)*)(?:\/(?:sections\/([a-z0-9]+(?:-[a-z0-9]+)*)|steps\/(s\d+)))?(?:#L(\d+)(?:-L(\d+))?)?$/;
+const TARGET_RE = /^mandate:\/\/(specs|standards|components|work-orders|requests|feedback)\/([a-z0-9]+(?:-[a-z0-9]+)*)(?:\/(?:sections\/([a-z0-9]+(?:-[a-z0-9]+)*)|(?:steps|tasks)\/([st]\d+)))?(?:#L(\d+)(?:-L(\d+))?)?$/;
 export interface CommentTarget {
   kind: 'specs' | 'standards' | 'components' | 'work-orders' | 'requests';
   id: string;
@@ -39,14 +39,14 @@ export function parseCommentTarget(input: string): CommentTarget | null {
   const lines = a ? { start: Number(a), end: b ? Number(b) : Number(a) } : undefined;
   if (lines && (lines.start < 1 || lines.end < lines.start)) return null;
   const doc = `mandate://${kind}/${id}`;
-  const base = sectionId ? `${doc}/sections/${sectionId}` : step ? `${doc}/steps/${step}` : doc;
+  const base = sectionId ? `${doc}/sections/${sectionId}` : step ? `${doc}/tasks/${step}` : doc;
   const canonical = lines ? `${base}#L${lines.start}${lines.end > lines.start ? `-L${lines.end}` : ''}` : base;
   return { kind, id: id!, ...(sectionId ? { sectionId } : {}), ...(step ? { step } : {}), ...(lines ? { lines } : {}), canonical, base, doc };
 }
 const targetSchema = z
   .string()
   .min(1)
-  .refine((v) => !!parseCommentTarget(v) || (!!parseRef(v) && parseRef(v)!.kind !== 'feedback' && !parseRef(v)!.commit), 'a Mandate object: mandate://<specs|standards|components|work-orders|requests>/<id>[/sections/<sid> | /steps/sN][#Lx-Ly]');
+  .refine((v) => !!parseCommentTarget(v) || (!!parseRef(v) && parseRef(v)!.kind !== 'feedback' && !parseRef(v)!.commit), 'a Mandate object: mandate://<specs|standards|components|work-orders|requests>/<id>[/sections/<sid> | /tasks/tN][#Lx-Ly]');
 
 export const commentRecordSchema = z.object({
   id: idSchema,
@@ -118,7 +118,7 @@ export function replayComments(lines: CommentLine[]): CommentThread[] {
 const noLines = (t: string) => t.replace(/#L\d+(?:-L\d+)?$/, '');
 export const targetsDoc = (target: string, doc: string) => {
   const t = noLines(target);
-  return t === doc || t.startsWith(`${doc}/sections/`) || t.startsWith(`${doc}/steps/`);
+  return t === doc || t.startsWith(`${doc}/sections/`) || t.startsWith(`${doc}/steps/`) || t.startsWith(`${doc}/tasks/`);
 };
 export const targetBase = noLines;
 

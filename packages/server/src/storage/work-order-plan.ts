@@ -7,8 +7,8 @@
 import { renderSteps, type CodeRef, type DesiredStep, type PlanStep, type PlanTest, type Section, type StoredSpec, type TouchedFile, type WorkOrderPlanInput } from '@mandate/shared';
 
 /** The plan as markdown (bold labels, no headings: the plan is one section of the work-order document). */
-export function renderPlan(plan: Omit<WorkOrderPlanInput, 'steps'> & { steps: PlanStep[] }): string {
-  const out: string[] = ['**Steps**', ...renderSteps(plan.steps)];
+export function renderPlan(plan: Omit<WorkOrderPlanInput, 'steps' | 'tasks'> & { steps: PlanStep[] }): string {
+  const out: string[] = ['**Tasks**', ...renderSteps(plan.steps)];
   if (plan.files?.length) out.push('', '**Files to change**', ...plan.files.map((f) => `- ${f}`));
   if (plan.tests?.length) out.push('', '**Tests**', ...plan.tests.map((t) => `- ${t.name}${t.ref ? ` (\`${t.ref}\`)` : ''} proves: ${t.proves.join(', ')}`));
   if (plan.risks?.length) out.push('', '**Risks**', ...plan.risks.map((r) => `- ${r}`));
@@ -83,11 +83,27 @@ export function checkStepLinks(steps: DesiredStep[], targets: string[], criteria
   const t = new Set(targets);
   const c = new Set(criteria.map((x) => x.id));
   for (const s of steps) {
-    const label = `step "${s.text.slice(0, 50)}"`;
+    const label = `task "${s.text.slice(0, 50)}"`;
     const badS = (s.sections ?? []).filter((x) => !t.has(x));
     if (badS.length) problems.push(`${label} covers ${badS.join(', ')}: not a section of this work order (sections: ${targets.join(', ')})`);
     const badP = (s.proves ?? []).filter((x) => !c.has(x));
     if (badP.length) problems.push(`${label} proves ${badP.join(', ')}: not an acceptance criterion of the targeted sections (criteria: ${criteria.map((x) => x.id).join(', ') || 'none'})`);
   }
+  return problems;
+}
+
+/**
+ * Coverage of a new plan: every targeted spec section is implemented by at least one task (task.sections) and every
+ * acceptance criterion the work order covers is proved by at least one task (task.proves: the test task).
+ */
+export function checkTaskCoverage(tasks: DesiredStep[], targets: string[], criteria: { id: string }[]): string[] {
+  const problems: string[] = [];
+  const covered = new Set(tasks.flatMap((t) => t.sections ?? []));
+  const proved = new Set(tasks.flatMap((t) => t.proves ?? []));
+  const crit = new Set(criteria.map((c) => c.id));
+  const bare = targets.filter((t) => !covered.has(t) && !(crit.has(t) && proved.has(t)));
+  if (bare.length) problems.push(`no task covers section ${bare.join(', ')}: link each targeted spec section to the task(s) that implement it (tasks[].sections)`);
+  const unproved = criteria.filter((c) => !proved.has(c.id));
+  if (unproved.length) problems.push(`no task proves criterion ${unproved.map((c) => c.id).join(', ')}: add a test task for each acceptance criterion (tasks[].proves)`);
   return problems;
 }

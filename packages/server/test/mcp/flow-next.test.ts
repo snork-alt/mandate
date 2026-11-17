@@ -57,7 +57,7 @@ async function newSpec(sections = ['overview', 'design']) {
   });
   return id;
 }
-const PLAN = (steps = ['Write the code', 'Write the test']) => ({ steps, files: ['src/a.ts'], tests: [{ name: 'it works', ref: 'app:tests/a.test.ts#L1-L20', proves: ['ac-works'] }], risks: ['none'] });
+const PLAN = (steps = ['Write the code', 'Write the test'], sections = ['design', 'ac-works']) => ({ tasks: steps.map((text, i) => (i === 0 ? { text, sections } : { text, proves: ['ac-works'] })), files: ['src/a.ts'], tests: [{ name: 'it works', ref: 'app:tests/a.test.ts#L1-L20', proves: ['ac-works'] }], risks: ['none'] });
 const newRequest = async (body = 'Make it better.') => (await ok('request_create', { kind: 'improvement', body })).request.id as string;
 
 describe('flow_next walks one request through every stage', () => {
@@ -102,16 +102,15 @@ describe('flow_next walks one request through every stage', () => {
 
     await ok('work_order_claim', { ref: wo.ref });
     n = await next(rid);
-    expect(n).toMatchObject({ state: 'steps', next: { tool: 'work_order_step_set', args: { step: 's1', status: 'in_progress' } } });
-    await ok('work_order_step_set', { ref: wo.ref, step: 's1', status: 'in_progress' });
+    expect(n).toMatchObject({ state: 'tasks', next: { tool: 'work_order_task_set', args: { task: 't1', status: 'in_progress' } } });
+    await ok('work_order_task_set', { ref: wo.ref, task: 't1', status: 'in_progress' });
     n = await next(rid);
-    expect(n.next.args).toMatchObject({ step: 's1', status: 'done' });
-    await ok('work_order_step_set', { ref: wo.ref, step: 's1', status: 'done', codeRefs: ['app:src/a.ts#L1-L9'] });
-    await ok('work_order_step_set', { ref: wo.ref, step: 's2', status: 'done', codeRefs: ['app:tests/a.test.ts#L1-L20'] });
+    expect(n.next.args).toMatchObject({ task: 't1', status: 'done' });
+    await ok('work_order_task_set', { ref: wo.ref, task: 't1', status: 'done', codeRefs: ['app:src/a.ts#L1-L9'] });
+    await ok('work_order_task_set', { ref: wo.ref, task: 't2', status: 'done', codeRefs: ['app:tests/a.test.ts#L1-L20'] });
 
-    n = await next(rid);
-    expect(n).toMatchObject({ state: 'sections', next: { tool: 'work_order_section_done', args: { sections: ['design'] } } });
-    await ok('work_order_section_done', { ref: wo.ref, sections: ['design', 'ac-works'], codeRefs: ['app:src/a.ts#L1-L9'] });
+    // The covering tasks are done: the section is recorded by itself (no section step).
+    expect((await fx.storage.specs.get(spec)).sections.find((x) => x.id === 'design')?.implementedBy).toBe(wo.ref.split('/').pop());
 
     n = await next(rid);
     expect(n.state).toBe('verify');
@@ -164,8 +163,7 @@ describe('several requests in flight', () => {
     expect(clash.isError).toBe(true);
     // Finish the first one; the second becomes actionable.
     await ok('work_order_claim', { ref: wo1.ref });
-    await ok('work_order_step_set', { ref: wo1.ref, steps: [{ step: 's1', status: 'done' }, { step: 's2', status: 'done' }] });
-    await ok('work_order_section_done', { ref: wo1.ref, sections: ['design', 'ac-works'], codeRefs: ['app:src/a.ts#L1-L2'] });
+    await ok('work_order_task_set', { ref: wo1.ref, tasks: [{ task: 't1', status: 'done' }, { task: 't2', status: 'done' }] });
     await ok('verification_record', { criterion: `mandate://specs/${spec}/sections/ac-works`, code: { repo: 'app', commit: 'abc1234' }, result: 'pass', method: 'test', evidence: { test: 'tests/a.test.ts' } });
     await ok('work_order_complete', { ref: wo1.ref, outcome: 'Done.' });
     expect((await next(r2)).state).toBe('work_order');
@@ -205,33 +203,30 @@ describe('questions bound to requests', () => {
     void info;
   });
 
-  it('a question on a step blocks only that step; a section question skips the section', async () => {
+  it('a question on a task blocks only that task (and the section it covers)', async () => {
     const spec = await newSpec(['overview', 'design']);
     const rid = await newRequest('Steps and sections.');
     const ref = `mandate://requests/${rid}`;
     await read('spec_match', { request: 'steps and sections', for: rid });
     await ok('spec_section_update', { ref: `mandate://specs/${spec}/sections/overview`, body: 'o2', addresses: [ref] });
     await ok('spec_section_update', { ref: `mandate://specs/${spec}/sections/design`, body: 'd2', addresses: [ref] });
-    const wo = await ok('work_order_create', { spec, kind: 'implement', sections: ['overview', 'design', 'ac-works'], reason: [ref], plan: PLAN(['One', 'Two']) });
+    const wo = await ok('work_order_create', { spec, kind: 'implement', sections: ['overview', 'design', 'ac-works'], reason: [ref], plan: { ...PLAN(['One', 'Two'], ['overview', 'design', 'ac-works']), tasks: [{ text: 'One', sections: ['overview'] }, { text: 'Two', sections: ['design'], proves: ['ac-works'] }] } });
     await ok('work_order_claim', { ref: wo.ref });
     const agent = agentCtx();
-    const s1 = await run('question_ask', { purpose: 'decision', request: rid, blocks: [`${wo.ref}/steps/s1`], questions: [q] }, agent);
+    const s1 = await run('question_ask', { purpose: 'decision', request: rid, blocks: [`${wo.ref}/tasks/t1`], questions: [q] }, agent);
     expect(s1.isError, JSON.stringify(s1.body)).toBe(false);
     const n = await next(rid);
-    expect(n.next.args.step).toBe('s2'); // s1 is skipped while it waits
+    expect(n.next.args.task).toBe('t2'); // t1 is skipped while it waits
     expect(n.waitingOn).toEqual([s1.body.question.id]);
-    await ok('work_order_step_set', { ref: wo.ref, steps: [{ step: 's2', status: 'done' }] });
+    await ok('work_order_task_set', { ref: wo.ref, tasks: [{ task: 't2', status: 'done' }] });
     // The blocked step does not hold the rest: sections go on while it waits.
     const stuck = await next(rid);
-    expect(stuck.state).toBe('sections');
+    expect(stuck.state).toBe('waiting'); // the section of the blocked task is not offered on its own
     expect(stuck.waitingOn).toEqual([s1.body.question.id]);
     await run('question_answer', { id: s1.body.question.id, answers: { q1: 'B' } }, uiCtx());
-    expect((await next(rid)).next.args).toMatchObject({ step: 's1' });
-    await ok('work_order_step_set', { ref: wo.ref, steps: [{ step: 's1', status: 'done' }] });
-    const sec = await run('question_ask', { purpose: 'decision', request: rid, blocks: [`mandate://specs/${spec}/sections/overview`], questions: [q] }, agent);
-    const sn = await next(rid);
-    expect(sn.next.args.sections).toEqual(['design']);
-    expect(sn.waitingOn).toEqual([sec.body.question.id]);
+    expect((await next(rid)).next.args).toMatchObject({ task: 't1' });
+    await ok('work_order_task_set', { ref: wo.ref, tasks: [{ task: 't1', status: 'done' }] });
+    expect((await next(rid)).state).toBe('verify');
   });
 });
 
@@ -270,7 +265,7 @@ describe('flow_edit_allowed (strict flow)', () => {
     const strict = agentCtx({ strictFlow: true });
     const none = (await run('flow_edit_allowed', { path: 'src/a.ts' }, strict)).body;
     expect(none.allowed).toBe(false);
-    expect(none.reason).toMatch(/flow_next|work_order_step_set/);
+    expect(none.reason).toMatch(/flow_next|work_order_task_set/);
     expect((await run('flow_edit_allowed', { repo: 'other/place' }, { ...strict, settings: { ...strict.settings!, codeRepos: () => [{ name: 'app', github: 'acme/app' }] } as never })).body.allowed).toBe(true);
     const spec = await newSpec(['design']);
     const rid = await newRequest('Edit under strict flow.');
@@ -280,9 +275,9 @@ describe('flow_edit_allowed (strict flow)', () => {
     await ok('work_order_claim', { ref: wo.ref });
     const claimedOnly = (await run('flow_edit_allowed', { path: 'src/a.ts' }, strict)).body;
     expect(claimedOnly.allowed).toBe(false);
-    expect(claimedOnly.reason).toMatch(/no step is in progress/);
-    await ok('work_order_step_set', { ref: wo.ref, step: 's1', status: 'in_progress' });
-    expect((await run('flow_edit_allowed', { path: 'src/a.ts' }, strict)).body).toMatchObject({ allowed: true, step: 's1', activeWorkOrder: wo.ref });
+    expect(claimedOnly.reason).toMatch(/no task is in progress/);
+    await ok('work_order_task_set', { ref: wo.ref, task: 't1', status: 'in_progress' });
+    expect((await run('flow_edit_allowed', { path: 'src/a.ts' }, strict)).body).toMatchObject({ allowed: true, task: 't1', activeWorkOrder: wo.ref });
     expect((await run('flow_edit_allowed', { path: 'src/a.ts', agent: 'someone-else' }, strict)).body.allowed).toBe(false);
   });
 });

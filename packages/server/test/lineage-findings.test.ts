@@ -93,7 +93,7 @@ describe('lineage findings', () => {
     const id = await newSpec();
     const fb = await ok('request_create', { targets: [`mandate://specs/${id}/sections/cache`], kind: 'bug', body: 'The cache double counts.' });
     await ok('spec_section_update', { ref: `mandate://specs/${id}/sections/cache`, body: 'The cache counts once.', cause: fb.ref });
-    const wo = await ok('work_order_create', { spec: id, kind: 'update', plan: { steps: ['Do it.'] }, sections: ['cache'], reason: [fb.ref] });
+    const wo = await ok('work_order_create', { spec: id, kind: 'update', plan: { tasks: [{ text: 'Do it.', sections: ['cache'] }] }, sections: ['cache'], reason: [fb.ref] });
     const review = await ok('work_order_create', { spec: id, kind: 'review', sections: ['design'] });
     expect(git('log', '-1', '--format=%B', wo.commit)).toContain(`Caused-By: ${fb.ref}`);
     await ok('request_close', { ref: fb.ref, resolution: 'applied' }).catch(() => undefined);
@@ -110,7 +110,7 @@ describe('lineage findings', () => {
   it('L-3: no cause is later than its effect (targets has a time guard)', async () => {
     const id = await newSpec();
     const fb = await ok('request_create', { targets: [`mandate://specs/${id}/sections/design`], kind: 'bug', body: 'Design is wrong.' });
-    const wo = await ok('work_order_create', { spec: id, kind: 'update', plan: { steps: ['Do it.'] }, sections: ['design'] });
+    const wo = await ok('work_order_create', { spec: id, kind: 'update', plan: { tasks: [{ text: 'Do it.', sections: ['design'] }] }, sections: ['design'] });
     const woUri = `mandate://work-orders/${woId(wo)}`;
     // Later work on the targeted section, caused by the work order.
     await ok('spec_section_update', { ref: `mandate://specs/${id}/sections/design`, body: 'The new design.', cause: woUri });
@@ -134,7 +134,7 @@ describe('lineage findings', () => {
   it('L-6: a backlink commit does not make a cause loop', async () => {
     const id = await newSpec();
     const fb = await ok('request_create', { targets: [`mandate://specs/${id}/sections/design`], kind: 'bug', body: 'Loop me.' });
-    const wo = await ok('work_order_create', { spec: id, kind: 'fix', plan: { steps: ['Do it.'] }, sections: ['design'], reason: [fb.ref] });
+    const wo = await ok('work_order_create', { spec: id, kind: 'fix', plan: { tasks: [{ text: 'Do it.', sections: ['design'] }] }, sections: ['design'], reason: [fb.ref] });
     // A commit writing back into the feedback with the work order as its trailer (a backlink).
     const line = readFileSync(path.join(fx.dir, 'feedback.jsonl'), 'utf8').split('\n').find((l) => l.includes(`"id":"${fb.ref.split('/').pop()}"`))!;
     edit('feedback.jsonl', line, line.replace('Loop me.', 'Loop me (fixed by the work order).'));
@@ -157,7 +157,7 @@ describe('lineage findings', () => {
 
   it('L-8: a spec with an open, claimed work order is changing; a pending unclaimed order is not', async () => {
     const id = await newSpec();
-    const wo = await ok('work_order_create', { spec: id, kind: 'implement', sections: ['design'], fastPath: false, plan: { steps: ['1. Do it.'] } });
+    const wo = await ok('work_order_create', { spec: id, kind: 'implement', sections: ['design'], fastPath: false, plan: { tasks: [{ text: '1. Do it.', sections: ['design'] }] } });
     await fx.index.ensureFresh();
     const before = await read('lineage', { ref: `mandate://specs/${id}`, direction: 'down' });
     expect(before.root.status).not.toBe('in_progress');

@@ -102,7 +102,7 @@ export class QuestionService {
     // blocks: canonical references that must resolve (a step: its work order must).
     const blocks: string[] = [];
     for (const r of input.blocks ?? []) {
-      const step = /^(mandate:\/\/work-orders\/[^/]+)\/steps\/s\d+$/.exec(r);
+      const step = /^(mandate:\/\/work-orders\/[^/]+)\/(?:steps|tasks)\/[st]\d+$/.exec(r);
       if (this.resolve) await this.resolve(step ? step[1]! : r).catch((e: Error) => { throw new QuestionError('validation', `blocks ${r}: ${e.message}`); });
       if (!blocks.includes(r)) blocks.push(r);
     }

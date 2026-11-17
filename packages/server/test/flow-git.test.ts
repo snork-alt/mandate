@@ -83,11 +83,11 @@ describe('flow_next: commit, branch, push and component steps', () => {
     expect(n.next?.why).toContain('Work-Order: wo-1');
     expect(commitMessage(wo(), req)).toBe('fb-1 s1: Write the code\n\nRequest: fb-1\nWork-Order: wo-1');
     // Clean tree: carries on with the next step.
-    expect(flowFor(req, snap(wo(), git())).next?.tool).toBe('work_order_step_set');
+    expect(flowFor(req, snap(wo(), git())).next?.tool).toBe('work_order_task_set');
     // Nothing done yet: pre-existing changes are not the work's.
-    expect(flowFor(req, snap(wo({ planSteps: [{ id: 's1', text: 'x', status: 'pending' }] }), git({ tree: { dirty: true } }))).state).toBe('steps');
+    expect(flowFor(req, snap(wo({ planSteps: [{ id: 's1', text: 'x', status: 'pending' }] }), git({ tree: { dirty: true } }))).state).toBe('tasks');
     // A step in progress is not interrupted.
-    expect(flowFor(req, snap(wo({ planSteps: [{ id: 's1', text: 'x', status: 'in_progress' }] }), git({ tree: { dirty: true } }))).state).toBe('steps');
+    expect(flowFor(req, snap(wo({ planSteps: [{ id: 's1', text: 'x', status: 'in_progress' }] }), git({ tree: { dirty: true } }))).state).toBe('tasks');
   });
 
   it('auto: no HEAD says to make the initial commit; before sections too', () => {

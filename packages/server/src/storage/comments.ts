@@ -88,7 +88,7 @@ export class CommentService {
     const r = parseCommentTarget(target);
     if (!r) {
       if (/^mandate:\/\/audits\//.test(target.trim())) return target.trim();
-      throw new WorkOrderError('invalid_target', `comment targets are Mandate objects: mandate://<specs|standards|components|work-orders|requests>/<id>[/sections/<sid> | /steps/sN][#Lx-Ly]; got '${target}'`, undefined, 400);
+      throw new WorkOrderError('invalid_target', `comment targets are Mandate objects: mandate://<specs|standards|components|work-orders|requests>/<id>[/sections/<sid> | /tasks/tN][#Lx-Ly]; got '${target}'`, undefined, 400);
     }
     return r.canonical;
   }

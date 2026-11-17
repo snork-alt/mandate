@@ -42,7 +42,9 @@ import {
   touchedFromInput,
   type CodeLink,
   type TouchedInput,
+  stepsOf,
 } from '@mandate/shared';
+import { sectionBody, targetSection } from '../../storage/work-order-docs.js';
 import { slugSchema } from '@mandate/doc';
 import { canonicalRef, extractRefs } from '@mandate/shared/refs';
 import { ANY, deliverAssigned, wakeableAny } from '../../flow/assign.js';
@@ -603,8 +605,21 @@ const workOrderTools: AnyToolDef[] = [
       // MW-12: the caller must hold the claim (checked inside the write lock).
       // Code locations carry repo + commit (code, per-file commits, or a commit recorded in git for that repo).
       const stamped = stampLocations(ctx, [{ files: a.codeRefs, path: 'codeRefs' }, { files: a.touched, path: 'touched' }], a.code, committedRepos(a.git));
+      // Sections follow tasks (work_order_task_set): marking a section done marks the tasks covering it done (with these code refs), which records the section.
+      const keys = a.sections;
+      if ((a.status ?? 'done') === 'done') {
+        const svc = ctx.storage.workOrderService;
+        const doc = await svc.doc(id);
+        const tasks = stepsOf(doc, sectionBody(doc, 'plan'));
+        const covers = (t: (typeof tasks)[number], sid: string) => !!(t.sections?.includes(sid) || t.proves?.includes(sid));
+        const covered = a.sections.filter((k) => tasks.some((t) => covers(t, targetSection(svc.woSection(doc, k)))));
+        const open = tasks.filter((t) => (t.status === 'pending' || t.status === 'in_progress') && covered.some((k) => covers(t, targetSection(svc.woSection(doc, k)))));
+        if (open.length) {
+          await svc.stepSet(id, ctx.commit!.agent, open.map((t, i) => ({ step: t.id, status: 'done' as const, ...(i === 0 && a.notes ? { note: a.notes } : {}), codeRefs: stamped.lists[0] })), metaOf(ctx, commits), { sync: false });
+        }
+      }
       const w = await ctx.storage.workOrderService.sectionDone(
-        { id, agent: ctx.commit!.agent, sections: a.sections, status: a.status, notes: a.notes, codeRefs: stamped.lists[0], deviations: a.deviations, verifications: a.verifications, git: a.git, touched: stamped.lists[1] },
+        { id, agent: ctx.commit!.agent, sections: keys, status: a.status, notes: a.notes, codeRefs: stamped.lists[0], deviations: a.deviations, verifications: a.verifications, git: a.git, touched: stamped.lists[1] },
         metaOf(ctx, commits),
       );
       const warnings: string[] = [...checkCodeRepos(ctx, (a.git ?? []).map((g) => g.repo), 'git'), ...stamped.warnings];

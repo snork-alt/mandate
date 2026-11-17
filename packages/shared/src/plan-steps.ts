@@ -6,12 +6,15 @@
 import { z } from 'zod';
 import { touchedFileSchema } from '@mandate/doc';
 
+/** Task ids: `t1`, `t2`, ... (older work orders: `s1`, `s2`). */
+export const TASK_ID_RE = /^[st]\d+$/;
+
 export const PLAN_STEP_STATUSES = ['pending', 'in_progress', 'done', 'skipped'] as const;
 export type PlanStepStatus = (typeof PLAN_STEP_STATUSES)[number];
 
 export const planStepSchema = z.object({
   /** `s1`, `s2`, ...: stable, never reused within a work order. */
-  id: z.string().regex(/^s\d+$/),
+  id: z.string().regex(TASK_ID_RE),
   text: z.string().trim().min(1),
   status: z.enum(PLAN_STEP_STATUSES).default('pending'),
   /** Why (required for skipped), what was done. */
@@ -31,7 +34,7 @@ export const planStepInputSchema = z.union([
   z.string().trim().min(1).max(2000).regex(/^[^\r\n]*$/, 'single line'),
   z
     .object({
-      id: z.string().regex(/^s\d+$/).optional(),
+      id: z.string().regex(TASK_ID_RE).optional(),
       text: z.string().trim().min(1).max(2000).regex(/^[^\r\n]*$/, 'single line'),
       sections: z.array(z.string().trim().min(1).max(200)).max(50).optional(),
       proves: z.array(z.string().trim().min(1).max(200)).max(50).optional(),
@@ -47,7 +50,7 @@ const FROM_BOX: Record<string, PlanStepStatus> = { ' ': 'pending', '~': 'in_prog
 export const renderStepLine = (s: Pick<PlanStep, 'id' | 'text' | 'status'>) => `- [${BOX[s.status]}] **${s.id}** ${s.text}`;
 export const renderSteps = (steps: PlanStep[]): string[] => steps.map(renderStepLine);
 
-const LINE_RE = /^[-*+]\s+\[([ xX~-])\]\s+(?:\*\*(s\d+)\*\*\s+)?(.*\S)\s*$/;
+const LINE_RE = /^[-*+]\s+\[([ xX~-])\]\s+(?:\*\*([st]\d+)\*\*\s+)?(.*\S)\s*$/;
 export interface ParsedStepLine {
   /** Index of the line in the text. */
   line: number;
@@ -56,12 +59,12 @@ export interface ParsedStepLine {
   text: string;
 }
 
-/** The checkbox items of a plan text (only its **Steps** block when there is one; fenced code ignored). */
+/** The checkbox items of a plan text (only its **Tasks** block when there is one; fenced code ignored). */
 export function parseStepLines(md: string): ParsedStepLine[] {
   const lines = md.split(/\r?\n/);
   let from = 0;
   let to = lines.length;
-  const head = lines.findIndex((l) => /^\*\*Steps\*\*/.test(l));
+  const head = lines.findIndex((l) => /^\*\*(?:Tasks|Steps)\*\*/.test(l));
   if (head >= 0) {
     from = head + 1;
     const next = lines.findIndex((l, i) => i > head && /^\*\*[^*\n]+\*\*\s*$/.test(l));
@@ -121,8 +124,8 @@ export function reconcileSteps(
     let prev: PlanStep | undefined;
     if (d.id) {
       prev = byId.get(d.id);
-      if (!prev) problems.push(`unknown step id ${d.id} (steps: ${existing.map((s) => s.id).join(', ') || 'none'}); leave the id out for a new step`);
-      else if (used.has(d.id)) problems.push(`step id ${d.id} used twice`);
+      if (!prev) problems.push(`unknown task id ${d.id} (tasks: ${existing.map((s) => s.id).join(', ') || 'none'}); leave the id out for a new step`);
+      else if (used.has(d.id)) problems.push(`task id ${d.id} used twice`);
     } else prev = existing.find((s) => !used.has(s.id) && s.text === d.text);
     if (prev && !used.has(prev.id)) {
       used.add(prev.id);
@@ -131,10 +134,10 @@ export function reconcileSteps(
       return changed ? { ...prev, text: d.text, ...links, updatedAt: who.now, by: who.by } : prev;
     }
     n += 1;
-    return { id: `s${n}`, text: d.text, status: d.status ?? 'pending', ...(d.sections?.length ? { sections: d.sections } : {}), ...(d.proves?.length ? { proves: d.proves } : {}), updatedAt: who.now, by: who.by };
+    return { id: `t${n}`, text: d.text, status: d.status ?? 'pending', ...(d.sections?.length ? { sections: d.sections } : {}), ...(d.proves?.length ? { proves: d.proves } : {}), updatedAt: who.now, by: who.by };
   });
   for (const s of existing) {
-    if (!used.has(s.id) && s.status === 'done') problems.push(`step ${s.id} is done ("${s.text.slice(0, 60)}") and cannot be removed: keep it in the plan`);
+    if (!used.has(s.id) && s.status === 'done') problems.push(`task ${s.id} is done ("${s.text.slice(0, 60)}") and cannot be removed: keep it in the plan`);
   }
   return { steps, seq: n, problems };
 }
@@ -152,12 +155,12 @@ export function syncStepLines(md: string, steps: PlanStep[]): string {
   return lines.join('\n');
 }
 
-/** The plan text with its step lines replaced by exactly these steps (a **Steps** block is added when the text has none). */
+/** The plan text with its step lines replaced by exactly these steps (a **Tasks** block is added when the text has none). */
 export function replaceStepLines(md: string, steps: PlanStep[]): string {
   const parsed = parseStepLines(md);
   const lines = md.split(/\r?\n/);
   const block = renderSteps(steps);
-  if (!parsed.length) return ['**Steps**', ...block, ...(md.trim() ? ['', md.trim()] : [])].join('\n');
+  if (!parsed.length) return ['**Tasks**', ...block, ...(md.trim() ? ['', md.trim()] : [])].join('\n');
   const drop = new Set(parsed.map((p) => p.line));
   const out: string[] = [];
   lines.forEach((l, i) => {

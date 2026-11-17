@@ -17,7 +17,7 @@ import { idSchema, PRIORITIES, WORK_ORDER_KINDS, WORK_ORDER_STATUSES } from './b
 import { docRefSchema, sectionRefSchema } from './read-schemas.js';
 import { parseNodeUri, parseRef } from './refs.js';
 import { codeClaimSchema, codeLinkSchema } from './code-context.js';
-import { PLAN_STEP_STATUSES, planStepInputSchema, planStepSchema } from './plan-steps.js';
+import { PLAN_STEP_STATUSES, TASK_ID_RE, planStepInputSchema, planStepSchema } from './plan-steps.js';
 
 export { touchedFileSchema, TOUCH_CHANGES, type TouchedFile };
 
@@ -298,33 +298,41 @@ export const woDeliveryExtras = {
 export const workOrderPlanSetInputSchema = z
   .object({
     ref: woRef,
-    /** The plan (markdown). Step lines `- [ ] **s1** text` keep their ids; a line without id is a new step (or matches a step with the same text). */
+    /** The plan (markdown). Task lines `- [ ] **t1** text` keep their ids; a line without id is a new task (or matches a task with the same text). */
     plan: z.string().max(100_000).optional(),
-    /** The steps as data (replaces the step lines of the plan): matched by id, new ones get ids; sections / proves link a step to the targets / criteria. */
+    /** The tasks as data (replaces the task lines of the plan): matched by id, new ones get ids; sections / proves link a task to the spec sections it implements / the criteria it proves. */
+    tasks: z.array(planStepInputSchema).min(1).max(50).optional(),
+    /** Old name of tasks. */
     steps: z.array(planStepInputSchema).min(1).max(50).optional(),
   })
   .strict()
-  .refine((v) => v.plan !== undefined || v.steps !== undefined, 'give plan and / or steps');
-export const workOrderStepSetInputSchema = z
+  .refine((v) => v.plan !== undefined || v.tasks !== undefined || v.steps !== undefined, 'give plan and / or tasks');
+const taskChange = z
+  .object({ task: z.string().regex(TASK_ID_RE).optional(), step: z.string().regex(TASK_ID_RE).optional(), status: z.enum(PLAN_STEP_STATUSES), note: z.string().trim().min(1).max(2000).optional(), codeRefs: z.array(touchedInputSchema).max(200).optional() })
+  .strict()
+  .refine((v) => !!(v.task ?? v.step), 'give task (a task id, t1)');
+/** work_order_task_set (and its old name work_order_step_set: step / steps are accepted as task / tasks). */
+export const workOrderTaskSetInputSchema = z
   .object({
     ref: woRef,
-    /** One step id (`s2`), or several changes in one call. */
-    step: z.string().regex(/^s\d+$/).optional(),
+    /** One task id (`t2`), or several changes in one call. */
+    task: z.string().regex(TASK_ID_RE).optional(),
+    step: z.string().regex(TASK_ID_RE).optional(),
     status: z.enum(PLAN_STEP_STATUSES).optional(),
     note: z.string().trim().min(1).max(2000).optional(),
     codeRefs: z.array(touchedInputSchema).max(200).optional(),
-    steps: z
-      .array(
-        z
-          .object({ step: z.string().regex(/^s\d+$/), status: z.enum(PLAN_STEP_STATUSES), note: z.string().trim().min(1).max(2000).optional(), codeRefs: z.array(touchedInputSchema).max(200).optional() })
-          .strict(),
-      )
-      .min(1)
-      .max(50)
-      .optional(),
+    tasks: z.array(taskChange).min(1).max(50).optional(),
+    steps: z.array(taskChange).min(1).max(50).optional(),
   })
   .strict()
-  .refine((v) => (v.steps ? !v.step && !v.status : !!v.step && !!v.status), 'give step + status, or steps: [{ step, status }]');
+  .refine((v) => (v.tasks || v.steps ? !(v.task ?? v.step) && !v.status : !!(v.task ?? v.step) && !!v.status), 'give task + status, or tasks: [{ task, status }]');
+export const workOrderStepSetInputSchema = workOrderTaskSetInputSchema;
+/** The normalised changes of a task_set / step_set call. */
+export function taskChangesOf(a: z.infer<typeof workOrderTaskSetInputSchema>) {
+  const list = a.tasks ?? a.steps;
+  if (list) return list.map((c) => ({ step: (c.task ?? c.step)!, status: c.status, note: c.note, codeRefs: c.codeRefs }));
+  return [{ step: (a.task ?? a.step)!, status: a.status!, note: a.note, codeRefs: a.codeRefs }];
+}
 export const workOrderTouchInputSchema = z
   .object({
     ref: woRef,

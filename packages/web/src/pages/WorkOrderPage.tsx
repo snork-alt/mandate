@@ -112,7 +112,12 @@ export function WorkOrderPage() {
   const after = tracked.commit ? tracked.data?.diff.after : undefined;
   const doc = after ? withFrontmatter(query.data, 'work-orders', after.frontmatter as Record<string, unknown>) : query.data;
   const { item, spec } = r;
-  const done = item.sections.filter((s) => s.status !== 'pending').length;
+  // Work orders track TASKS (each links the spec sections it implements); older ones without task links keep their sections as read-only history.
+  const tasks = item.planSteps ?? [];
+  const taskStyle = tasks.some((t) => t.sections?.length);
+  const done = taskStyle ? tasks.filter((t) => t.status === 'done' || t.status === 'skipped').length : item.sections.filter((s) => s.status !== 'pending').length;
+  const total = taskStyle ? tasks.length : item.sections.length;
+  const unit = taskStyle ? 'tasks' : 'sections';
   const title = doc.title || item.title || `${KIND_LABEL[item.kind]} · ${spec?.title ?? item.spec}`;
   const counts = comments.data?.counts ?? r.comments?.counts;
   const docSections = r.doc?.sections ?? [];
@@ -164,7 +169,7 @@ export function WorkOrderPage() {
       </div>
       <div className="wo-status-strip" data-testid="wo-status-strip">
         <div className="wo-strip-progress">
-          <SectionProgress done={done} total={item.sections.length} />
+          <SectionProgress done={done} total={total} unit={unit} />
         </div>
         <div className="wo-strip-claim">
           {waiting ? (
@@ -279,7 +284,7 @@ export function WorkOrderPage() {
   const topPanels = (
     <>
       <PropGroup title="Progress">
-        <SectionProgress done={done} total={item.sections.length} />
+        <SectionProgress done={done} total={total} unit={unit} />
         {item.claim ? <ClaimCard claim={item.claim} now={now} workOrder={item.id} /> : <span className="faint small">Not claimed{item.completedAt ? <> · completed <TimeAgo iso={item.completedAt} /></> : ''}</span>}
       </PropGroup>
       <PropGroup title={`Comments${counts ? ` · ${counts.open} open${counts.resolved ? `, ${counts.resolved} resolved` : ''}` : ''}`}>
@@ -353,7 +358,7 @@ export function WorkOrderPage() {
         doc={{ kind: 'work-orders', id, title }}
         header={header}
         banner={banner}
-        sections={tracked.commit ? doc.sections : doc.sections.filter((x) => !hiddenSections.has(x.id))}
+        sections={tracked.commit ? doc.sections : doc.sections.filter((x) => !hiddenSections.has(x.id) && !(taskStyle && x.type === 'wo-section'))}
         standardTitles={standardTitles}
         history={{ entries: history.data, loading: history.isPending, now }}
         tracked={tracked}

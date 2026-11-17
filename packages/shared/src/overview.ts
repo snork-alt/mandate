@@ -68,7 +68,7 @@ export function stepsPlanProgress(steps: PlanStep[]): PlanProgress | null {
 /** Parse a plan's steps (pure). Null when the plan has no list. */
 export function planProgress(md: string): PlanProgress | null {
   // A structured plan (work_order_create plan): only its **Steps** are steps (files, tests and risks are lists too).
-  const steps = /^\*\*Steps\*\*[^\n]*\n([\s\S]*?)(?=^\*\*[^*\n]+\*\*\s*$|(?![\s\S]))/m.exec(md);
+  const steps = /^\*\*(?:Tasks|Steps)\*\*[^\n]*\n([\s\S]*?)(?=^\*\*[^*\n]+\*\*\s*$|(?![\s\S]))/m.exec(md);
   if (steps) md = steps[1]!;
   const items: { text: string; box: boolean; checked: boolean }[] = [];
   let fence = false;

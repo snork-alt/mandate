@@ -75,14 +75,14 @@ const contextRef = z
 
 /* ---------- Questions bound to requests: what an unanswered question blocks ---------- */
 
-const WO_STEP_RE = /^mandate:\/\/work-orders\/([a-z0-9][a-z0-9_-]*)\/steps\/(s\d+)$/;
+const WO_STEP_RE = /^mandate:\/\/work-orders\/([a-z0-9][a-z0-9_-]*)\/(?:steps|tasks)\/([st]\d+)$/;
 export type BlockRef =
   | { kind: 'request'; id: string }
   | { kind: 'work-order'; id: string }
   | { kind: 'step'; workOrder: string; step: string }
   | { kind: 'section'; doc: 'specs' | 'standards' | 'components' | 'work-orders'; id: string; sectionId: string };
 
-/** Parse a `blocks` reference: a request, work order, work-order step (`mandate://work-orders/<id>/steps/sN`) or a section. */
+/** Parse a `blocks` reference: a request, work order, work-order step (`mandate://work-orders/<id>/tasks/tN`) or a section. */
 export function parseBlockRef(ref: string): BlockRef | null {
   const m = WO_STEP_RE.exec(ref);
   if (m) return { kind: 'step', workOrder: m[1]!, step: m[2]! };
@@ -96,7 +96,7 @@ export function parseBlockRef(ref: string): BlockRef | null {
 }
 /** Canonical text of a block reference. */
 export const buildBlockRef = (b: BlockRef): string =>
-  b.kind === 'request' ? `mandate://requests/${b.id}` : b.kind === 'work-order' ? `mandate://work-orders/${b.id}` : b.kind === 'step' ? `mandate://work-orders/${b.workOrder}/steps/${b.step}` : `mandate://${b.doc}/${b.id}/sections/${b.sectionId}`;
+  b.kind === 'request' ? `mandate://requests/${b.id}` : b.kind === 'work-order' ? `mandate://work-orders/${b.id}` : b.kind === 'step' ? `mandate://work-orders/${b.workOrder}/tasks/${b.step}` : `mandate://${b.doc}/${b.id}/sections/${b.sectionId}`;
 
 const blockRef = z
   .string()
@@ -104,7 +104,7 @@ const blockRef = z
   .min(3)
   .max(600)
   .transform((v) => v.replace(/^@mandate:/, ''))
-  .refine((v) => !!parseBlockRef(v), 'blocks: a request (mandate://requests/<id>), work order, work-order step (mandate://work-orders/<id>/steps/sN) or spec / standard / work-order section')
+  .refine((v) => !!parseBlockRef(v), 'blocks: a request (mandate://requests/<id>), work order, work-order step (mandate://work-orders/<id>/tasks/tN) or spec / standard / work-order section')
   .transform((v) => buildBlockRef(parseBlockRef(v)!));
 
 const requestIdInput = z
@@ -263,4 +263,4 @@ export function checkAnswers(q: Pick<QuestionRecord, 'questions'>, answers: Reco
 }
 
 /** Open questions that block `ref` (a request, work order, step or section reference), newest last. */
-export const blockingQuestions = (questions: Question[], ref: string): Question[] => questions.filter((q) => q.status === 'open' && (q.blocks ?? []).includes(ref));
+export const blockingQuestions = (questions: Question[], ref: string): Question[] => questions.filter((q) => q.status === 'open' && (q.blocks ?? []).some((b) => b === ref || b === ref.replace('/tasks/', '/steps/')));

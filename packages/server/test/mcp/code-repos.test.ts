@@ -61,7 +61,7 @@ async function specWithCriterion() {
   return id;
 }
 async function claimedWorkOrder(spec: string) {
-  const wo = await ok('work_order_create', { spec, sections: ['overview'], kind: 'implement', plan: { steps: ['1. Do it.'] } });
+  const wo = await ok('work_order_create', { spec, sections: ['overview'], kind: 'implement', plan: { tasks: [{ text: '1. Do it.', sections: ['overview'] }] } });
   await ok('work_order_claim', { ref: wo.ref });
   return wo.ref as string;
 }

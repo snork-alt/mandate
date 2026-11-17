@@ -90,13 +90,13 @@ describe('routing', () => {
   it('the responsible agent: claim holder of the work order; the request\'s agent', async () => {
     const spec = `rt-${Date.now().toString(36)}`;
     await ok(null, 'spec_create', { id: spec, title: 'Routing', summary: 's', sections: [{ id: 'a', title: 'A', summary: 's', body: 'b' }] });
-    const wo = await ok(bob, 'work_order_create', { spec, sections: ['a'], kind: 'implement', plan: { steps: ['do it'] } });
+    const wo = await ok(bob, 'work_order_create', { spec, sections: ['a'], kind: 'implement', plan: { tasks: [{ text: 'do it', sections: ['a'] }] } });
     await ok(bob, 'work_order_claim', { ref: wo.ref });
     const c = await ok(null, 'comment_add', { target: `${wo.ref}/sections/a`, body: 'On a WO section, no mention.' });
     expect(c.routing).toEqual({ via: 'responsible', wakes: [bobId] });
     const onSpec = await ok(null, 'comment_add', { target: `mandate://specs/${spec}/sections/a`, body: 'On the spec section being implemented.' });
     expect(onSpec.routing.wakes).toEqual([bobId]);
-    const step = await ok(null, 'comment_add', { target: `${wo.ref}/steps/s1`, body: 'On a step.' });
+    const step = await ok(null, 'comment_add', { target: `${wo.ref}/tasks/t1`, body: 'On a step.' });
     expect(step.routing.via).toBe('responsible');
     // the request's agent
     const req = await ok(carol, 'request_create', { kind: 'improvement', body: 'Carol request.' });
@@ -161,9 +161,9 @@ describe('blocking', () => {
   it('a blocking comment on a step gates work_order_complete', async () => {
     const spec = `bk-${Date.now().toString(36)}`;
     await ok(null, 'spec_create', { id: spec, title: 'Blocking', summary: 's', sections: [{ id: 'a', title: 'A', summary: 's', body: 'b' }] });
-    const wo = await ok(null, 'work_order_create', { spec, sections: ['a'], kind: 'implement', plan: { steps: ['one'] } });
+    const wo = await ok(null, 'work_order_create', { spec, sections: ['a'], kind: 'implement', plan: { tasks: [{ text: 'one', sections: ['a'] }] } });
     await ok(null, 'work_order_claim', { ref: wo.ref });
-    await ok(null, 'comment_add', { target: `${wo.ref}/steps/s1`, body: 'Blocker', blocking: true });
+    await ok(null, 'comment_add', { target: `${wo.ref}/tasks/t1`, body: 'Blocker', blocking: true });
     const r = await call(null, 'work_order_complete', { agent: ME, ref: wo.ref, outcome: 'x' });
     expect(r.isError).toBe(true);
     expect(r.body.error.code).toBe('open_comments');

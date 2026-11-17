@@ -2,8 +2,8 @@
  * `flow_next`: the Mandate flow as a state machine over stored state (pure: no I/O, no clock besides `now`). For one
  * request it answers "what is the next step?" (tool + args + why), what it is waiting on (unanswered questions that
  * block it, a work order another request holds), and which other requests are actionable meanwhile. Stages per request:
- *   spec_match -> spec / standard changes -> acceptance criteria -> work_order_create (full plan) -> claim -> plan steps
- *   -> work_order_section_done -> verification_record per criterion -> work_order_complete -> request closed (automatic).
+ *   spec_match -> spec / standard changes -> acceptance criteria -> work_order_create (full plan) -> claim -> tasks
+ *   -> verification_record per criterion -> work_order_complete -> request closed (automatic).
  * The server enforces the order (`flow_out_of_order`, claims); this module only says what comes next.
  */
 import {
@@ -27,7 +27,7 @@ export type FlowState =
   | 'criteria'
   | 'work_order'
   | 'claim'
-  | 'steps'
+  | 'tasks'
   | 'sections'
   | 'verify'
   | 'complete'
@@ -49,7 +49,7 @@ export interface FlowItem {
   request: { id: string; ref: string; kind: string; status: string; summary: string; createdBy?: string; source?: string; assignee?: string; startedBy?: string; priority?: string; planOnly?: boolean };
   /** Assigned to an agent that has not started it yet. */
   queued?: boolean;
-  /** The request's (latest) work order: plan steps, sections and proved criteria (the request page's flow bar). */
+  /** The request's (latest) work order: tasks, sections and proved criteria (the request page's flow bar). */
   progress?: FlowProgress;
   state: FlowState;
   next: FlowStep | null;
@@ -66,8 +66,7 @@ export interface FlowProgress {
   workOrder: string;
   kind: string;
   status: string;
-  steps: { id: string; text: string; status: string }[];
-  sections: { total: number; done: number };
+  tasks: { id: string; text: string; status: string }[];
   criteria: { total: number; proved: number };
 }
 
@@ -130,7 +129,7 @@ const hasCriterion = (spec: Pick<StoredSpec, 'sections'>, sid: string): boolean 
   return (s.verifiedBy ?? []).some((v) => live.some((x) => x.id === v && x.type === 'acceptance'));
 };
 
-/** Steps, sections and proved criteria of the request's newest work order that is not cancelled. */
+/** Tasks and proved criteria of the request's newest work order that is not cancelled. */
 export function progressOf(f: Feedback, snap: FlowSnapshot): FlowProgress | undefined {
   const w = snap.workOrders.filter((x) => x.reason.includes(f.id) && x.status !== 'cancelled').sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
   if (!w) return undefined;
@@ -143,8 +142,7 @@ export function progressOf(f: Feedback, snap: FlowSnapshot): FlowProgress | unde
     workOrder: w.id,
     kind: w.kind,
     status: w.status,
-    steps: ((w.planSteps ?? []) as PlanStep[]).map((s) => ({ id: s.id, text: s.text, status: s.status })),
-    sections: { total: live.length, done: live.filter((x) => x.status === 'done').length },
+    tasks: ((w.planSteps ?? []) as PlanStep[]).map((s) => ({ id: s.id, text: s.text, status: s.status })),
     criteria: { total: criteria.length, proved },
   };
 }
@@ -341,14 +339,14 @@ function driveWorkOrder(w: WorkOrder, f: Feedback, snap: FlowSnapshot, now: numb
       return { state: 'claim', next: { tool: 'work_order_claim', args: { ref }, why: `Claim ${w.id}${claim ? ' (its claim is stale: this takes it over)' : ''} (plan: ${w.hasPlan ? 'given' : 'MISSING: work_order_plan_set first'}). Then read its comments and rules_for_code before editing.${claimGit(w, f, snap)}` } };
     }
   }
-  // Steps first, while sections are open; when every section is done only unfinished steps remain (complete refuses them).
+  // Tasks first, while sections are open; when every section is done only unfinished steps remain (complete refuses them).
   const steps = (w.planSteps ?? []) as PlanStep[];
-  const stepBlocked = (s: PlanStep) => blockingQuestions(snap.questions, `${ref}/steps/${s.id}`).map((q) => q.id);
+  const stepBlocked = (s: PlanStep) => blockingQuestions(snap.questions, `${ref}/tasks/${s.id}`).map((q) => q.id);
   const inProgress = steps.find((s) => s.status === 'in_progress');
   if (inProgress) {
     const b = stepBlocked(inProgress);
     if (b.length) b.forEach((id) => waiting.add(id));
-    else return { state: 'steps', next: { tool: 'work_order_step_set', args: { ref, step: inProgress.id, status: 'done' }, why: `Finish ${inProgress.id} (${inProgress.text}), then record it done with codeRefs (files / lines you changed).` } };
+    else return { state: 'tasks', next: { tool: 'work_order_task_set', args: { ref, task: inProgress.id, status: 'done' }, why: `Finish ${inProgress.id} (${inProgress.text}), then record it done with codeRefs (files / lines you changed).` } };
   }
   const pending = steps.filter((s) => s.status === 'pending');
   // A finished step is committed before the next one starts.
@@ -362,11 +360,13 @@ function driveWorkOrder(w: WorkOrder, f: Feedback, snap: FlowSnapshot, now: numb
       b.forEach((id) => waiting.add(id));
       continue;
     }
-    return { state: 'steps', next: { tool: 'work_order_step_set', args: { ref, step: s.id, status: 'in_progress' }, why: `Start ${s.id}: ${s.text}. Implement it (rules_for_code before editing), then work_order_step_set done with codeRefs.` } };
+    return { state: 'tasks', next: { tool: 'work_order_task_set', args: { ref, task: s.id, status: 'in_progress' }, why: `Start ${s.id}: ${s.text}. Implement it (rules_for_code before editing), then work_order_task_set done with codeRefs.` } };
   }
   if (!allDone) {
     const secBlocked = (sid: string) => blockingQuestions(snap.questions, `${ref}/sections/${sid}`).concat(blockingQuestions(snap.questions, secRef(w.spec, sid))).map((q) => q.id);
-    const ready = sections.filter((s) => s.status === 'pending' && !secBlocked(s.id).length);
+    // Sections follow their tasks: one whose covering tasks are unfinished is not offered (finish the tasks; the section is recorded then).
+    const taskWaits = (sid: string) => steps.some((t) => (t.sections?.includes(sid) || t.proves?.includes(sid)) && (t.status === 'pending' || t.status === 'in_progress'));
+    const ready = sections.filter((s) => s.status === 'pending' && !secBlocked(s.id).length && !taskWaits(s.id));
     sections.filter((s) => s.status === 'pending').forEach((s) => secBlocked(s.id).forEach((id) => waiting.add(id)));
     if (ready.length) {
       const c = commitStep(w, f, snap);

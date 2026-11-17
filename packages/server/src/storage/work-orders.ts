@@ -45,6 +45,7 @@ import {
   type StoredWorkOrderDoc,
   type TouchedFile,
   type TouchedInput,
+  planTasksOf,
   type UpdateWorkOrderInput,
   type VerificationRecord,
   type WorkOrderPlanInput,
@@ -63,7 +64,7 @@ import type { HistoryService } from './history.js';
 import { newId } from './ids.js';
 import type { MarkdownDirRepository } from './MarkdownDirRepository.js';
 import { openChangingOrders } from './model.js';
-import { applyCodeToSection, checkPlanTests, checkStepLinks, coveredCriteria, renderPlan } from './work-order-plan.js';
+import { applyCodeToSection, checkPlanTests, checkStepLinks, checkTaskCoverage, coveredCriteria, renderPlan } from './work-order-plan.js';
 import type { Mutex } from './Mutex.js';
 import {
   defaultTitle,
@@ -146,6 +147,12 @@ function endClaim(d: StoredWorkOrderDoc, ended: ClaimEndReason, at: string): Sto
   return { ...rest, claims: [...(d.claims ?? []), { ...claim, endedAt: at, ended }] } as StoredWorkOrderDoc;
 }
 /** True when the work order has sections and every one is done or obsolete. */
+/** Every section done and, for work orders whose tasks link sections / criteria, every task finished: the claim is released then. */
+export const workFinished = (d: Pick<StoredWorkOrderDoc, 'sections'> & { planSteps?: PlanStep[]; createdAt?: string }): boolean => {
+  if (!allSectionsDone(d)) return false;
+  const tasks = d.planSteps ?? [];
+  return !(tasks.some((t) => t.sections?.length || t.proves?.length) && unfinishedSteps(tasks).length);
+};
 export const allSectionsDone = (d: Pick<StoredWorkOrderDoc, 'sections'>): boolean => {
   const wos = d.sections.filter(isWoSection);
   return wos.length > 0 && wos.every((s) => s.status === 'done' || s.status === 'obsolete');
@@ -293,7 +300,7 @@ export class WorkOrderService {
     // Closing drops the claim into the history.
     if (out.claim && !isOpen(out)) out = endClaim(out, endReason(out.status), now);
     // The last section done / obsolete releases the claim (status stays in_progress): work_order_complete needs no claim then.
-    if (out.claim && isOpen(out) && current && !allSectionsDone(current) && allSectionsDone(out) && !this.keepClaimOnDone.has(out.id)) out = endClaim(out, 'all_done', now);
+    if (out.claim && isOpen(out) && current && !workFinished(current) && workFinished(out) && !this.keepClaimOnDone.has(out.id)) out = endClaim(out, 'all_done', now);
     // Inside the write lock: a fresh claim by another agent cannot be overwritten (claim races have one winner).
     if (current?.claim && out.claim && out.claim.agent !== current.claim.agent && !isClaimStale({ heartbeatAt: this.heartbeatOf(current.id, current.claim) })) {
       throw new ClaimedError(`claimed: ${next.id} is claimed by ${current.claim.agent}`);
@@ -364,8 +371,8 @@ export class WorkOrderService {
     let planSteps: PlanStep[] | undefined;
     if (input.plan && typeof input.plan === 'object') {
       const criteria = coveredCriteria(at, input.sections.map((s) => s.id));
-      const desired = input.plan.steps.map(toDesired);
-      const problems = [...checkPlanTests(input.plan.tests ?? [], criteria), ...checkStepLinks(desired, input.sections.map((s) => s.id), criteria)];
+      const desired = planTasksOf(input.plan).map(toDesired);
+      const problems = [...checkPlanTests(input.plan.tests ?? [], criteria), ...checkStepLinks(desired, input.sections.map((s) => s.id), criteria), ...(input.fastPath ? [] : checkTaskCoverage(desired, input.sections.map((s) => s.id), criteria))];
       const made = reconcileSteps([], desired.map(({ id: _id, ...d }) => d), 0, { now: (meta.date ?? new Date()).toISOString(), by: input.createdBy ?? meta.agent ?? 'agent' });
       problems.push(...made.problems);
       if (problems.length) throw new WorkOrderError('plan_invalid', `plan_invalid: ${problems.join('; ')}`, { kind: 'plan', problems, criteria: criteria.map((c) => c.id) }, 400);
@@ -586,6 +593,20 @@ export class WorkOrderService {
     agent: string,
     changes: { step: string; status: PlanStepStatus; note?: string; codeRefs?: TouchedInput[] }[],
     meta: CommitMeta = {},
+    opts: { sync?: boolean } = {},
+  ): Promise<{ workOrder: WorkOrder; warnings: string[] }> {
+    const r = await this.stepSetCore(id, agent, changes, meta);
+    if (opts.sync === false) return r;
+    // A spec section is implemented when every task covering it is finished: record it (implementedCommit / implementedBy).
+    const synced = await this.syncSections(id, agent, meta);
+    return synced ? { workOrder: synced, warnings: r.warnings.filter((w) => !w.startsWith('every task is finished')) } : r;
+  }
+
+  private async stepSetCore(
+    id: string,
+    agent: string,
+    changes: { step: string; status: PlanStepStatus; note?: string; codeRefs?: TouchedInput[] }[],
+    meta: CommitMeta = {},
   ): Promise<{ workOrder: WorkOrder; warnings: string[] }> {
     const code = changes.map((c) => (c.codeRefs ?? []).map(touchedFromInput));
     return this.locked(async () => {
@@ -595,16 +616,16 @@ export class WorkOrderService {
       const now = (meta.date ?? new Date()).toISOString();
       const by = meta.agent ?? agent;
       const steps = stepsOf(doc, sectionBody(doc, WO_PLAN)).map((s) => ({ ...s }));
-      if (!steps.length) throw new WorkOrderError('no_steps', `work order ${id} has no plan steps: write them with work_order_plan_set (steps) first`, { kind: 'work_order', id }, 400);
+      if (!steps.length) throw new WorkOrderError('no_steps', `work order ${id} has no tasks: write them with work_order_plan_set (tasks) first`, { kind: 'work_order', id }, 400);
       const ids = steps.map((s) => s.id).join(', ');
-      if (new Set(changes.filter((c) => c.status === 'in_progress').map((c) => c.step)).size > 1) throw new ValidationError('only one step can be in_progress at a time');
+      if (new Set(changes.filter((c) => c.status === 'in_progress').map((c) => c.step)).size > 1) throw new ValidationError('only one task can be in_progress at a time');
       let touched = doc.touched ?? [];
       const log: string[] = [];
       changes.forEach((c, k) => {
         const s = steps.find((x) => x.id === c.step);
-        if (!s) throw new ValidationError(`unknown step ${c.step} (steps: ${ids})`);
+        if (!s) throw new ValidationError(`unknown task ${c.step} (tasks: ${ids})`);
         const note = c.note?.trim();
-        if (c.status === 'skipped' && !note) throw new WorkOrderError('note_required', `step ${c.step}: skipped needs a note (why it is not needed)`, { kind: 'step', step: c.step }, 400);
+        if (c.status === 'skipped' && !note) throw new WorkOrderError('note_required', `task ${c.step}: skipped needs a note (why it is not needed)`, { kind: 'step', step: c.step }, 400);
         if (c.status === 'in_progress') for (const o of steps) if (o !== s && o.status === 'in_progress' && !changes.some((x) => x.step === o.id)) Object.assign(o, { status: 'pending', updatedAt: now, by });
         Object.assign(s, { status: c.status, updatedAt: now, by, ...(note ? { note } : {}) });
         if (code[k]!.length) {
@@ -625,9 +646,32 @@ export class WorkOrderService {
         { ...meta, message: meta.message ?? `work order: step ${log.join(', ')} in ${id}${changes.length === 1 ? ` (${steps.find((x) => x.id === changes[0]!.step)!.text.slice(0, 60)})` : ''}` },
       );
       const warnings: string[] = [];
-      if (!unfinishedSteps(steps).length && !allSectionsDone(d)) warnings.push('every plan step is finished: mark the sections done (work_order_section_done with codeRefs)');
+      if (!unfinishedSteps(steps).length && !allSectionsDone(d)) warnings.push('every task is finished: complete the work order (sections without a covering task: work_order_section_done with codeRefs)');
       return { workOrder: this.project(d), warnings };
     });
+  }
+
+  /**
+   * Sections of a work order follow its tasks: a targeted spec section whose covering tasks (task.sections) are all finished is
+   * marked done with the code refs of those tasks (the spec section records implementedCommit / implementedBy then); when every
+   * covering task was skipped it is obsolete. Sections no task covers (older work orders) are left to work_order_section_done.
+   * Returns the work order when something changed.
+   */
+  async syncSections(id: string, agent: string, meta: CommitMeta = {}): Promise<WorkOrder | null> {
+    const doc = await this.doc(id);
+    if (!isOpen(doc)) return null;
+    const tasks = stepsOf(doc, sectionBody(doc, WO_PLAN));
+    if (!tasks.some((t) => t.sections?.length || t.proves?.length)) return null;
+    let out: WorkOrder | null = null;
+    for (const sec of doc.sections.filter(isWoSection).filter((x) => (x.status ?? 'pending') === 'pending')) {
+      const sid = targetSection(sec);
+      const covering = tasks.filter((t) => t.sections?.includes(sid) || t.proves?.includes(sid));
+      if (!covering.length || covering.some((t) => t.status === 'pending' || t.status === 'in_progress')) continue;
+      const done = covering.filter((t) => t.status === 'done');
+      const code = mergeTouched([], done.flatMap((t) => t.codeRefs ?? []));
+      out = await this.sectionDone({ id, sections: [sid], status: done.length ? 'done' : 'obsolete', ...(code.length ? { codeRefs: code as unknown as TouchedInput[] } : {}), agent }, meta);
+    }
+    return out;
   }
 
   /** The wo-section for a key: spec section id, wo-section id or a section reference. */
@@ -843,9 +887,9 @@ export class WorkOrderService {
       const unfinished = unfinishedSteps(stepsOf(doc, sectionBody(doc, WO_PLAN)));
       if (unfinished.length) {
         throw new WorkOrderError(
-          'steps_unfinished',
-          `steps_unfinished: work order ${id} cannot complete: ${unfinished.length} plan step(s) not finished: ${unfinished.map((s) => `${s.id} (${s.status.replace('_', ' ')}) ${s.text.slice(0, 60)}`).join('; ')}`,
-          { kind: 'steps', steps: unfinished.map((s) => ({ id: s.id, text: s.text, status: s.status })) },
+          'tasks_unfinished',
+          `tasks_unfinished: work order ${id} cannot complete: ${unfinished.length} task(s) not finished: ${unfinished.map((s) => `${s.id} (${s.status.replace('_', ' ')}) ${s.text.slice(0, 60)}`).join('; ')}`,
+          { kind: 'tasks', tasks: unfinished.map((s) => ({ id: s.id, text: s.text, status: s.status })) },
         );
       }
       await this.requireProvenCriteria(doc);

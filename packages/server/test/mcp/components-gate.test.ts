@@ -26,7 +26,7 @@ async function ok(name: string, args: Record<string, unknown> = {}) {
 async function newWo(files: string[]) {
   const spec = `cg-${Date.now().toString(36)}-${n++}`;
   await ok('spec_create', { id: spec, title: spec, summary: 's', sections: [{ id: 'design', title: 'Design', summary: 'd', body: 'b' }] });
-  const wo = await ok('work_order_create', { spec, kind: 'fix', sections: ['design'], fastPath: true, plan: { steps: ['do it'], files, tests: [], risks: [] } });
+  const wo = await ok('work_order_create', { spec, kind: 'fix', sections: ['design'], fastPath: true, plan: { tasks: [{ text: 'do it', sections: ['design'] }], files, tests: [], risks: [] } });
   await ok('work_order_claim', { ref: wo.ref });
   await ok('work_order_section_done', { ref: wo.ref, sections: ['design'], notes: 'done', codeRefs: [`app:${files[0]}`], code: { repo: 'app', commit: 'abc1234' } });
   return wo.ref as string;
@@ -48,7 +48,7 @@ describe('components required', () => {
   it('plan files without an owner warn at creation', async () => {
     const spec = `cg-${Date.now().toString(36)}-${n++}`;
     await ok('spec_create', { id: spec, title: spec, summary: 's', sections: [{ id: 'design', title: 'Design', summary: 'd', body: 'b' }] });
-    const wo = await ok('work_order_create', { spec, kind: 'fix', sections: ['design'], fastPath: true, plan: { steps: ['x'], files: ['app:src/unowned/zzz.ts'], tests: [], risks: [] } });
+    const wo = await ok('work_order_create', { spec, kind: 'fix', sections: ['design'], fastPath: true, plan: { tasks: [{ text: 'x', sections: ['design'] }], files: ['app:src/unowned/zzz.ts'], tests: [], risks: [] } });
     expect((wo.warnings as string[]).some((w) => w.startsWith('plan_components_missing') && w.includes('src/unowned/zzz.ts'))).toBe(true);
   });
 

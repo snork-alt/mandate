@@ -36,10 +36,10 @@ export function changedDocs(changes: FeedbackChange[]): { key: string; kind: Fee
 
 export const questionTitle = (q: Pick<Question, 'questions' | 'id'>) => q.questions[0]?.title ?? q.questions[0]?.question ?? q.id;
 
-/** What a question blocks, as a link: a request, work order, step (a `/steps/sN` reference) or a section. */
+/** What a question blocks, as a link: a request, work order, task (a `/tasks/tN` reference) or a section. */
 export function blockTarget(ref: string): { label: string; href: string | null; kind: 'request' | 'work-order' | 'step' | 'section' } {
   const b = parseBlockRef(ref);
-  if (b?.kind === 'step') return { label: `step ${b.step} of ${b.workOrder}`, href: `/work-orders/${b.workOrder}`, kind: 'step' };
+  if (b?.kind === 'step') return { label: `task ${b.step} of ${b.workOrder}`, href: `/work-orders/${b.workOrder}`, kind: 'step' };
   if (b?.kind === 'request') return { label: b.id, href: `/requests/${b.id}`, kind: 'request' };
   if (b?.kind === 'work-order') return { label: b.id, href: `/work-orders/${b.id}`, kind: 'work-order' };
   if (b?.kind === 'section') return { label: `${b.id} · ${b.sectionId}`, href: `/${b.doc}/${b.id}`, kind: 'section' };
@@ -55,7 +55,7 @@ const wosOf = (q: Question): string[] =>
     return p?.kind === 'work-order' || p?.kind === 'section' && p.doc === 'work-orders' ? [p.id] : p?.kind === 'step' ? [p.workOrder] : [];
   });
 
-/** Open questions that block a work order, one of its steps or sections (`blocks`). */
+/** Open questions that block a work order, one of its tasks or sections (`blocks`). */
 export const questionsBlockingWorkOrder = (questions: Question[], woId: string): Question[] => questions.filter((q) => q.status === 'open' && wosOf(q).includes(woId));
 
 /** Work order ids with at least one open blocking question. */

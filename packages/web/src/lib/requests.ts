@@ -26,8 +26,7 @@ export interface FlowProgress {
   workOrder: string;
   kind: string;
   status: string;
-  steps: { id: string; text: string; status: string }[];
-  sections: { total: number; done: number };
+  tasks: { id: string; text: string; status: string }[];
   criteria: { total: number; proved: number };
 }
 export interface FlowState {
@@ -148,9 +147,9 @@ export function requestStages(f: Pick<Feedback, 'status' | 'specMatch' | 'change
   const matched = closed || !!f.specMatch || !!p;
   const specDone = closed || f.changes.length > 0 || !!p;
   const planDone = closed || !!p;
-  const stepsDone = p ? p.steps.filter((s) => s.status === 'done' || s.status === 'skipped').length : 0;
-  const stepsTotal = p?.steps.length ?? 0;
-  const implDone = closed || (!!p && p.sections.total > 0 && p.sections.done >= p.sections.total && stepsDone >= stepsTotal);
+  const stepsDone = p ? p.tasks.filter((s) => s.status === 'done' || s.status === 'skipped').length : 0;
+  const stepsTotal = p?.tasks.length ?? 0;
+  const implDone = closed || (!!p && stepsTotal > 0 && stepsDone >= stepsTotal);
   const provedDone = closed;
   const flags = [true, matched, specDone, planDone, implDone, provedDone];
   const firstTodo = flags.indexOf(false);
@@ -164,8 +163,8 @@ export function requestStages(f: Pick<Feedback, 'status' | 'specMatch' | 'change
     mk(0, 'recorded', 'Recorded'),
     mk(1, 'matched', 'Matched'),
     mk(2, 'spec', 'Spec updated', f.changes.length ? `${f.changes.length} change${f.changes.length === 1 ? '' : 's'}` : undefined),
-    mk(3, 'plan', 'Work order + plan', p ? `${stepsTotal} step${stepsTotal === 1 ? '' : 's'}` : undefined),
-    mk(4, 'implementing', 'Implementing', planReady ? 'waiting for plan approval' : p && stepsTotal ? `step ${Math.min(stepsDone + (implDone ? 0 : 1), stepsTotal)} of ${stepsTotal}` : undefined),
+    mk(3, 'plan', 'Work order + plan', p ? `${stepsTotal} task${stepsTotal === 1 ? '' : 's'}` : undefined),
+    mk(4, 'implementing', 'Implementing', planReady ? 'waiting for plan approval' : p && stepsTotal ? `task ${Math.min(stepsDone + (implDone ? 0 : 1), stepsTotal)} of ${stepsTotal}` : undefined),
     mk(5, 'proved', 'Proved & done', p ? `${p.criteria.proved} of ${p.criteria.total} criteria` : undefined),
   ];
 }

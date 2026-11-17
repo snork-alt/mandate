@@ -14,7 +14,7 @@ export async function tempDir(): Promise<string> {
 }
 
 export async function cleanupTempDirs(): Promise<void> {
-  await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true, force: true })));
+  await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })));
 }
 
 /** Backend under test: `MANDATE_GIT_BACKEND=cli npm test` runs every suite against the git CLI store. */

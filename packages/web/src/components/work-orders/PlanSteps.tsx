@@ -12,15 +12,15 @@ const ICON = {
   skipped: <IconCircleOff size={15} color="var(--app-text-faint)" aria-label="skipped" />,
 };
 
-/** The plan steps of a work order as a live checklist (read-only: agents set them with work_order_step_set). */
+/** The tasks of a work order as a live checklist (read-only: agents set them with work_order_task_set). */
 export function PlanSteps({ steps, spec, workOrder }: { steps: PlanStep[]; spec: string; workOrder?: string }) {
   if (!steps.length) return null;
   const cur = currentStep(steps);
   const finished = steps.filter((s) => s.status === 'done' || s.status === 'skipped').length;
   return (
-    <section className="wo-steps" data-testid="wo-steps" aria-label="Plan steps">
+    <section className="wo-steps" data-testid="wo-steps" aria-label="Tasks">
       <h3 className="wo-steps-title">
-        Steps <span className="faint small">{finished}/{steps.length}</span>
+        Tasks <span className="faint small">{finished}/{steps.length}</span>
       </h3>
       <ol className="wo-steps-list">
         {steps.map((s) => (
@@ -34,7 +34,7 @@ export function PlanSteps({ steps, spec, workOrder }: { steps: PlanStep[]; spec:
               {(s.sections?.length || s.proves?.length || s.codeRefs?.length) && (
                 <div className="wo-step-chips">
                   {s.sections?.map((x) => (
-                    <Link key={`s-${x}`} to={`/specs/${spec}#section-${x}`} className="wo-step-chip" title="Spec section covered">
+                    <Link key={`s-${x}`} to={`/specs/${spec}#section-${x}`} className="wo-step-chip" title="Spec section this task implements">
                       {x}
                     </Link>
                   ))}
@@ -51,7 +51,7 @@ export function PlanSteps({ steps, spec, workOrder }: { steps: PlanStep[]; spec:
                 </div>
               )}
             </div>
-            {workOrder && <StepComments target={`${buildRef({ kind: 'work-orders', id: workOrder })}/steps/${s.id}`} />}
+            {workOrder && <StepComments target={`${buildRef({ kind: 'work-orders', id: workOrder })}/tasks/${s.id}`} />}
             {s.status !== 'pending' && (
               <span className="wo-step-who small faint">
                 {s.by} · <TimeAgo iso={s.updatedAt} />

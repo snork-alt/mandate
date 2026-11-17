@@ -105,7 +105,7 @@ export function RequestProgress({ f, workOrderIds }: { f: Feedback; workOrderIds
   const stages = requestStages(f, state);
   const open = f.status !== 'closed';
   const planReady = open && !!f.planOnly && (state?.state === 'plan_ready' || (!state && workOrderIds.length > 0));
-  const steps = state?.progress?.steps ?? [];
+  const steps = state?.progress?.tasks ?? [];
   return (
     <div data-testid="request-progress">
       <div className="rq-meta faint small" style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>
@@ -134,7 +134,7 @@ export function RequestProgress({ f, workOrderIds }: { f: Feedback; workOrderIds
       </div>
       {steps.length > 0 && (
         <>
-          <h2 className="fb-h2">Plan · {steps.filter((x) => x.status === 'done').length} of {steps.length} steps</h2>
+          <h2 className="fb-h2">Plan · {steps.filter((x) => x.status === 'done').length} of {steps.length} tasks</h2>
           <ul className="rq-steps" data-testid="rq-steps">
             {steps.map((s) => (
               <li key={s.id} data-status={s.status}>

@@ -184,8 +184,10 @@ const relatedRef = z.string().trim().min(1).max(400).refine((v) => /^[a-z0-9][a-
 /** The structured plan of a work order (rendered to the plan section; `tests` are checked at work_order_complete). */
 export const workOrderPlanInputSchema = z
   .object({
-    /** What you will do, in order: a line, or { text, sections: [targeted spec section ids], proves: [criterion ids] } to link the step. Each gets a stable id (s1, s2, ...). */
-    steps: z.array(planStepInputSchema).min(1).max(50),
+    /** The tasks, in order: a line, or { text, sections: [targeted spec section ids it implements], proves: [criterion ids it proves] }. Every targeted section needs a task covering it and every criterion a task proving it. Each gets a stable id (t1, t2, ...). */
+    tasks: z.array(planStepInputSchema).min(1).max(50).optional(),
+    /** Old name of tasks. */
+    steps: z.array(planStepInputSchema).min(1).max(50).optional(),
     /** Files to change or add (`path`, or `repo:path` / `path: why`). */
     files: z.array(line(500)).max(200).default([]),
     /** Tests to write: name, where (optional), and the acceptance criteria (section ids of the spec) each proves. */
@@ -193,8 +195,11 @@ export const workOrderPlanInputSchema = z
     /** What could go wrong. */
     risks: z.array(line(2000)).max(30).default([]),
   })
-  .strict();
+  .strict()
+  .refine((v) => !!(v.tasks ?? v.steps)?.length, 'give tasks');
 export type WorkOrderPlanInput = z.input<typeof workOrderPlanInputSchema>;
+/** The tasks of a plan input (`tasks`, or the old name `steps`). */
+export const planTasksOf = (p: Pick<WorkOrderPlanInput, 'tasks' | 'steps'>) => (p.tasks ?? p.steps ?? []);
 
 export const workOrderCreateInputSchema = z
   .object({

@@ -145,7 +145,7 @@ describe('UI allow-list (uiAllowed)', () => {
   it('an all-sections-done work order with a stale claim is no stale_claim decision and cannot be released from the UI', async () => {
     const sid = `dec-${Date.now().toString(36)}`;
     await fx.call('spec_create', { id: sid, title: 'Decision spec', summary: 's', agent: 't', sections: [{ id: 'one', title: 'One', summary: 'o', body: 'o' }] });
-    const created = await fx.call('work_order_create', { spec: sid, sections: ['one'], kind: 'implement', plan: { steps: ['p'] }, agent: 't' });
+    const created = await fx.call('work_order_create', { spec: sid, sections: ['one'], kind: 'implement', plan: { tasks: [{ text: 'p', sections: ['one'] }] }, agent: 't' });
     const wo = { id: (created.body.ref as string).split('/').pop()! };
     await fx.call('work_order_claim', { ref: wo.id, agent: 'busy-agent' });
     const secs = ['one'];
