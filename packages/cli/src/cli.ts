@@ -5,6 +5,7 @@ import { main as keysMain } from '../../server/scripts/mandate.js';
 import { bool, parseArgs } from './args.js';
 import { cmdDoctor, cmdLogs, cmdOpen, cmdRestart, cmdSetupUrl, cmdStart, cmdStatus, cmdStop, cmdUpdate } from './commands.js';
 import { cmdConnect } from './connect.js';
+import { cmdGuard } from './guard.js';
 import { cmdBootstrap } from './bootstrap.js';
 import { inventory, printInventory } from './inventory.js';
 import { BIN, makeCtx, PKG_NAME, PKG_VERSION } from './context.js';
@@ -28,6 +29,7 @@ ${c.bold('Commands')}
   open [--print]                   open the UI (setup wizard, or a one-time sign-in link)
   setup-url                        print the one-time setup wizard link
   update                           npm install -g ${PKG_NAME}@latest, then restart
+  guard --url <server> --project <id>   Claude Code edit-guard hook (strict flow; installed by connect --strict-flow)
   doctor [--json] [--clean]        diagnostics (--clean: remove expired bootstrap notes)
   agents                           detected coding agents: what each supports and has installed
   bootstrap init|status|validate|clean   run folders for /mandate-bootstrap (notes stay in ~/.mandate)
@@ -84,6 +86,15 @@ export async function run(argv: string[], env: NodeJS.ProcessEnv = process.env, 
     }
     case 'bootstrap':
       return cmdBootstrap(ctx, a, out);
+    case 'guard': {
+      // Claude Code PreToolUse hook (strict flow): the hook JSON arrives on stdin; exit 2 blocks the edit.
+      const read = async () => {
+        let t = '';
+        for await (const chunk of process.stdin) t += String(chunk);
+        return t;
+      };
+      return cmdGuard(ctx, a, (s) => process.stderr.write(`${s}\n`), read);
+    }
     case 'key':
     case 'session':
       return keysMain([a.cmd, ...a.rest], { ...env, MANDATE_HOME: ctx.mandateHome }, (s) => out.log(s.replaceAll('npm run mandate --', BIN)));

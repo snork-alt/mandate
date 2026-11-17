@@ -37,6 +37,7 @@ exports[`claude-code install / connect / uninstall > writes exactly these files,
   "connected": [
     ".claude/commands/mandate-bootstrap.md",
     ".claude/commands/mandate-flow.md",
+    ".claude/commands/mandate.md",
     ".mcp.json",
     "CLAUDE.md",
   ],
@@ -44,6 +45,7 @@ exports[`claude-code install / connect / uninstall > writes exactly these files,
     ".claude.json",
     ".claude/commands/mandate-bootstrap.md",
     ".claude/commands/mandate-flow.md",
+    ".claude/commands/mandate.md",
     ".claude/skills/mandate-bootstrap/SKILL.md",
     ".claude/skills/mandate/SKILL.md",
   ],
@@ -85,6 +87,7 @@ exports[`codex install / connect / uninstall > writes exactly these files, idemp
     ".codex/config.toml",
     ".codex/prompts/mandate-bootstrap.md",
     ".codex/prompts/mandate-flow.md",
+    ".codex/prompts/mandate.md",
   ],
 }
 `;
@@ -103,6 +106,7 @@ exports[`cursor install / connect / uninstall > writes exactly these files, idem
   "connected": [
     ".cursor/commands/mandate-bootstrap.md",
     ".cursor/commands/mandate-flow.md",
+    ".cursor/commands/mandate.md",
     ".cursor/mcp.json",
     "AGENTS.md",
   ],
@@ -111,6 +115,7 @@ exports[`cursor install / connect / uninstall > writes exactly these files, idem
     ".agents/skills/mandate/SKILL.md",
     ".cursor/commands/mandate-bootstrap.md",
     ".cursor/commands/mandate-flow.md",
+    ".cursor/commands/mandate.md",
     ".cursor/mcp.json",
   ],
 }
@@ -130,6 +135,7 @@ exports[`gemini install / connect / uninstall > writes exactly these files, idem
   "connected": [
     ".gemini/commands/mandate-bootstrap.toml",
     ".gemini/commands/mandate-flow.toml",
+    ".gemini/commands/mandate.toml",
     ".gemini/settings.json",
     "GEMINI.md",
   ],
@@ -138,6 +144,7 @@ exports[`gemini install / connect / uninstall > writes exactly these files, idem
     ".agents/skills/mandate/SKILL.md",
     ".gemini/commands/mandate-bootstrap.toml",
     ".gemini/commands/mandate-flow.toml",
+    ".gemini/commands/mandate.toml",
     ".gemini/settings.json",
   ],
 }
@@ -192,6 +199,7 @@ exports[`opencode install / connect / uninstall > writes exactly these files, id
   "connected": [
     ".opencode/commands/mandate-bootstrap.md",
     ".opencode/commands/mandate-flow.md",
+    ".opencode/commands/mandate.md",
     "AGENTS.md",
     "opencode.json",
   ],
@@ -200,6 +208,7 @@ exports[`opencode install / connect / uninstall > writes exactly these files, id
     ".agents/skills/mandate/SKILL.md",
     ".config/opencode/commands/mandate-bootstrap.md",
     ".config/opencode/commands/mandate-flow.md",
+    ".config/opencode/commands/mandate.md",
     ".config/opencode/opencode.json",
   ],
 }
@@ -211,9 +220,9 @@ description: "Turn the Mandate flow on or off for this agent client, or show it.
 argument-hint: "on | off | status | questions mandate|chat"
 ---
 <!-- managed by mandate -->
-Load the current instructions for this command from Mandate: \`instructions_get {"name":"flow","args":"$ARGUMENTS","stubVersion":2}\`. Follow the returned \`text\`.
+Load the current instructions for this command from Mandate: \`instructions_get {"name":"flow","args":"$ARGUMENTS","stubVersion":3}\`. Follow the returned \`text\`.
 If that tool is missing or the Mandate server cannot be reached: stop and tell the user that Mandate is unreachable. Do not work from memory or from an older copy of these instructions.
-<!-- mandate-stub v2 -->
+<!-- mandate-stub v3 -->
 "
 `;
 
@@ -223,9 +232,9 @@ description: "Turn the Mandate flow on or off for this agent client, or show it.
 argument-hint: "on | off | status | questions mandate|chat"
 ---
 <!-- managed by mandate -->
-Load the current instructions for this command from Mandate: \`instructions_get {"name":"flow","args":"$ARGUMENTS","stubVersion":2}\`. Follow the returned \`text\`.
+Load the current instructions for this command from Mandate: \`instructions_get {"name":"flow","args":"$ARGUMENTS","stubVersion":3}\`. Follow the returned \`text\`.
 If that tool is missing or the Mandate server cannot be reached: stop and tell the user that Mandate is unreachable. Do not work from memory or from an older copy of these instructions.
-<!-- mandate-stub v2 -->
+<!-- mandate-stub v3 -->
 "
 `;
 
@@ -233,9 +242,9 @@ exports[`skills and command templates > each command renders per agent format > 
 "<!-- managed by mandate -->
 # Mandate flow on / off
 
-Load the current instructions for this command from Mandate: \`instructions_get {"name":"flow","args":"(the text after the command)","stubVersion":2}\`. Follow the returned \`text\`.
+Load the current instructions for this command from Mandate: \`instructions_get {"name":"flow","args":"(the text after the command)","stubVersion":3}\`. Follow the returned \`text\`.
 If that tool is missing or the Mandate server cannot be reached: stop and tell the user that Mandate is unreachable. Do not work from memory or from an older copy of these instructions.
-<!-- mandate-stub v2 -->
+<!-- mandate-stub v3 -->
 "
 `;
 
@@ -243,9 +252,9 @@ exports[`skills and command templates > each command renders per agent format > 
 "# managed by mandate
 description = "Turn the Mandate flow on or off for this agent client, or show it. The project policy can override it."
 prompt = """
-Load the current instructions for this command from Mandate: \`instructions_get {"name":"flow","args":"{{args}}","stubVersion":2}\`. Follow the returned \`text\`.
+Load the current instructions for this command from Mandate: \`instructions_get {"name":"flow","args":"{{args}}","stubVersion":3}\`. Follow the returned \`text\`.
 If that tool is missing or the Mandate server cannot be reached: stop and tell the user that Mandate is unreachable. Do not work from memory or from an older copy of these instructions.
-<!-- mandate-stub v2 -->
+<!-- mandate-stub v3 -->
 """
 "
 `;
@@ -256,9 +265,9 @@ description: "Turn the Mandate flow on or off for this agent client, or show it.
 argument-hint: "on | off | status | questions mandate|chat"
 ---
 <!-- managed by mandate -->
-Load the current instructions for this command from Mandate: \`instructions_get {"name":"flow","args":"$ARGUMENTS","stubVersion":2}\`. Follow the returned \`text\`.
+Load the current instructions for this command from Mandate: \`instructions_get {"name":"flow","args":"$ARGUMENTS","stubVersion":3}\`. Follow the returned \`text\`.
 If that tool is missing or the Mandate server cannot be reached: stop and tell the user that Mandate is unreachable. Do not work from memory or from an older copy of these instructions.
-<!-- mandate-stub v2 -->
+<!-- mandate-stub v3 -->
 "
 `;
 
@@ -268,9 +277,9 @@ description: "Turn the Mandate flow on or off for this agent client, or show it.
 argument-hint: "on | off | status | questions mandate|chat"
 ---
 <!-- managed by mandate -->
-Load the current instructions for this command from Mandate: \`instructions_get {"name":"flow","args":"$ARGUMENTS","stubVersion":2}\`. Follow the returned \`text\`.
+Load the current instructions for this command from Mandate: \`instructions_get {"name":"flow","args":"$ARGUMENTS","stubVersion":3}\`. Follow the returned \`text\`.
 If that tool is missing or the Mandate server cannot be reached: stop and tell the user that Mandate is unreachable. Do not work from memory or from an older copy of these instructions.
-<!-- mandate-stub v2 -->
+<!-- mandate-stub v3 -->
 "
 `;
 
@@ -280,9 +289,9 @@ description: "Turn the Mandate flow on or off for this agent client, or show it.
 argument-hint: "on | off | status | questions mandate|chat"
 ---
 <!-- managed by mandate -->
-Load the current instructions for this command from Mandate: \`instructions_get {"name":"flow","args":"\${input:args}","stubVersion":2}\`. Follow the returned \`text\`.
+Load the current instructions for this command from Mandate: \`instructions_get {"name":"flow","args":"\${input:args}","stubVersion":3}\`. Follow the returned \`text\`.
 If that tool is missing or the Mandate server cannot be reached: stop and tell the user that Mandate is unreachable. Do not work from memory or from an older copy of these instructions.
-<!-- mandate-stub v2 -->
+<!-- mandate-stub v3 -->
 "
 `;
 
@@ -293,18 +302,27 @@ description: "Turn the Mandate flow on or off for this agent client, or show it.
 argument-hint: "on | off | status | questions mandate|chat"
 ---
 <!-- managed by mandate -->
-Load the current instructions for this command from Mandate: \`instructions_get {"name":"flow","args":"$ARGUMENTS","stubVersion":2}\`. Follow the returned \`text\`.
+Load the current instructions for this command from Mandate: \`instructions_get {"name":"flow","args":"$ARGUMENTS","stubVersion":3}\`. Follow the returned \`text\`.
 If that tool is missing or the Mandate server cannot be reached: stop and tell the user that Mandate is unreachable. Do not work from memory or from an older copy of these instructions.
-<!-- mandate-stub v2 -->
+<!-- mandate-stub v3 -->
 ",
   "---
 description: "Reverse-engineer this codebase into Mandate (extract → distill → review). Forms: (none) · extract|distill|review [--run id] [--area path] · --resume · scope."
 argument-hint: "[extract|distill|review] [--run <id>] [--area <path>] [--resume] [scope…]"
 ---
 <!-- managed by mandate -->
-Load the current instructions for this command from Mandate: \`instructions_get {"name":"bootstrap","args":"$ARGUMENTS","stubVersion":2}\`. Follow the returned \`command\`, then \`text\` (the bootstrap procedure).
+Load the current instructions for this command from Mandate: \`instructions_get {"name":"bootstrap","args":"$ARGUMENTS","stubVersion":3}\`. Follow the returned \`command\`, then \`text\` (the bootstrap procedure).
 If that tool is missing or the Mandate server cannot be reached: stop and tell the user that Mandate is unreachable. Do not work from memory or from an older copy of these instructions.
-<!-- mandate-stub v2 -->
+<!-- mandate-stub v3 -->
+",
+  "---
+description: "Give Mandate a request and let the agent drive the whole flow (specs, work order, code, tests, verification) without stopping, asking you only what it must. Forms: <request text> · resume <request id> · status."
+argument-hint: "<what you want> | resume <request id> | status"
+---
+<!-- managed by mandate -->
+Load the current instructions for this command from Mandate: \`instructions_get {"name":"mandate","args":"$ARGUMENTS","stubVersion":3}\`. Follow the returned \`text\`.
+If that tool is missing or the Mandate server cannot be reached: stop and tell the user that Mandate is unreachable. Do not work from memory or from an older copy of these instructions.
+<!-- mandate-stub v3 -->
 ",
 ]
 `;
@@ -327,11 +345,11 @@ Every feature request, change, bug fix or work order in a repository connected t
 **First, every task:** load the current working agreement from Mandate and follow it. It replaces any earlier copy,
 including notes in your memory:
 
-\`instructions_get {"name":"core","stubVersion":2}\`
+\`instructions_get {"name":"core","stubVersion":3}\`
 
 If that tool is missing or the Mandate server cannot be reached: stop and tell the user that Mandate is unreachable. Do not work from memory or from an older copy of these instructions.
 
-<!-- mandate-stub v2 -->
+<!-- mandate-stub v3 -->
 "
 `;
 
@@ -350,6 +368,7 @@ exports[`vscode install / connect / uninstall > writes exactly these files, idem
   "connected": [
     ".github/prompts/mandate-bootstrap.prompt.md",
     ".github/prompts/mandate-flow.prompt.md",
+    ".github/prompts/mandate.prompt.md",
     ".vscode/mcp.json",
     "AGENTS.md",
   ],

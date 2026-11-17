@@ -90,7 +90,7 @@ export function repoSection(project: string, url: string): string {
   return `## Mandate
 
 This repo uses Mandate project \`${project}\` (MCP server \`${serverName(project)}\`, ${url}). For every feature, change or fix, follow the \`mandate\` skill (or the MCP server instructions); start with \`project_info\`, then \`code_context_set\` (again after each commit). Ask the user through Mandate (\`question_ask\`). Never change a standard without explicit user confirmation.
-Commands: \`/mandate-flow on|off|status\`, \`/mandate-bootstrap\` (or the MCP prompts of the same names).`;
+Commands: \`/mandate <request>\`, \`/mandate-flow on|off|status\`, \`/mandate-bootstrap\` (or the MCP prompts).`;
 }
 
 /** Which instruction files to write: the existing ones, else CLAUDE.md (Claude Code) and/or AGENTS.md (others). */

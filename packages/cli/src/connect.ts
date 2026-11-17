@@ -11,6 +11,7 @@ import { can, commandChanges, envVarFor, makeServer, mcpRemove, mcpUpsert, OAUTH
 import { BIN, envFile, type Ctx } from './context.js';
 import { applyChanges, JsoncError, type Change } from './edits.js';
 import { disconnectChanges, pickAgents, type Runtime } from './install.js';
+import { claudeFlowWiring } from './claude-flow.js';
 import { publicUrlProblem, readSettings } from './settings.js';
 import { c, fail, info, ok, warn } from './ui.js';
 import { envChange, instructionFiles, listProjects, rcChanges, readEnvKeys, readManifest, repoSection, sectionChange, writeManifest } from './wiring.js';
@@ -143,6 +144,7 @@ async function connectRemote(rt: Runtime, a: Args, repo: string, url: string): P
       if (t && can(ag, 'mcp', true)) changes.push(mcpRemove(ag, t, server.name));
     }
     if (wireRepo) changes.push(...disconnectChanges(ctx, repo, project));
+    changes.push(...claudeFlowWiring(ctx, agents, { project, url: base, repo: wireRepo ? repo : undefined, remove: true }));
     applyChanges(changes, { dryRun: rt.dryRun, out, home: ctx.home });
     if (!rt.dryRun) {
       const m = readManifest(ctx);
@@ -191,6 +193,7 @@ async function connectRemote(rt: Runtime, a: Args, repo: string, url: string): P
     }
   }
   changes.push(...skillChanges(ctx, agents), ...commandChanges(ctx, agents));
+  changes.push(...claudeFlowWiring(ctx, agents, { project, url: base, repo: wireRepo ? repo : undefined, strict: bool(a, 'strict-flow') }));
   if (wireRepo) {
     const r = connectChanges(ctx, repo, project, base, agents.filter((ag) => !oauth || OAUTH_AGENTS.has(ag.id)), oauth);
     changes.push(...r.changes);
@@ -199,6 +202,7 @@ async function connectRemote(rt: Runtime, a: Args, repo: string, url: string): P
   if (!rt.dryRun) mkdirSync(ctx.mandateHome, { recursive: true, mode: 0o700 });
   // Tokens only in env.sh (0600), sourced by the shell profile; never echoed.
   const keyChanges = rt.dryRun || !key ? [] : [envChange(ctx, new Map([[project, key]])), ...rcChanges(ctx)];
+  if (bool(a, 'strict-flow') && oauth) skipped.push(`strict flow: the edit guard (${BIN} guard) authenticates with a personal token; connect with --auth token for it to enforce (without one it lets edits through)`);
   for (const x of skipped) out.log(warn(x));
   applyChanges([...changes, ...keyChanges], { dryRun: rt.dryRun, out, home: ctx.home });
   if (!rt.dryRun) {

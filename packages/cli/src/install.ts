@@ -225,7 +225,7 @@ export async function cmdInstall(rt: Runtime, a: Args): Promise<number> {
     if (!found.length) out.log(info(`no coding agents detected (${AGENTS.map((x) => x.label).join(', ')}); later: ${BIN} install --agents-only`));
     else {
       out.log(info(`detected: ${found.map((x) => c.bold(x.label)).join(', ')}`));
-      if (await rt.prompt.confirm('Add the Mandate skills and the /mandate-flow and /mandate-bootstrap commands to them (and the MCP entry when there is a single project)?', true)) wireAgents(rt, found, s.url);
+      if (await rt.prompt.confirm('Add the Mandate skills and the /mandate, /mandate-flow and /mandate-bootstrap commands to them (and the MCP entry when there is a single project)?', true)) wireAgents(rt, found, s.url);
       else out.log(info(`skipped; later: ${BIN} install --agents-only`));
     }
   }

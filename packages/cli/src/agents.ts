@@ -15,7 +15,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { FLOW_COMMAND, SKILL_DESCRIPTION } from '../../server/src/mcp/guide.js';
+import { FLOW_COMMAND, MANDATE_COMMAND, SKILL_DESCRIPTION } from '../../server/src/mcp/guide.js';
 import { BOOTSTRAP_COMMAND, BOOTSTRAP_SKILL_DESCRIPTION } from '../../server/src/mcp/bootstrap.js';
 import { BOOTSTRAP_SKILL_STUB, commandStub, SKILL_STUB, STUB_VERSION } from '../../server/src/mcp/stubs.js';
 import type { Ctx } from './context.js';
@@ -109,6 +109,7 @@ export interface Command {
 export const COMMANDS: Command[] = [
   { ...FLOW_COMMAND, render: (args: string) => commandStub('flow', args) },
   { ...BOOTSTRAP_COMMAND, render: (args: string) => commandStub('bootstrap', args) },
+  { ...MANDATE_COMMAND, render: (args: string) => commandStub('mandate', args) },
 ];
 export { STUB_VERSION };
 

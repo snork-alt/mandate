@@ -106,7 +106,7 @@ describe('connect (project scope)', () => {
     const { changes } = connectChanges(ctx, repo, 'api', 'http://localhost:4000', [agentById('codex')!]);
     expect(changes.filter(Boolean).map((c) => path.relative(repo, c!.file)).sort()).toEqual(['.codex/config.toml', 'AGENTS.md']);
     const cc = connectChanges(ctx, repo, 'api', 'http://localhost:4000', [agentById('claude-code')!]).changes.filter(Boolean).map((c) => path.relative(repo, c!.file)).sort();
-    expect(cc).toEqual(['.claude/commands/mandate-bootstrap.md', '.claude/commands/mandate-flow.md', '.mcp.json', 'CLAUDE.md']);
+    expect(cc).toEqual(['.claude/commands/mandate-bootstrap.md', '.claude/commands/mandate-flow.md', '.claude/commands/mandate.md', '.mcp.json', 'CLAUDE.md']);
   });
 
   it('uninstall also removes the wiring of connected repos (manifest)', () => {
