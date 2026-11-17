@@ -93,7 +93,7 @@ describe('Ask panel (answered by agents)', () => {
     expect((await screen.findByTestId('ask-waiting')).textContent).toContain('Waiting for an agent to connect');
   });
 
-  it('several agents online: a picker (with Any agent); the choice is sent as to; a waiting question can be cancelled', async () => {
+  it('several agents online: a picker (active agents only); the choice is sent as to; a waiting question can be cancelled', async () => {
     PRESENCE = { agents: [agent('ada/claude-code', 'claude-code', 'Claude Code (ada)'), agent('bo/codex', 'codex', 'Codex (bo)', 'busy')], suggested: 'ada/claude-code' };
     let cancelled = false;
     const callTool = vi.fn(async (name: string) => {
@@ -102,7 +102,7 @@ describe('Ask panel (answered by agents)', () => {
     });
     const q = mount(callTool as never);
     const picker = await screen.findByRole('radiogroup');
-    expect(within(picker).getByText('Any agent')).toBeTruthy();
+    expect(within(picker).queryByText('Any agent')).toBeNull();
     fireEvent.click(within(picker).getByText('Codex (bo)'));
     ask(q, 'status?');
     await waitFor(() => expect(callTool).toHaveBeenCalledWith('ask_post', expect.objectContaining({ to: 'codex' }), undefined, expect.anything()));

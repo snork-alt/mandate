@@ -223,6 +223,20 @@ describe('mandate watch --rewake', () => {
     expect(await waitForEvents(ep(), { timeoutMs: 300, backoffMs: 50 })).toEqual([]);
   });
 
+  it('idle: the stream stays open while nothing happens, and is re-opened when the server drops it (presence between arm cycles)', async () => {
+    const streams = () => fake.requests.filter((r) => r.url.startsWith('/p/web/events?') || r.url === '/p/web/events').length;
+    const before = streams();
+    const w = waitForEvents(ep(), { timeoutMs: 5000, settleMs: 10, backoffMs: 30 });
+    await until(() => streams() === before + 1);
+    await new Promise((r) => setTimeout(r, 400));
+    expect(streams()).toBe(before + 1); // one connection, held open while idle
+    fake.drop();
+    await until(() => streams() === before + 2); // reconnected without waiting for the next hook
+    await new Promise((r) => setTimeout(r, 50));
+    fake.emit(ev(30));
+    expect((await w).map((e) => e.seq)).toEqual([30]);
+  });
+
   it('a wrong token is a quiet no-op (never fails the session)', async () => {
     expect(await waitForEvents({ ...ep(), token: 'nope' }, { timeoutMs: 1000 })).toEqual([]);
   });
@@ -273,6 +287,46 @@ describe('mandate events --pending (SessionStart catch-up)', () => {
     expect(empty.text()).toBe('');
     // unreachable / unauthorised never fail the hook
     expect(await cmdEvents({ ...c, env: { ...c.env, MANDATE_CHANNEL_TOKEN: 'bad' } }, parseArgs(['events', '--pending', '--format=claude', '--project', 'web', '--url', fake.base]), capture())).toBe(0);
+  });
+});
+
+describe('SessionStart notice: plain claude while channels are set up', () => {
+  const c = () => {
+    const ctx = tempCtx();
+    return { ...ctx, env: { ...ctx.env, MANDATE_CHANNEL_TOKEN: TOKEN } };
+  };
+  const args = (...extra: string[]) => parseArgs(['events', '--pending', '--format=claude', '--project', 'web', '--url', fake.base, ...extra]);
+
+  it('prints one line (systemMessage + additionalContext) when --channels is wired and the session was not started by mandate claude', async () => {
+    const out = capture();
+    expect(await cmdEvents(c(), args('--channels'), out)).toBe(0);
+    const j = JSON.parse(out.text());
+    expect(j.systemMessage).toMatch(/channels are off/);
+    expect(j.systemMessage).toMatch(/rewake/);
+    expect(j.hookSpecificOutput.additionalContext).toContain('mandate claude');
+    // With pending events: the notice comes first, the events follow.
+    fake.pending.push(ev(40));
+    const both = capture();
+    expect(await cmdEvents(c(), args('--channels'), both)).toBe(0);
+    expect(JSON.parse(both.text()).hookSpecificOutput.additionalContext).toMatch(/channels are off[\s\S]*#40 question_answered/);
+  });
+
+  it('silent when launched by mandate claude, and when channels are not wired (rewake mode)', async () => {
+    const ctx = c();
+    const launched = capture();
+    expect(await cmdEvents({ ...ctx, env: { ...ctx.env, MANDATE_PUSH: 'channels' } }, args('--channels'), launched)).toBe(0);
+    expect(launched.text()).toBe('');
+    const rewake = capture();
+    expect(await cmdEvents(ctx, args(), rewake)).toBe(0);
+    expect(rewake.text()).toBe('');
+  });
+
+  it('connect wires --channels into the catch-up hook in channels mode only', async () => {
+    const ctx = tempCtx();
+    expect(await connect(ctx)).toBe(0);
+    expect(settings(ctx).hooks.SessionStart[0].hooks[0].command).toMatch(/events --pending --format=claude .* --channels$/);
+    expect(await connect(ctx, '--push', 'rewake')).toBe(0);
+    expect(settings(ctx).hooks.SessionStart[0].hooks[0].command).not.toContain('--channels');
   });
 });
 

@@ -51,7 +51,7 @@ function Reassign({ id, current, presence }: { id: string; current: string; pres
         </Button>
       </Popover.Target>
       <Popover.Dropdown>
-        <AgentPicker presence={presence} value={v} onChange={setV} showOffline name="rq-reassign" anyHint="the next free agent takes it" />
+        <AgentPicker presence={presence} value={v} onChange={setV} showOffline allowAny name="rq-reassign" anyHint="the next free agent takes it" />
         <Button
           size="xs"
           mt="xs"

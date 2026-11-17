@@ -113,7 +113,7 @@ export function AskView() {
   }, [turns]);
   const text = draft.trim();
   const needsPick = agents.length > 1;
-  const to = needsPick ? (agentChoice && (agentChoice === 'any' || agents.some((a) => a.handle === agentChoice)) ? agentChoice : agents.find((a) => a.id === presence.data?.suggested)?.handle ?? 'any') : agents.length === 1 ? agents[0]!.handle : undefined;
+  const to = needsPick ? (agentChoice && (agents.some((a) => a.handle === agentChoice)) ? agentChoice : agents.find((a) => a.id === presence.data?.suggested)?.handle ?? agents[0]!.handle) : agents.length === 1 ? agents[0]!.handle : undefined;
   const canSend = !!text;
   const send = () => {
     if (canSend) onSend(text, to);
@@ -169,7 +169,7 @@ export function AskView() {
             {agents[0]!.state === 'busy' ? ' (busy: it answers in the background)' : ''}
           </div>
         )}
-        {needsPick && <AgentPicker presence={presence.data} value={to ?? 'any'} onChange={setAgentChoice} />}
+        {needsPick && <AgentPicker presence={presence.data} value={to ?? ''} onChange={setAgentChoice} />}
         <div className="ask-chips" aria-label="Context">
           {chips.map((c) => (
             <Tooltip key={c.uri} label={c.quote ? `${c.uri}\n“${c.quote.slice(0, 200)}”` : c.uri} multiline maw={320} style={{ whiteSpace: 'pre-line', overflowWrap: 'anywhere' }} openDelay={300}>

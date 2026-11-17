@@ -96,7 +96,7 @@ Follow \`effective\` \`commit\` / \`branch\` / \`push\` (\`instructions\` has th
   \`Work-Order:\`, only that work's files; no amend / force; no commits yet: make the initial one. Push only with \`push\`
   auto (branch + best-effort PR at completion, never fail the flow on it).
 - \`commit\` ask: \`question_ask\` once (purpose \`decision\`, blocks the work order), not in chat.
-- Unowned touched files: flow_next adds a component step (nothing if the project has no components).
+- Components: one per code boundary (responsibility + interface; externals = kind external); extend owns for code that fits, create for a new package; owns, tldr, Responsibility + Interfaces sections, depends_on, affects from the spec sections. Plans list the ones they create / update; touched files must be owned (none yet: create the initial ones). flow_next adds the step; completion is refused (\`components_missing\`) until done.
 
 ## States (transitions and gates: \`lifecycle_get { kind }\`)
 

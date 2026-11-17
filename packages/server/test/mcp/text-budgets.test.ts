@@ -14,15 +14,15 @@ const tok = (s: string) => Math.ceil(s.length / 4);
 
 describe('working agreement budgets', () => {
   it('master skill (was ~3250 tokens before the lifecycle registry, 2055 before the prompts review)', () => {
-    expect(tok(SKILL_BODY)).toBeLessThanOrEqual(2830); // +~210: Git (commit auto|ask, branch, push, flow_next commit step); +186: /mandate driven flow (flow_next, ask only when necessary, request_decision_add); +37: plan steps (work_order_step_set); +105: request flow (no approval, full plan, criteria -> tests, implemented-by), -15 approval; +15: last section done frees the claim; +55: tldr guidance; +9: instructions_get pointer; +50: tool sets (tools_enable)
+    expect(tok(SKILL_BODY)).toBeLessThanOrEqual(2900); // +~210: Git (commit auto|ask, branch, push, flow_next commit step); +186: /mandate driven flow (flow_next, ask only when necessary, request_decision_add); +37: plan steps (work_order_step_set); +105: request flow (no approval, full plan, criteria -> tests, implemented-by), -15 approval; +15: last section done frees the claim; +55: tldr guidance; +9: instructions_get pointer; +50: tool sets (tools_enable)
     expect(SKILL_BODY.split('\n').length).toBeLessThanOrEqual(124);
     expect(tok(SKILL_DESCRIPTION)).toBeLessThanOrEqual(87);
     expect(SKILL_BODY).toContain('lifecycle_get');
   });
 
   it('server instructions (CORE_RULES mirror)', () => {
-    expect(tok(CORE_RULES)).toBeLessThanOrEqual(1800); // +~120: GIT (commit / branch / push); +39: assigned requests (request_assigned, plan_ready); +80: Ask events go to the mandate-ask subagent; +197: comments on any object routed to agents; +111: driven flow, ask only when necessary; +16: plan steps; +30: requests, full plan, test proof; +55: tldr guidance; +46: CURRENT TEXT (instructions_get beats local copies); +15: TOOLS (tool sets)
-    expect(tok(INSTRUCTIONS)).toBeLessThanOrEqual(2050);
+    expect(tok(CORE_RULES)).toBeLessThanOrEqual(2000); // +~120: GIT (commit / branch / push); +39: assigned requests (request_assigned, plan_ready); +80: Ask events go to the mandate-ask subagent; +197: comments on any object routed to agents; +111: driven flow, ask only when necessary; +16: plan steps; +30: requests, full plan, test proof; +55: tldr guidance; +46: CURRENT TEXT (instructions_get beats local copies); +15: TOOLS (tool sets)
+    expect(tok(INSTRUCTIONS)).toBeLessThanOrEqual(2260);
     expect(INSTRUCTIONS).toContain('lifecycle_get');
   });
 

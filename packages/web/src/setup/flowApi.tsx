@@ -16,6 +16,8 @@ export interface Policy {
   commit?: 'auto' | 'ask';
   branch?: 'current' | 'per-request';
   push?: 'off' | 'auto';
+  /** Component ownership: required (default) | optional. */
+  components?: 'required' | 'optional';
 }
 export interface FlowClient {
   id: string;

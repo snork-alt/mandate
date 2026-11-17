@@ -33,9 +33,12 @@ export const FLOW_POLICIES = ['required', 'optional', 'off'] as const;
 export const COMMIT_MODES = ['auto', 'ask'] as const;
 export const BRANCH_MODES = ['current', 'per-request'] as const;
 export const PUSH_MODES = ['off', 'auto'] as const;
+export const COMPONENT_MODES = ['required', 'optional'] as const;
+export type ComponentMode = (typeof COMPONENT_MODES)[number];
 export type CommitMode = (typeof COMMIT_MODES)[number];
 export type BranchMode = (typeof BRANCH_MODES)[number];
 export type PushMode = (typeof PUSH_MODES)[number];
+export const DEFAULT_COMPONENTS: ComponentMode = 'required';
 export const DEFAULT_GIT = { commit: 'auto', branch: 'per-request', push: 'off' } as const satisfies { commit: CommitMode; branch: BranchMode; push: PushMode };
 
 export interface Policy {
@@ -46,12 +49,14 @@ export interface Policy {
   branch?: BranchMode;
   /** Stored only when not the default (off). */
   push?: PushMode;
+  /** Component ownership: required (default: touched files need an owning component before a work order completes) | optional. Stored only when not the default. */
+  components?: ComponentMode;
   /** Strict flow (opt-in): the `mandate guard` hook refuses code edits unless the agent holds a claimed work order with a step in progress. */
   strictFlow?: boolean;
 }
 /** Body of the policy PUT / flow_policy_set. */
 export const policyPatchSchema = z
-  .object({ flowPolicy: z.enum(['required', 'optional', 'off']).optional(), strictFlow: z.boolean().optional(), commit: z.enum(COMMIT_MODES).optional(), branch: z.enum(BRANCH_MODES).optional(), push: z.enum(PUSH_MODES).optional() })
+  .object({ flowPolicy: z.enum(['required', 'optional', 'off']).optional(), strictFlow: z.boolean().optional(), commit: z.enum(COMMIT_MODES).optional(), branch: z.enum(BRANCH_MODES).optional(), push: z.enum(PUSH_MODES).optional(), components: z.enum(COMPONENT_MODES).optional() })
   .strict();
 /** Human labels of what a policy patch changed (activity event, tool result). */
 export function policyChanges(before: Policy, after: Policy): string[] {
@@ -64,6 +69,7 @@ export function policyChanges(before: Policy, after: Policy): string[] {
     ...(b.commit !== a.commit ? [`commit ${a.commit}`] : []),
     ...(b.branch !== a.branch ? [`branch ${a.branch}`] : []),
     ...(b.push !== a.push ? [`push ${a.push}`] : []),
+    ...((before.components ?? DEFAULT_COMPONENTS) !== (after.components ?? DEFAULT_COMPONENTS) ? [`components ${after.components ?? DEFAULT_COMPONENTS}`] : []),
   ];
 }
 export const DEFAULT_POLICY: Policy = { flowPolicy: 'optional' };
@@ -98,6 +104,7 @@ export interface Effective {
   commit: CommitMode;
   branch: BranchMode;
   push: PushMode;
+  components: ComponentMode;
   /** Why (policy or preference), one sentence. */
   reason: string;
   /** Whether the project policy decides the flow (required / off) rather than this client's preference. */
@@ -158,7 +165,7 @@ export function effective(policy: Policy, pref: (Pick<ClientRecord, 'flow'> & { 
   }
   const questions = pref?.questions ?? 'mandate';
   if (pref?.questions) reasons.push(`questions via ${pref.questions} by preference`);
-  return { flow, questions, commit: policy.commit ?? DEFAULT_GIT.commit, branch: policy.branch ?? DEFAULT_GIT.branch, push: policy.push ?? DEFAULT_GIT.push, reason: `${reasons.join('; ')}.`, flowByPolicy: policy.flowPolicy !== 'optional' };
+  return { flow, questions, commit: policy.commit ?? DEFAULT_GIT.commit, branch: policy.branch ?? DEFAULT_GIT.branch, push: policy.push ?? DEFAULT_GIT.push, components: policy.components ?? DEFAULT_COMPONENTS, reason: `${reasons.join('; ')}.`, flowByPolicy: policy.flowPolicy !== 'optional' };
 }
 
 /**
@@ -170,7 +177,7 @@ export function flowInstructions(eff: Effective): string {
   if (eff.flow === 'off')
     return `Mandate flow is OFF for this coding agent (${eff.reason.replace(/\.$/, '')}). From now on, until the setting changes: work directly in the code; use Mandate only to read context (search, get, list, lineage, graph, ask); do not create requests, specs, standards, components or work orders and do not call any Mandate write tool (they are refused with flow_off). Plan and ask questions in chat. ${eff.flowByPolicy ? 'Only a Mandate admin can change this (project policy, Settings → Agent flow).' : 'The user turns it back on with /mandate-flow on.'} ${save}`;
   const questions = eff.questions === 'chat' ? 'ask the user in chat, not with question_ask' : 'ask the user with question_ask, not your harness\'s question tool';
-  return `Mandate flow is ON for this coding agent. From now on, until the setting changes: every instruction the user gives is a request and goes through Mandate (no approval needed). Call project_info at the start of each task; request_create → spec_match → update specs / standards (addresses: the request) → work_order_create with the FULL plan (steps, files, tests mapped to criteria, risks) → deliver through the work order (claim, work on: set each plan step in_progress when you start it and done when finished with codeRefs, skipped with a reason; section_done with codeRefs, verification_record per criterion with its test, work_order_complete). Questions: ${questions}; keep working on what does not depend on the answer. A request assigned to you from the web UI (event request_assigned, also when you connect): run /mandate resume <id> (flow_next loop until done or waiting; plan_ready = stop, the user approves the plan). Git: ${gitInstructions(eff)} ${save}`;
+  return `Mandate flow is ON for this coding agent. From now on, until the setting changes: every instruction the user gives is a request and goes through Mandate (no approval needed). Call project_info at the start of each task; request_create → spec_match → update specs / standards (addresses: the request) → work_order_create with the FULL plan (steps, files, tests mapped to criteria, risks) → deliver through the work order (claim, work on: set each plan step in_progress when you start it and done when finished with codeRefs, skipped with a reason; section_done with codeRefs, verification_record per criterion with its test, work_order_complete). Questions: ${questions}; keep working on what does not depend on the answer. A request assigned to you from the web UI (event request_assigned, also when you connect): run /mandate resume <id> (flow_next loop until done or waiting; plan_ready = stop, the user approves the plan). Git: ${gitInstructions(eff)} ${componentInstructions(eff.components)} ${save}`;
 }
 
 /** The git rules of the flow for an agent (guide, flowInstructions, /mandate command): one paragraph. */
@@ -180,6 +187,13 @@ export function gitInstructions(g: Pick<Effective, 'commit' | 'branch' | 'push'>
   if (g.commit === 'ask')
     return `commit ask: do not commit without the user's say-so. When flow_next says to commit, ask ONCE with question_ask (purpose decision, blocks: the work order; options "Commit for me" / "I commit myself"), not in chat; it shows in Waiting for you. ${branch} ${push}`;
   return `commit auto: the user has authorised local commits during the Mandate flow. ${branch} Commit after each completed plan step (message "<request id> <step id>: <step text>" plus trailers Request: <id> and Work-Order: <id>), only the files of the work (never unrelated files); a repo with no commits: make the initial commit of the work. Never amend or force. ${push} Mandate needs a commit sha for code refs and verifications: when flow_next says commit, commit and go on, do not wait for the user.`;
+}
+
+/** The component rule of the flow (one sentence for flowInstructions). */
+export function componentInstructions(c: ComponentMode): string {
+  return c === 'required'
+    ? 'Components: plans list the components they create or update; every file a work order touches must be owned by a component (component_create with owns globs, tldr, interface sections; link the spec sections with affects; the first work order of a project without components creates the initial ones). flow_next adds that step before completion and work_order_complete refuses (components_missing) while touched files are unowned.'
+    : 'Components: optional here (an admin set it): keep the architecture current when you can; unowned files do not block completion.';
 }
 
 /** Message of the `flow_off` refusal (every Mandate write tool while the flow is off for the calling agent). */
@@ -199,7 +213,7 @@ export function refusal(policy: Policy, patch: PrefPatch): { code: 'policy_requi
 
 /* ------------------------------------------------------------------ policy (projects.json) */
 
-type Entry = { id: string; flowPolicy?: FlowPolicy; strictFlow?: boolean; commit?: CommitMode; branch?: BranchMode; push?: PushMode; approvalPolicy?: ApprovalPolicy; flow?: { enabled?: boolean; approval?: boolean } };
+type Entry = { id: string; flowPolicy?: FlowPolicy; strictFlow?: boolean; commit?: CommitMode; branch?: BranchMode; push?: PushMode; components?: ComponentMode; approvalPolicy?: ApprovalPolicy; flow?: { enabled?: boolean; approval?: boolean } };
 
 /** Policy of a registry entry (legacy `flow.enabled: false` → off; anything else → optional). */
 export function policyOf(e: Entry | undefined): Policy {
@@ -210,6 +224,7 @@ export function policyOf(e: Entry | undefined): Policy {
     ...(e.commit && e.commit !== DEFAULT_GIT.commit ? { commit: e.commit } : {}),
     ...(e.branch && e.branch !== DEFAULT_GIT.branch ? { branch: e.branch } : {}),
     ...(e.push && e.push !== DEFAULT_GIT.push ? { push: e.push } : {}),
+    ...(e.components && e.components !== DEFAULT_COMPONENTS ? { components: e.components } : {}),
       };
 }
 
@@ -430,6 +445,12 @@ export function projectSettings(store: ProjectsStore, id: string, clients: Clien
           if (patch[k] === DEFAULT_GIT[k]) delete next[k];
           else (next as Record<string, unknown>)[k] = patch[k];
         }
+        if (patch.components !== undefined) {
+          if (patch.components === DEFAULT_COMPONENTS) delete next.components;
+          else next.components = patch.components;
+        }
+        if (next.components) e.components = next.components;
+        else delete e.components;
         e.flowPolicy = next.flowPolicy;
         if (next.strictFlow) e.strictFlow = true;
         else delete e.strictFlow;

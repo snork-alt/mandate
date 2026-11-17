@@ -184,6 +184,7 @@ describe('presence: MCP-only agents', () => {
     const r2 = await create({ assignee: 'any', body: 'Anyone: add a login button' });
     expect(r2.wakeable).toBe(true);
     close();
-    expect(p.isWakeable(c.id)).toBe(false);
+    expect(p.isWakeable(c.id)).toBe(true); // re-arm grace
+    expect(p.isWakeable(c.id, Date.now() + 3 * 60_000)).toBe(false);
   });
 });

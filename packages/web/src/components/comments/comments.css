@@ -28,6 +28,7 @@
 .cmt-new-head { display: flex; align-items: center; gap: 8px; }
 .cmt-x { all: unset; cursor: pointer; margin-left: auto; color: var(--app-text-faint); }
 .cmt-mention { position: relative; }
+.cmt-mention textarea { font-size: var(--mantine-font-size-md); line-height: 1.5; }
 .cmt-mention-list { position: absolute; z-index: 5; left: 0; right: 0; top: 100%; margin: 2px 0 0; padding: 4px; list-style: none; background: var(--app-bg); border: 1px solid var(--app-border-strong); border-radius: 8px; box-shadow: 0 6px 18px rgb(0 0 0 / 0.14); }
 .cmt-mention-list button { all: unset; cursor: pointer; display: block; width: 100%; box-sizing: border-box; padding: 4px 8px; border-radius: 6px; }
 .cmt-mention-list button:hover { background: var(--app-hover); }

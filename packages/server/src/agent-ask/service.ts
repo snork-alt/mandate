@@ -131,8 +131,8 @@ export class AskService {
   private target(to?: string, exclude?: string): { to: string | null; clients: string[] } {
     const p = this.news.presence;
     if (to === 'any') {
-      const online = p.all().filter((a) => a.id !== exclude && p.isOnline(a.id)).map((a) => a.id);
-      return { to: 'any', clients: online };
+      // Every known agent client (the first to answer owns the question; offline ones get it on connect / next tool reply).
+      return { to: 'any', clients: p.all().filter((a) => a.id !== exclude).map((a) => a.id) };
     }
     if (to) {
       const ids = p.resolve(to);

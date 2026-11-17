@@ -46,7 +46,8 @@ import {
 import { slugSchema } from '@mandate/doc';
 import { canonicalRef, extractRefs } from '@mandate/shared/refs';
 import { ANY, deliverAssigned, wakeableAny } from '../../flow/assign.js';
-import { newsOfProject } from '../../comments/route.js';
+import { componentsRequired, liveComponents, unownedOf, unownedPlanFiles } from '../component-gate.js';
+import { newsOfProject, seedKnownClients } from '../../comments/route.js';
 import { z } from 'zod';
 import { DocWriteService, type DocKind } from '../../storage/doc-writes.js';
 import { coveredCriteria } from '../../storage/work-order-plan.js';
@@ -174,7 +175,7 @@ function docWriteTools(kind: DocKind): AnyToolDef[] {
       name: `${k}_create`,
       title: `Create a ${k}`,
       kind: 'write',
-      description: `Create a ${k} (Mandate assigns the id from the title: use the returned ref / ids; never pass id). ${kind === 'specs' ? 'Starts as draft; use spec_status_set to move it.' : kind === 'standards' ? 'appliesTo rules (repo:x, tag:x, category:x) make it apply to matching specs.' : 'kind service|module|library|datastore|external; owns: code path globs per repo (most specific glob wins in code_owner). layer (optional): ui|api|service|domain|data|infra or another slug; omitted, it is inherited from the parent or derived from depends_on. parent (optional): the containing component (a tree: one parent, no cycles, not archived). Architecture level, few: not one per folder or class; reuse first (architecture_get). Typical sections: responsibility, interfaces, context (mermaid), rationale.'} Sections are optional here (${k}_section_insert).${COMMON}${TLDR_GUIDE}`,
+      description: `Create a ${k} (Mandate assigns the id from the title: use the returned ref / ids; never pass id). ${kind === 'specs' ? 'Starts as draft; use spec_status_set to move it.' : kind === 'standards' ? 'appliesTo rules (repo:x, tag:x, category:x) make it apply to matching specs.' : 'kind service|module|library|datastore|external; owns: code path globs per repo (most specific glob wins in code_owner). layer (optional): ui|api|service|domain|data|infra or another slug; omitted, it is inherited from the parent or derived from depends_on. parent (optional): the containing component (a tree: one parent, no cycles, not archived). A component = one responsibility + an interface others use (service, package, module behind an API, CLI); one per code boundary, not per file or whole repo (~3-15 per repo); code that fits an existing one extends its owns (architecture_get first); external systems (Firecracker, a DB) = kind external, no owns. Needs owns, tldr, responsibility + interfaces sections (APIs, proto, CLI flags), depends_on, and affects links from the spec sections it implements. Optional: context (mermaid), rationale.'} Sections are optional here (${k}_section_insert).${COMMON}${TLDR_GUIDE}`,
       // DF-11: spec_create takes addresses / workOrder like the other doc writes (Request / Work-Order trailers).
       input: (kind === 'specs' ? withExtras(createSchema as unknown as z.ZodObject) : createSchema) as unknown as z.ZodObject,
       ...(kind === 'specs' ? { trailers: docEditTrailers } : {}),
@@ -459,7 +460,7 @@ const workOrderTools: AnyToolDef[] = [
     name: 'work_order_create',
     title: 'Create a work order',
     kind: 'write',
-    description: `Ask for work on sections of ONE spec, pinned to its current version (or specCommit): kind implement | update | review | verify | fix, priority p0..p3, note (why), reason (requests it acts on), title, dependencies (work orders to finish first), fastPath (kind fix with one section: no plan needed). plan is REQUIRED for implement / update / fix and carries everything: { steps: [..], files: [files to change], tests: [{ name, ref?, proves: [acceptance criterion ids] }], risks: [..] }; every acceptance criterion of the targeted sections (own, or listed in verifiedBy) must be proved by a planned test (plan_invalid names the missing ones); review / verify take a markdown string. The work order cannot complete until each criterion has a passing verification_record naming its test. The work order is a markdown document work-orders/<id>.md (plan, one section per targeted spec section, reconciliation, outcome). At most one open implement/update work order per spec section.${COMMON}`,
+    description: `Ask for work on sections of ONE spec, pinned to its current version (or specCommit): kind implement | update | review | verify | fix, priority p0..p3, note (why), reason (requests it acts on), title, dependencies (work orders to finish first), fastPath (kind fix with one section: no plan needed). plan is REQUIRED for implement / update / fix and carries everything: { steps: [..] (incl. the components it creates / updates), files: [files to change], tests: [{ name, ref?, proves: [acceptance criterion ids] }], risks: [..] }; every acceptance criterion of the targeted sections (own, or listed in verifiedBy) must be proved by a planned test (plan_invalid names the missing ones); review / verify take a markdown string. The work order cannot complete until each criterion has a passing verification_record naming its test. The work order is a markdown document work-orders/<id>.md (plan, one section per targeted spec section, reconciliation, outcome). At most one open implement/update work order per spec section.${COMMON}`,
     input: workOrderCreateInputSchema,
     // L-2: the feedback a work order acts on is its recorded cause (Caused-By), so lineage reaches it both ways.
     causes: (a) => a.reason?.map((r) => buildRef({ kind: 'feedback', id: idOf(r) })),
@@ -504,7 +505,9 @@ const workOrderTools: AnyToolDef[] = [
         },
         metaOf(ctx, commits),
       );
-      return woResult(ctx, wo.id, commits);
+      const planFiles = a.plan && typeof a.plan !== 'string' ? ((a.plan as { files?: unknown[] }).files ?? []) : [];
+      const unowned = planFiles.length ? unownedPlanFiles(await liveComponents(ctx), planFiles) : [];
+      return woResult(ctx, wo.id, commits, {}, unowned.length ? [`plan_components_missing: plan files owned by no component: ${unowned.slice(0, 8).join(', ')}${unowned.length > 8 ? ` (+${unowned.length - 8})` : ''}; add a plan step that creates or updates the component(s) owning them (component_create with owns globs, tldr, interface sections; link the spec sections with affects); flow_next asks for it before completion`] : []);
     },
   }),
   defineTool({
@@ -631,6 +634,13 @@ const workOrderTools: AnyToolDef[] = [
       const commits: string[] = [];
       const id = idOf(a.ref);
       const pre = await completionCode(ctx, id, a.git, a.touched);
+      if (componentsRequired(ctx)) {
+        const doc = await ctx.storage.workOrderDocs.get(id);
+        const miss = unownedOf(await liveComponents(ctx), [...(doc.touched ?? []), ...(pre.touched ?? []).map(touchedFromInput)]);
+        if (miss.length) {
+          throw new ToolError('components_missing', `components_missing: touched files are owned by no component: ${miss.slice(0, 8).join(', ')}${miss.length > 8 ? ` (+${miss.length - 8})` : ''}`, 'create or update the component(s) owning these paths (component_create with owns globs, tldr, interface sections; or component_update owns), link the spec sections with affects, then complete again; flow_next gives the step. An admin can set components optional in Settings → Agent flow', 'touched');
+        }
+      }
       const { warnings } = await ctx.storage.workOrderService.complete(id, ctx.commit!.agent, { outcome: a.outcome, reconciliation: a.reconciliation, git: a.git, touched: pre.touched, codeLinks: pre.links }, metaOf(ctx, commits));
       return woResult(ctx, id, commits, pre.links.length ? { codeLinks: pre.links } : {}, [...pre.warnings, ...warnings]);
     },
@@ -710,7 +720,7 @@ const requestTools: AnyToolDef[] = [
         if (from) await ctx.storage.auditService.linkFeedback(from.uri, created.id, ctx.commit!.agent, metaOf(ctx, commits, { Audit: from.audit }));
         return created;
       });
-      const delivered = assignee && news ? await deliverAssigned(news, f, 'new') : [];
+      const delivered = assignee && news ? (await seedKnownClients(ctx, news.presence), await deliverAssigned(news, f, 'new')) : [];
       return { ...(await fbResult(ctx, f.id, commits)), ...(assignee ? { assignee, queued: assignee !== ANY && !news?.presence.isOnline(assignee), wakeable: wakeableAny(news, assignee, delivered), delivered } : {}) };
     },
   }),

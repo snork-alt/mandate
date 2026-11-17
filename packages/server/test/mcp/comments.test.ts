@@ -200,4 +200,24 @@ describe('presence', () => {
     expect(routeOf(th, th, { presence: p, workOrders: [], requests: [] }).via).toBe('none');
     expect(unansweredFor(a.id, [th], { presence: p, workOrders: [], requests: [] })).toEqual([]);
   });
+
+  it('to: any with nobody online still reaches every known agent client (first to reply takes it); a closed stream stays wakeable for the re-arm grace', () => {
+    const p = new AgentPresence();
+    p.know({ id: 'x/claude-code', label: 'Claude Code', client: 'claude-code', user: 'x' });
+    p.know({ id: 'y/codex', label: 'Codex', client: 'codex', user: 'y' });
+    expect(p.all().every((a) => !p.isOnline(a.id))).toBe(true); // known, not online
+    const th: any = { id: 'c-2', uri: 'u', target: 'mandate://specs/s', author: { agent: 'mandate-ui', user: 'u' }, body: 'x', status: 'open', to: 'any', asRequest: true, events: [], replies: [], createdAt: '' };
+    const st = { presence: p, workOrders: [], requests: [] };
+    const r = routeOf(th, th, st);
+    expect(r.via).toBe('any');
+    expect(r.clients.sort()).toEqual(['x/claude-code', 'y/codex']);
+    expect(unansweredFor('x/claude-code', [th], st)).toHaveLength(1);
+    // Not wakeable (no stream), so the UI must not claim anyone is replying.
+    expect(p.list([]).every((v) => v.state === 'offline' && !v.wakeable)).toBe(true);
+    // A rewake watch between arm cycles: the stream closed a moment ago -> still wakeable, online.
+    const close = p.open({ id: 'x/claude-code', label: 'Claude Code', client: 'claude-code', user: 'x' });
+    close();
+    expect(p.isWakeable('x/claude-code')).toBe(true);
+    expect(p.isWakeable('x/claude-code', Date.now() + 3 * 60_000)).toBe(false);
+  });
 });

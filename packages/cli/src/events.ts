@@ -12,6 +12,7 @@ import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { bool, str, type Args } from './args.js';
 import { envVarFor } from './agents.js';
+import { PUSH_ENV } from './channel.js';
 import { BIN, type Ctx } from './context.js';
 import { readEnvKeys } from './wiring.js';
 import type { Out } from './ui.js';
@@ -155,6 +156,9 @@ export function endpointFrom(ctx: Ctx, a: Args, consumer: string): { ep: Endpoin
   return { ep: { base, project, token, consumer, client: str(a, 'client') ?? 'claude-code' } };
 }
 
+/** One line for a plain `claude` session while the project is wired for channels. */
+export const CHANNELS_OFF_NOTICE = `Mandate: channels are off in this session (not started with \`${BIN} claude\`); requests, comments and questions reach you through the rewake fallback hook (it wakes you when you are idle) instead. Start with \`${BIN} claude\` for instant push.`;
+
 /**
  * `mandate events --pending [--format claude|text|json] [--peek] [--since N]`: the events missed while the agent was not
  * running. `claude`: the SessionStart hook JSON (additionalContext); prints nothing when there is nothing, and never
@@ -166,8 +170,15 @@ export async function cmdEvents(ctx: Ctx, a: Args, out: Out): Promise<number> {
     return 2;
   }
   const format = str(a, 'format') ?? 'text';
+  // Channels are set up (--channels) but this session was not started by `mandate claude`: say so, once, at the start.
+  const notice = format === 'claude' && bool(a, 'channels') && ctx.env[PUSH_ENV] !== 'channels' ? CHANNELS_OFF_NOTICE : '';
+  const say = (extra = '') => {
+    const additionalContext = [notice, extra].filter(Boolean).join('\n');
+    if (additionalContext) out.log(JSON.stringify({ ...(notice ? { systemMessage: notice } : {}), hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext } }));
+  };
   const r = endpointFrom(ctx, a, str(a, 'consumer') ?? 'catchup');
   if ('error' in r) {
+    if (notice) say();
     out.err(`${BIN} events: ${r.error}`);
     return format === 'claude' ? 0 : 1;
   }
@@ -177,12 +188,14 @@ export async function cmdEvents(ctx: Ctx, a: Args, out: Out): Promise<number> {
     items = await fetchPending(r.ep, { ...(since > 0 ? { since } : {}), peek: bool(a, 'peek'), signal: AbortSignal.timeout(8000) });
   } catch (e) {
     out.err(`${BIN} events: ${(e as Error).message}`);
+    if (notice) say();
     return format === 'claude' ? 0 : 1;
   }
   if (format === 'json') out.log(JSON.stringify({ items }));
   else if (items.length && format === 'claude') {
     const additionalContext = eventsText(items, `Mandate events for your work that arrived while no session was running (${items.length}); they stay unread until you read the referenced item or news_ack them:`);
-    out.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext } }));
-  } else if (items.length) out.log(eventsText(items, `Mandate events (${items.length}):`));
+    say(additionalContext);
+  } else if (notice) say();
+  else if (items.length) out.log(eventsText(items, `Mandate events (${items.length}):`));
   return 0;
 }

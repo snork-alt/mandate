@@ -151,7 +151,7 @@ const HAPPY: Record<string, { args: () => Record<string, unknown>; check: (b: Re
   agents_presence: { args: () => ({ ref: 'mandate://specs/login-sso/sections/auth-flow' }), check: (b) => expect(b).toMatchObject({ agents: expect.any(Array), needsPicker: expect.any(Boolean) }) },
   instructions_get: { args: () => ({ name: 'core', stubVersion: 0 }), check: (b) => expect(b).toMatchObject({ name: 'core', text: SKILL_BODY, stubVersion: STUB_VERSION, update: expect.stringContaining('re-run the Mandate installer') }) },
   lifecycle_get: { args: () => ({ kind: 'request' }), check: (b) => expect(b.steps.map((s: any) => s.to)).toEqual(['closed']) },
-  project_info: { args: () => ({}), check: (b) => expect(b.effective).toEqual({ flow: 'on', questions: 'mandate' }) },
+  project_info: { args: () => ({}), check: (b) => expect(b.effective).toEqual({ flow: 'on', questions: 'mandate', commit: 'auto', branch: 'per-request', push: 'off', components: 'required' }) },
   code_context_set: { args: () => ({ repo: 'app', commit: 'ABC1234', dirty: true }), check: (b) => expect(b.label).toBe('app@abc1234+dirty') },
   questions_list: { args: () => ({ status: 'all', limit: 5 }), check: (b) => expect(b.total).toBeTypeOf('number') },
   audit_plan: { args: () => ({ target: 'mandate://specs/login-sso' }), check: (b) => expect(b.items.length).toBeGreaterThan(3) },

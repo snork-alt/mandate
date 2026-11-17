@@ -134,7 +134,7 @@ describe('Fable data findings (in-memory fixtures)', () => {
     const a = audit('au', S('app'), [{ id: 'ac-flow', ref: S('app', 'ac-flow'), result: 'fail', findings: [finding('f1', ['app:tools/build.ts#L1-L3', 'web:src/page.tsx'])] }]);
     expect(issuesOf(m, 'owns_matches_nothing', { audits: [a] })).toEqual([]);
     // Unowned code of those sources is reported too (the deleted file is not).
-    expect(issuesOf(m, 'unowned_code_ref', { audits: [a] }).map((i) => `${i.uri} ${i.message}`)).toEqual(['mandate://audits/au/findings/f1 web:src/page.tsx is not owned by any component']);
+    expect(issuesOf(m, 'unowned_code_ref', { audits: [a] }).map((i) => `${i.uri} ${i.message}`)).toEqual(['mandate://audits/au/findings/f1 web:src/page.tsx is not owned by any component; flow_next will ask you to create or update a component owning it']);
     expect(coverage(m, [a]).unowned).toHaveLength(1);
   });
 

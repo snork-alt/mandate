@@ -35,13 +35,14 @@ export function assignedSummary(f: Feedback, how: 'new' | 'reassigned' | 'plan_a
   return `${head}: "${clip(f.body, 240)}". Run /mandate resume ${f.id} (flow_next { request: "${f.id}" } loop until done or waiting).`;
 }
 
-/** Tell the assignee (or every online agent for `any`). Never throws. Returns the client ids told. */
+/** Tell the assignee (or every known agent client for `any`). Never throws. Returns the client ids told. */
 export async function deliverAssigned(news: NewsService, f: Feedback, how: 'new' | 'reassigned' | 'plan_approved' = 'new'): Promise<string[]> {
   try {
     const target = how === 'plan_approved' ? (f.startedBy ?? f.assignee) : f.assignee;
     if (!target) return [];
     const p = news.presence;
-    const clients = target === ANY ? p.all().filter((a) => p.isOnline(a.id)).map((a) => a.id) : [target];
+    // any: every known agent client (online or not): the first to start the request takes it.
+    const clients = target === ANY ? p.all().map((a) => a.id) : [target];
     const summary = assignedSummary(f, how);
     for (const c of clients) await news.addClientWide(c, ASSIGNED_KIND, reqRef(f.id), summary);
     return clients;

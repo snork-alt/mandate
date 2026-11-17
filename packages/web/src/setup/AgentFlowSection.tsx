@@ -238,6 +238,25 @@ function PolicyControls({ p, admin }: { p: FlowProject; admin: boolean }) {
           &quot;ask&quot;, the agent asks once in Mandate (Waiting for you). Pushing and the PR (needs <code>gh</code>) happen at work-order completion and never fail the flow.
         </Text>
       </div>
+      <div className="flow-policy-row" data-testid={`flow-components-${p.id}`}>
+        <Text size="sm" fw={500}>
+          Components
+        </Text>
+        <SegmentedControl
+          size="xs"
+          aria-label="Components"
+          value={p.policy.components ?? 'required'}
+          disabled={!admin || m.policy.isPending}
+          onChange={(v) => set({ components: v as 'required' | 'optional' })}
+          data={[
+            { value: 'required', label: 'Owned by a component' },
+            { value: 'optional', label: 'Optional' },
+          ]}
+        />
+        <Text size="xs" c="dimmed">
+          Required: the agent creates or updates the component that owns the code a work order touches, and a work order cannot complete while touched files are unowned.
+        </Text>
+      </div>
       {!admin && (
         <Text size="xs" c="dimmed">
           Only Mandate admins change the policy.

@@ -108,6 +108,14 @@ describe('threads', () => {
     expect((await screen.findByTestId('agent-replying')).textContent).toContain('claude-code is replying');
   });
 
+  it('to: any with no agent online or wakeable: "Waiting for an agent" with the mandate claude hint, never "is replying"', async () => {
+    THREADS = [thread('c-1', { to: 'any' as never, replies: [msg('c-3', { body: 'Anyone?' }) as never] })];
+    PRESENCE = { agents: agents.map((a) => ({ ...a, state: 'offline' as const, wakeable: false })), needsPicker: true };
+    wrap(<CommentsPanel doc={DOC} />);
+    expect((await screen.findByTestId('agent-unreachable')).textContent).toContain('mandate claude');
+    expect(screen.queryByTestId('agent-replying')).toBeNull();
+  });
+
   it('mention autocomplete suggests agent handles', async () => {
     THREADS = [thread('c-1')];
     PRESENCE = { agents, needsPicker: false };
@@ -121,7 +129,7 @@ describe('threads', () => {
 });
 
 describe('new thread and the agent picker', () => {
-  it('no one responsible: the picker lists online agents with state, suggests one, offers Any agent; the choice is sent as to', async () => {
+  it('no one responsible: the picker lists online agents with state, suggests one, no Any agent; the choice is sent as to', async () => {
     PRESENCE = { agents, responsible: [], suggested: 'ada/claude-code', needsPicker: true };
     wrap(<CommentsPanel doc={DOC} />);
     setCommentFocus({ newOn: SEC, quote: 'the callback' });
@@ -131,24 +139,34 @@ describe('new thread and the agent picker', () => {
     expect(within(picker).getByText('Claude Code (ada)')).toBeTruthy();
     expect(within(picker).getByText(/suggested \(idle\)/)).toBeTruthy();
     expect(within(picker).getByText(/busy: wo-1: fix login/)).toBeTruthy();
-    expect(within(picker).getByText('Any agent')).toBeTruthy();
+    expect(within(picker).queryByText('Any agent')).toBeNull();
     fireEvent.click(within(picker).getByText('Codex (bo)'));
     fireEvent.click(within(nt).getByLabelText('Make it a request'));
     fireEvent.click(within(nt).getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(calls.find((c) => c.name === 'comment_add')?.args).toMatchObject({ target: SEC, to: 'codex', asRequest: true }));
   });
 
-  it('Any agent queues the comment (to: any); a responsible agent needs no picker', async () => {
-    PRESENCE = { agents, responsible: [], needsPicker: true };
+  it('the suggested active agent is preselected and sent; with none active Send is disabled', async () => {
+    PRESENCE = { agents, responsible: [], suggested: 'ada/claude-code', needsPicker: true };
     wrap(<CommentsPanel doc={DOC} />);
     setCommentFocus({ newOn: SEC });
     const nt = await screen.findByTestId('new-thread');
     fireEvent.change(within(nt).getByLabelText('Comment'), { target: { value: 'anyone?' } });
-    fireEvent.click(await within(nt).findByLabelText(/Any agent/));
+    await waitFor(() => expect((within(nt).getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(within(nt).getByRole('button', { name: 'Send' }));
-    await waitFor(() => expect(calls.find((c) => c.name === 'comment_add')?.args.to).toBe('any'));
+    await waitFor(() => expect(calls.find((c) => c.name === 'comment_add')?.args.to).toBe('claude-code'));
     cleanup();
     calls.length = 0;
+    PRESENCE = { agents: agents.map((a) => ({ ...a, state: 'offline' as const })), responsible: [], needsPicker: true };
+    wrap(<CommentsPanel doc={DOC} />);
+    setCommentFocus({ newOn: SEC });
+    const none = await screen.findByTestId('new-thread');
+    fireEvent.change(within(none).getByLabelText('Comment'), { target: { value: 'anyone?' } });
+    expect(await within(none).findByTestId('no-agent-active')).toBeTruthy();
+    expect((within(none).getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('a responsible agent needs no picker', async () => {
     PRESENCE = { agents, responsible: ['ada/claude-code'], responsibleAgents: ['claude-code'], needsPicker: false };
     wrap(<CommentsPanel doc={DOC} />);
     setCommentFocus({ newOn: SEC });

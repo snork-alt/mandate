@@ -13,7 +13,7 @@ exports[`connect: Claude Code event delivery wiring > writes the channel server 
         "hooks": [
           {
             "type": "command",
-            "command": "mandate events --pending --format=claude --project web --url https://mandate.example.com",
+            "command": "mandate events --pending --format=claude --project web --url https://mandate.example.com --channels",
             "timeout": 15
           }
         ]

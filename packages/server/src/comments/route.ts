@@ -83,8 +83,8 @@ export function routeOf(c: CommentView | CommentRecord, thread: CommentThread, s
   const to = (c as CommentRecord).to ?? thread.to;
   const agentInThread = [thread, ...thread.replies].some((m) => m.id !== c.id && !isHuman(m.author));
   if (to === ANY && !agentInThread) {
-    const online = p.all().filter((a) => p.isOnline(a.id)).map((a) => a.id);
-    return { via: 'any', clients: wake(online) };
+    // Every known agent client gets the news (online or not: the first to act takes it; it is delivered by stream, catch-up or the next tool reply).
+    return { via: 'any', clients: wake(p.all().map((a) => a.id)) };
   }
   if (to && to !== ANY) {
     const ids = wake(p.resolve(to));
@@ -138,7 +138,19 @@ export function newsOfProject(ctx: ToolContext): NewsService | null {
   return ctx.news ?? (ctx.settings && ctx.activity ? newsFallback(ctx.settings.project, ctx.activity) : ctx.activity ? newsFallback(ctx.project?.id ?? 'project', ctx.activity) : null);
 }
 
+/** Register the project's known agent clients (the client directory survives restarts; presence does not). Never throws. */
+export async function seedKnownClients(ctx: Pick<ToolContext, 'settings'>, presence: AgentPresence): Promise<void> {
+  try {
+    const s = ctx.settings;
+    if (!s) return;
+    for (const r of await s.clients.list(s.project)) if (r.client !== 'web-ui') presence.know(r);
+  } catch {
+    /* presence stays as it is */
+  }
+}
+
 export async function routeState(ctx: ToolContext, presence: AgentPresence): Promise<RouteState> {
+  await seedKnownClients(ctx, presence);
   const [workOrders, requests] = await Promise.all([ctx.storage.workOrderService.list(), ctx.storage.feedbackService.list()]);
   return { presence, workOrders, requests };
 }

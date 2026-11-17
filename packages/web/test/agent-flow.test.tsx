@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /** Settings → Agent flow (policy, my agents' read-only state, locks, all clients) and the sidebar badge summary. */
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { within, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { AgentFlowSection } from '../src/setup/AgentFlowSection';
 import { flowSummary, type FlowClient, type FlowProject, type FlowState } from '../src/setup/flowApi';
@@ -76,6 +76,8 @@ describe('Settings → Agent flow', () => {
     await vi.waitFor(() => expect(calls.some((c) => c.method === 'PUT' && JSON.stringify(c.body) === '{"push":"auto"}')).toBe(true));
     fireEvent.click(screen.getByLabelText('Current branch'));
     await vi.waitFor(() => expect(calls.some((c) => c.method === 'PUT' && JSON.stringify(c.body) === '{"branch":"current"}')).toBe(true));
+    fireEvent.click(within(screen.getByTestId('flow-components-web')).getByLabelText('Optional'));
+    await vi.waitFor(() => expect(calls.some((c) => c.method === 'PUT' && JSON.stringify(c.body) === '{"components":"optional"}')).toBe(true));
     cleanup();
     serve({ mode: 'server', admin: false, user: 'ada', projects: [{ id: 'web', name: 'Web', policy: { flowPolicy: 'optional', commit: 'ask' }, mine: [client({})] }] });
     mount();

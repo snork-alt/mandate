@@ -516,6 +516,8 @@ export const projectEntrySchema = z
     commit: z.enum(['auto', 'ask']).optional(),
     branch: z.enum(['current', 'per-request']).optional(),
     push: z.enum(['off', 'auto']).optional(),
+    /** Component ownership: required (default) | optional. */
+    components: z.enum(['required', 'optional']).optional(),
     /** Approval checkpoint policy (admin): required | optional (default; each client chooses). */
     approvalPolicy: z.enum(['required', 'optional']).optional(),
     /** Per-project overrides of the config.json `git` block. */

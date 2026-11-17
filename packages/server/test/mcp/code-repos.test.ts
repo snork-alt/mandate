@@ -22,7 +22,7 @@ import { codeRepoProblems, defaultCodeRepoName } from '@mandate/shared';
 
 vi.setConfig({ testTimeout: 60_000 });
 
-const settings = memorySettings({}, 'test', new MemoryClientStore(), { specsRepo: 'acme/product-specs' });
+const settings = memorySettings({ components: 'optional' }, 'test', new MemoryClientStore(), { specsRepo: 'acme/product-specs' });
 let fx: McpFixture;
 beforeAll(async () => {
   fx = await mcpFixture({ settings });

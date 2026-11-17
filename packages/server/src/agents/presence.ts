@@ -25,8 +25,13 @@ export interface AgentInfo {
   /** Code repos of its sessions (code_context_set). */
   repos: Set<string>;
   streams: number;
+  /** When the last stream closed: the rewake watch re-arms on the next hook, so a just-closed stream still counts as wakeable for a short grace. */
+  streamClosedAt?: number;
   lastSeen: number;
 }
+
+/** Grace after a stream closes (rewake re-arm gap between hook events). */
+export const STREAM_GRACE_MS = 2 * 60_000;
 
 export type AgentState = 'online' | 'busy' | 'offline';
 export interface AgentView {
@@ -68,6 +73,12 @@ export class AgentPresence {
     return a;
   }
 
+  /** Register a client known from before (the client directory) without marking it online or firing connect listeners. */
+  know(c: { id: string; label: string; client: string; user?: string }): void {
+    if (this.agents.has(c.id)) return;
+    this.agents.set(c.id, { id: c.id, label: c.label, client: c.client, ...(c.user ? { user: c.user } : {}), names: new Set(), repos: new Set(), streams: 0, lastSeen: 0 });
+  }
+
   /** A stream (SSE / channel) is connected; returns the disconnect function. */
   open(c: { id: string; label: string; client: string; user?: string }): () => void {
     const a = this.note(c);
@@ -78,6 +89,7 @@ export class AgentPresence {
       done = true;
       a.streams = Math.max(0, a.streams - 1);
       a.lastSeen = Date.now();
+      a.streamClosedAt = a.lastSeen;
     };
   }
 
@@ -109,8 +121,9 @@ export class AgentPresence {
   }
 
   /** An event stream is connected for this client (news is pushed and wakes an idle agent). */
-  isWakeable(id: string): boolean {
-    return (this.agents.get(id)?.streams ?? 0) > 0;
+  isWakeable(id: string, now = Date.now()): boolean {
+    const a = this.agents.get(id);
+    return !!a && (a.streams > 0 || (!!a.streamClosedAt && now - a.streamClosedAt < STREAM_GRACE_MS));
   }
 
   /** Is `handle` a known agent / user of this project? */
@@ -142,7 +155,7 @@ export class AgentPresence {
           label: a.user ? `${a.label} (${a.user})` : a.label,
           ...(a.user ? { user: a.user } : {}),
           state: busyWith.length && online ? 'busy' : online ? 'online' : busyWith.length ? 'busy' : 'offline',
-          wakeable: a.streams > 0,
+          wakeable: this.isWakeable(a.id, now),
           busyWith,
           repos: [...a.repos],
           lastSeen: new Date(a.lastSeen).toISOString(),

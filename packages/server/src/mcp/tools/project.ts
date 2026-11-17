@@ -33,7 +33,7 @@ async function info(ctx: ToolContext, reportedStub?: number) {
     project: ctx.project ?? null,
     policy,
     client: { id: c.id, label: c.label, flow: pref?.flow ?? null, questions: pref?.questions ?? null },
-    effective: { flow: eff.flow, questions: eff.questions, commit: eff.commit, branch: eff.branch, push: eff.push },
+    effective: { flow: eff.flow, questions: eff.questions, commit: eff.commit, branch: eff.branch, push: eff.push, components: eff.components },
     reason: eff.reason,
     instructions: flowInstructions(eff),
     ...(upload ? { upload } : {}),
@@ -63,7 +63,7 @@ async function setPreference(a: PrefPatch, ctx: ToolContext) {
   const e = flowChangedEvent(s.project, fields, { agent: ctx.commit?.agent ?? c.client, ...(user ? { user } : {}), ...(ctx.principal?.kind === 'key' ? { source: ctx.principal.keyName } : {}) }, (await ctx.storage.git.head().catch(() => null)) ?? '');
   if (e) ctx.activity?.emit(e);
   const eff = effective(policy, rec);
-  return { policy, client: { id: c.id, label: c.label, flow: rec.flow, questions: rec.questions }, effective: { flow: eff.flow, questions: eff.questions, commit: eff.commit, branch: eff.branch, push: eff.push }, reason: eff.reason, instructions: flowInstructions(eff), changed: fields };
+  return { policy, client: { id: c.id, label: c.label, flow: rec.flow, questions: rec.questions }, effective: { flow: eff.flow, questions: eff.questions, commit: eff.commit, branch: eff.branch, push: eff.push, components: eff.components }, reason: eff.reason, instructions: flowInstructions(eff), changed: fields };
 }
 
 const FLOW_SET_DESC = `Turn the Mandate flow on / off, or questions mandate | chat, for THIS client only. Refused (policy_required / policy_off) when the project policy forbids it. Returns policy, preference, effective and instructions (follow them; save to memory). Works with the flow off.
@@ -129,12 +129,12 @@ Example: {"enabled":false}`,
     title: 'Set the project flow policy (admin)',
     kind: 'write',
     uiOnly: true,
-    description: `Web UI admins only: the project flow policy. flowPolicy: required | optional (default, each client chooses) | off (read-only); strictFlow: guard hook refuses edits outside a claimed step; commit auto|ask; branchMode per-request|current; push off|auto.
+    description: `Web UI admins only: the project flow policy. flowPolicy: required | optional (default, each client chooses) | off (read-only); strictFlow: guard hook refuses edits outside a claimed step; commit auto|ask; branchMode per-request|current; push off|auto; components required|optional.
 Example: {"flowPolicy":"required"}`,
     input: policyPatchSchema.omit({ branch: true }).extend({ branchMode: policyPatchSchema.shape.branch }).strict(),
     run: async (a, ctx) => {
       const s = settingsOf(ctx);
-      if (!Object.values(a).some((v) => v !== undefined)) throw new ToolError('validation', 'pass flowPolicy, strictFlow, commit, branchMode or push', 'e.g. {"flowPolicy":"required"}', 'flowPolicy');
+      if (!Object.values(a).some((v) => v !== undefined)) throw new ToolError('validation', 'pass flowPolicy, strictFlow, commit, branchMode, push or components', 'e.g. {"flowPolicy":"required"}', 'flowPolicy');
       const before = s.policy();
       const { branchMode, ...rest } = a;
       const policy = await s.setPolicy({ ...rest, ...(branchMode ? { branch: branchMode } : {}) });
@@ -161,7 +161,7 @@ Example: {}`,
       const policy = s.policy();
       const clients = (await s.clients.list(s.project, filter)).map((r) => {
         const eff = effective(policy, r);
-        return { ...r, effective: { flow: eff.flow, questions: eff.questions, commit: eff.commit, branch: eff.branch, push: eff.push }, you: r.id === me.id };
+        return { ...r, effective: { flow: eff.flow, questions: eff.questions, commit: eff.commit, branch: eff.branch, push: eff.push, components: eff.components }, you: r.id === me.id };
       });
       return { policy, clients };
     },

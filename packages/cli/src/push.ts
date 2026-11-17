@@ -49,8 +49,8 @@ export function channelEntry(project: string, base: string) {
 }
 
 /** The hook commands of a project. */
-export const hookCommands = (project: string, base: string) => ({
-  catchup: `${BIN} events --pending --format=claude --project ${shq(project)} --url ${shq(base)}`,
+export const hookCommands = (project: string, base: string, channels = false) => ({
+  catchup: `${BIN} events --pending --format=claude --project ${shq(project)} --url ${shq(base)}${channels ? ' --channels' : ''}`,
   watch: `${BIN} watch --rewake --project ${shq(project)} --url ${shq(base)}`,
 });
 
@@ -98,7 +98,7 @@ export function pushChanges(ctx: Ctx, project: string, base: string, mode: PushM
   const sj = settingsJson(ctx);
   const st = readText(sj);
   const hookOn = !remove && mode !== 'off';
-  const cmds = hookCommands(project, base);
+  const cmds = hookCommands(project, base, mode === 'channels');
   const add = hookOn
     ? [
         { event: 'SessionStart', hook: { type: 'command', command: cmds.catchup, timeout: 15 } },

@@ -303,6 +303,14 @@ MCP server's instructions carry the same rules for agents without it) runs the f
   (`mandate guard`, in the repo's `.claude/settings.local.json`) that refuses Edit, Write, MultiEdit and NotebookEdit unless
   the agent holds a claimed work order with a step in progress (`flow_edit_allowed`). It needs a personal token and fails
   open when Mandate cannot be reached.
+- **Git and components** (Settings → Agent flow, admins): *commit* `auto` (default: the agent is authorised to commit locally
+  during the flow, after each plan step, message `<request id> <step id>: <step text>` with `Request:` / `Work-Order:`
+  trailers, never amending, forcing or pushing) or `ask` (one `question_ask` that shows in Waiting for you); *branch*
+  `per-request` (default, `mandate/<request-id>`) or `current`; *push* `off` (default) or `auto` (push the branch and open a
+  PR with `gh` at completion, best effort). `flow_next` gives the exact commit step when the agent reports
+  `code: { dirty: true }` (or `noHead: true`). *Components* `required` (default): touched files must be owned by a component;
+  `flow_next` adds the create/update step and `work_order_complete` refuses (`components_missing`) until done; `optional`
+  turns the refusal off. Re-run the installer to refresh the agent stubs (v6).
 - **`/mandate-flow on|off|status`** (and `questions mandate|chat`) turns the flow on or off for your agent client, within
   the project policy an admin sets in Settings → Agent flow (*required*, *optional* or *off*). Only the agent changes it
   (Settings shows it read-only). With the flow off, the server refuses that agent's write tools (`flow_off`) and Mandate

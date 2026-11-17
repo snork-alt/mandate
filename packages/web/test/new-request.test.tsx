@@ -27,10 +27,11 @@ const agents = [
   { id: 'bo/codex', handle: 'codex', label: 'Codex (bo)', state: 'busy', busyWith: [{ ref: 'r', summary: 'wo-1: fix login' }], repos: [] },
   { id: 'cy/claude-code', handle: 'cy-claude-code', label: 'Claude Code (cy)', state: 'offline', busyWith: [], repos: [] },
 ];
+let AGENTS: any[] = agents;
 vi.mock('../src/mcp/client', () => ({
   callTool: vi.fn(async (name: string, args: Record<string, any>) => {
     calls.push({ name, args });
-    if (name === 'agents_presence') return { agents, suggested: 'ada/claude-code' };
+    if (name === 'agents_presence') return { agents: AGENTS, suggested: 'ada/claude-code' };
     if (name === 'search')
       return { groups: [{ docUri: 'mandate://specs/login-sso', docTitle: 'Login SSO', docKind: 'spec', score: 1, hits: [{ uri: 'mandate://specs/login-sso/sections/auth-flow', docUri: 'mandate://specs/login-sso', docTitle: 'Login SSO', sectionId: 'auth-flow', sectionTitle: 'Auth flow', kind: 'section', docKind: 'spec', snippet: '', score: 1, matchedBy: ['text'] }] }] };
     if (name === 'list') return [];
@@ -72,21 +73,30 @@ const textarea = () => screen.getAllByLabelText('What do you want?').find((e) =>
 describe('New request form', () => {
   it('requires the text; nothing is sent without it', async () => {
     wrap(<NewRequestModal opened onClose={() => undefined} />);
-    fireEvent.click(await screen.findByTestId('new-request-submit'));
+    await waitFor(() => expect(screen.getByTestId('new-request-submit').textContent).toBe('Send to Claude Code (ada)'));
+    fireEvent.click(screen.getByTestId('new-request-submit'));
     expect(await screen.findByText('Tell the agent what you want')).toBeTruthy();
     expect(calls.some((c) => c.name === 'request_create')).toBe(false);
   });
 
-  it('picker: the suggested agent is preselected, offline agents are listed as queued, busy ones say with what; Any agent', async () => {
+  it('picker: only active agents (no offline, no Any agent); the suggested one is preselected, busy ones say with what', async () => {
     wrap(<NewRequestModal opened onClose={() => undefined} />);
     await waitFor(() => expect(screen.getByTestId('new-request-submit').textContent).toBe('Send to Claude Code (ada)'));
     expect(screen.getByText(/suggested/)).toBeTruthy();
     expect(screen.getByText(/busy: wo-1: fix login/)).toBeTruthy();
-    expect(screen.getByText(/offline: queued until it connects/)).toBeTruthy();
-    fireEvent.click(screen.getByLabelText(/Any agent/));
-    expect(screen.getByTestId('new-request-submit').textContent).toBe('Send to any agent');
+    expect(screen.queryByText(/offline/)).toBeNull();
+    expect(screen.queryByLabelText(/Any agent/)).toBeNull();
+    expect(screen.queryByLabelText(/Claude Code \(cy\)/)).toBeNull();
     fireEvent.click(screen.getByLabelText(/Codex \(bo\)/));
     expect(screen.getByTestId('new-request-submit').textContent).toBe('Send to Codex (bo)');
+  });
+
+  it('no active agent: says how to start one and Send is disabled', async () => {
+    AGENTS = agents.map((a) => ({ ...a, state: 'offline' }));
+    wrap(<NewRequestModal opened onClose={() => undefined} />);
+    expect((await screen.findByTestId('no-agent-active')).textContent).toContain('mandate claude');
+    expect((screen.getByTestId('new-request-submit') as HTMLButtonElement).disabled).toBe(true);
+    AGENTS = agents;
   });
 
   it('@ inserts an object reference as a chip; submit sends assignee, priority, planOnly and the refs, then opens the request', async () => {

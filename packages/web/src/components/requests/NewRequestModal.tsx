@@ -7,7 +7,7 @@ import { useEffect, useState } from 'react';
 import { Button, Checkbox, Modal, SegmentedControl } from '@mantine/core';
 import { useNavigate } from 'react-router';
 import { extractRefs } from '@mandate/shared';
-import { AgentPicker } from '../comments/CommentsPanel';
+import { activeAgents, AgentPicker, defaultAgent } from '../comments/CommentsPanel';
 import { RefMentionBox } from '../mentions/RefMentionBox';
 import { useAgentsPresence } from '../../lib/comments';
 import { useCreateRequest, type Priority } from '../../lib/requests';
@@ -36,14 +36,13 @@ export function NewRequestModal({ opened, onClose }: { opened: boolean; onClose:
   }, [opened]);
 
   const p = presence.data;
-  const suggested = p?.suggested ? p.agents.find((a) => a.id === p.suggested) : undefined;
-  const assignee = pick ?? suggested?.handle ?? 'any';
-  const chosen = assignee === 'any' ? undefined : p?.agents.find((a) => a.handle === assignee);
-  const target = assignee === 'any' ? 'any agent' : (chosen?.label ?? assignee);
+  const assignee = pick && activeAgents(p).some((a) => a.handle === pick) ? pick : defaultAgent(p);
+  const chosen = p?.agents?.find((a) => a.handle === assignee);
+  const target = chosen?.label ?? 'agent';
   const empty = body.trim().length === 0;
   const submit = () => {
     setTouched(true);
-    if (empty || create.isPending) return;
+    if (empty || !assignee || create.isPending) return;
     create.mutate({ body: body.trim(), assignee, priority, planOnly, context: extractRefs(body) });
   };
 
@@ -74,7 +73,7 @@ export function NewRequestModal({ opened, onClose }: { opened: boolean; onClose:
         </div>
         <div>
           <div className="nr-label">Who should handle it?</div>
-          <AgentPicker presence={p} value={assignee} onChange={setPick} showOffline name="nr-agent" anyHint="the next free agent takes it" />
+          <AgentPicker presence={p} value={assignee} onChange={setPick} name="nr-agent" />
         </div>
         <div className="nr-row">
           <div>
@@ -103,7 +102,7 @@ export function NewRequestModal({ opened, onClose }: { opened: boolean; onClose:
           <Button variant="default" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" loading={create.isPending} data-testid="new-request-submit">
+          <Button type="submit" loading={create.isPending} disabled={!assignee} data-testid="new-request-submit">
             Send to {target}
           </Button>
         </div>

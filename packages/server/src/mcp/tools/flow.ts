@@ -3,14 +3,15 @@
  * (a decision the agent took without asking the user) and `flow_edit_allowed` (strict mode: may this agent edit code now).
  * The state machine is flow/next.ts (pure); this file reads the stored state and shapes the result.
  */
-import { isClaimStale, ownerOf, replayComments, type CommentThread, type StoredComponent, type StoredSpec } from '@mandate/shared';
+import { isClaimStale, replayComments, type CommentThread, type StoredSpec } from '@mandate/shared';
 import { z } from 'zod';
 import { ANY, assignedSummary, deliverAssigned, mayStart, wakeableAny } from '../../flow/assign.js';
 import { requestAssignInputSchema, requestPlanApproveInputSchema } from '@mandate/shared';
 import { flowAll, flowFor, type FlowGit, type FlowItem, type FlowSnapshot } from '../../flow/next.js';
 import { clientIdentity, effective } from '../../projects/settings.js';
 import type { CommitMeta } from '../../storage/index.js';
-import { newsOfProject, routeState, shortTarget, unansweredFor } from '../../comments/route.js';
+import { newsOfProject, routeState, seedKnownClients, shortTarget, unansweredFor } from '../../comments/route.js';
+import { componentsRequired, liveComponents, unownedOf } from '../component-gate.js';
 import { defineTool, type ToolContext } from '../define.js';
 import { ToolError } from '../errors.js';
 
@@ -40,17 +41,14 @@ async function snapshot(ctx: ToolContext, agent?: string, tree?: TreeInput): Pro
 async function gitOf(ctx: ToolContext, eff: { commit: 'auto' | 'ask'; branch: 'current' | 'per-request'; push: 'off' | 'auto' }, workOrders: FlowSnapshot['workOrders'], tree?: TreeInput): Promise<FlowGit> {
   const cc = ctx.session?.codeContext;
   const dirty = tree?.dirty ?? (tree?.noHead ? undefined : cc?.dirty);
-  const all = (await ctx.storage.components.list().catch(() => [])) as StoredComponent[];
-  const live = all.filter((c) => (c as { status?: string }).status !== 'archived');
+  const live = await liveComponents(ctx);
   const unowned: Record<string, string[]> = {};
-  if (live.length) {
-    for (const w of workOrders) {
-      if (!['pending', 'in_progress'].includes(w.status)) continue;
-      const miss = [...new Set((w.touched ?? []).filter((t) => t.change !== 'deleted' && !ownerOf(t.repo, t.path, live)).map((t) => `${t.repo}:${t.path}`))];
-      if (miss.length) unowned[w.id] = miss;
-    }
+  for (const w of workOrders) {
+    if (!['pending', 'in_progress'].includes(w.status)) continue;
+    const miss = unownedOf(live, w.touched ?? []);
+    if (miss.length) unowned[w.id] = miss;
   }
-  return { commit: eff.commit, branch: eff.branch, push: eff.push, ...(dirty || tree?.noHead ? { tree: { ...(dirty ? { dirty: true } : {}), ...(tree?.noHead ? { noHead: true } : {}) } } : {}), components: live.length, unowned };
+  return { commit: eff.commit, branch: eff.branch, push: eff.push, ...(dirty || tree?.noHead ? { tree: { ...(dirty ? { dirty: true } : {}), ...(tree?.noHead ? { noHead: true } : {}) } } : {}), components: live.length, componentsRequired: componentsRequired(ctx), unowned };
 }
 
 const compact = (i: FlowItem) => ({ request: i.request.ref, summary: i.request.summary, state: i.state, ...(i.queued ? { queued: true } : {}), ...(i.request.assignee ? { assignee: i.request.assignee } : {}), ...(i.request.priority ? { priority: i.request.priority } : {}), ...(i.request.planOnly ? { planOnly: true } : {}), next: i.next, ...(i.waitingOn ? { waitingOn: i.waitingOn } : {}), ...(i.waitingOnWorkOrders ? { waitingOnWorkOrders: i.waitingOnWorkOrders } : {}) });
@@ -152,7 +150,7 @@ Example: {"ref":"fb-0007","assignee":"any"}`,
         if (cur.startedBy) throw new ToolError('already_started', `already_started: ${cur.startedBy} started ${id}; it cannot be reassigned`, 'ask the agent to release it (a comment on the request)', 'ref', { kind: 'document' });
         return ctx.storage.feedbackService.assign(id, assignee, { agent: c.agent, trailers: { ...c.trailers }, onCommit: (sha: string) => commits.push(sha) });
       });
-      const delivered = news ? await deliverAssigned(news, f, 'reassigned') : [];
+      const delivered = news ? (await seedKnownClients(ctx, news.presence), await deliverAssigned(news, f, 'reassigned')) : [];
       return { ref: `mandate://requests/${id}`, commit: commits.at(-1) ?? null, commits, warnings: [], assignee, queued: assignee !== ANY && !news?.presence.isOnline(assignee), wakeable: wakeableAny(news, assignee, delivered), delivered };
     },
   }),
@@ -173,7 +171,7 @@ Example: {"ref":"fb-0007"}`,
       if (!cur.planOnly) throw new ToolError('not_plan_only', `not_plan_only: request ${id} is not waiting for a plan approval`, 'only requests filed with planOnly need it', 'ref', { kind: 'document' });
       const f = await ctx.storage.feedbackService.approvePlan(id, (ctx.principal.kind === 'ui' ? ctx.principal.user.login : c.agent), { agent: c.agent, trailers: { ...c.trailers }, onCommit: (sha: string) => commits.push(sha) });
       const news = newsOfProject(ctx);
-      const delivered = news ? await deliverAssigned(news, f, 'plan_approved') : [];
+      const delivered = news ? (await seedKnownClients(ctx, news.presence), await deliverAssigned(news, f, 'plan_approved')) : [];
       return { ref: `mandate://requests/${id}`, commit: commits.at(-1) ?? null, commits, warnings: [], delivered, summary: assignedSummary(f, 'plan_approved') };
     },
   }),

@@ -44,9 +44,20 @@ const targetLabel = (t: string, doc: string) => {
 
 const STATE_LABEL: Record<AgentPresenceView['state'], string> = { online: 'online', busy: 'busy', offline: 'offline' };
 
-/** The agent picker of a new thread: online agents with their state and the suggestion; "Any agent" queues it. */
-export function AgentPicker({ presence, value, onChange, showOffline, anyHint, name = 'cmt-agent' }: { presence: PresenceReply | undefined; value: string; onChange: (v: string) => void; /** List offline agents too (their work is queued until they connect). */ showOffline?: boolean; anyHint?: string; name?: string }) {
-  const agents = (presence?.agents ?? []).filter((a) => showOffline || a.state !== 'offline' || a.id === presence?.suggested);
+/** Active agents (online or busy), wakeable first. */
+export function activeAgents(presence: PresenceReply | undefined): AgentPresenceView[] {
+  return (presence?.agents ?? []).filter((a) => a.state !== 'offline').sort((x, y) => Number(y.wakeable === true) - Number(x.wakeable === true));
+}
+/** The preselected agent: the suggestion when it is active, else the first active one ('' when none is). */
+export function defaultAgent(presence: PresenceReply | undefined): string {
+  const act = activeAgents(presence);
+  return (act.find((a) => a.id === presence?.suggested) ?? act[0])?.handle ?? '';
+}
+export const NO_AGENT_ACTIVE = 'No agent active: start Claude Code with `mandate claude`.';
+
+/** The agent picker: active agents only (online; wakeable first, busy ones with what they are doing). `showOffline` + `allowAny` (reassigning a queued request) keep the old queueing options. */
+export function AgentPicker({ presence, value, onChange, showOffline, allowAny, anyHint, name = 'cmt-agent' }: { presence: PresenceReply | undefined; value: string; onChange: (v: string) => void; /** List offline agents too (their work is queued until they connect). */ showOffline?: boolean; allowAny?: boolean; anyHint?: string; name?: string }) {
+  const agents = showOffline ? (presence?.agents ?? []) : activeAgents(presence);
   const sug = presence?.suggested;
   return (
     <div className="cmt-picker" role="radiogroup" aria-label="Who should handle this">
@@ -67,13 +78,19 @@ export function AgentPicker({ presence, value, onChange, showOffline, anyHint, n
           {sug === a.id && <span className="cmt-suggest">suggested{a.state === 'online' ? ' (idle)' : ' (least busy)'}</span>}
         </label>
       ))}
-      <label className="cmt-pick" data-on={value === 'any' || undefined}>
-        <input type="radio" name={name} checked={value === 'any'} onChange={() => onChange('any')} />
-        <IconRobot size={13} aria-hidden />
-        <span className="cmt-pick-name">Any agent</span>
-        <span className="cmt-pick-state">{anyHint ?? 'queued: the next agent to check in picks it up'}</span>
-      </label>
-      {!agents.length && <div className="cmt-faint">No agent is online. Open Claude Code with <code>mandate claude</code>; it answers when it connects.</div>}
+      {allowAny && (
+        <label className="cmt-pick" data-on={value === 'any' || undefined}>
+          <input type="radio" name={name} checked={value === 'any'} onChange={() => onChange('any')} />
+          <IconRobot size={13} aria-hidden />
+          <span className="cmt-pick-name">Any agent</span>
+          <span className="cmt-pick-state">{anyHint ?? 'queued: the next agent to check in picks it up'}</span>
+        </label>
+      )}
+      {!agents.length && presence && (
+        <div className="cmt-faint" data-testid="no-agent-active">
+          No agent active: start Claude Code with <code>mandate claude</code>.
+        </div>
+      )}
     </div>
   );
 }
@@ -120,6 +137,8 @@ function ThreadCard({ t, doc, active, presence, onOpen }: { t: CommentThread; do
   const agents = [...new Set(msgs.filter((m) => !isHuman(m)).map((m) => m.author.agent))];
   const to = agents.length ? agents.join(', ') : t.to === 'any' ? 'any agent' : (presence?.responsibleAgents ?? []).join(', ') || 'whoever is responsible';
   const waiting = t.status === 'open' && isHuman(last) && Date.now() - Date.parse(last.createdAt) < 15 * 60_000 && (agents.length > 0 || !!presence?.responsible?.length || !!t.to);
+  // "is replying" only when an agent is online or can be woken (unknown while the presence loads).
+  const reachable = !presence || presence.agents.some((a) => a.state !== 'offline' || a.wakeable);
   const lines = commentLines(t.target);
   if (t.status === 'resolved' && !active) {
     return (
@@ -148,9 +167,14 @@ function ThreadCard({ t, doc, active, presence, onOpen }: { t: CommentThread; do
           {msgs.map((m) => (
             <Message key={m.id} m={m} />
           ))}
-          {waiting && (
+          {waiting && reachable && (
             <div className="cmt-typing" data-testid="agent-replying">
               <Loader size={11} type="dots" /> {agents[0] ?? 'The agent'} is replying…
+            </div>
+          )}
+          {waiting && !reachable && (
+            <div className="cmt-typing" data-testid="agent-unreachable">
+              Waiting for an agent: none is online or can be woken. Start one with <code>mandate claude</code>; it picks this up when it connects.
             </div>
           )}
           <div className="cmt-reply">
@@ -188,7 +212,7 @@ function NewThread({ doc, target, quote, onDone }: { doc: string; target: string
   const [pick, setPick] = useState<string | null>(null);
   const p = presence.data;
   const needsPicker = !!p?.needsPicker && !/@[\w.-]+/.test(body);
-  const chosen = pick ?? (p?.suggested ? p.agents.find((a) => a.id === p.suggested)?.handle : undefined) ?? 'any';
+  const chosen = pick && activeAgents(p).some((a) => a.handle === pick) ? pick : defaultAgent(p);
   const add = useAddComment((r) => onDone(r.thread?.id));
   const send = () => body.trim() && add.mutate({ target, body: body.trim(), ...(needsPicker ? { to: chosen } : {}), ...(asRequest ? { asRequest: true } : {}), ...(blocking ? { blocking: true } : {}) });
   return (
@@ -211,7 +235,7 @@ function NewThread({ doc, target, quote, onDone }: { doc: string; target: string
         <Checkbox size="xs" label="Make it a request" checked={asRequest} onChange={(e) => setAsRequest(e.currentTarget.checked)} />
         <Checkbox size="xs" label="Blocking" checked={blocking} onChange={(e) => setBlocking(e.currentTarget.checked)} />
         <span className="cmt-spacer" />
-        <Button size="compact-xs" loading={add.isPending} disabled={!body.trim()} onClick={send}>
+        <Button size="compact-xs" loading={add.isPending} disabled={!body.trim() || (needsPicker && !chosen)} onClick={send}>
           Send
         </Button>
       </div>

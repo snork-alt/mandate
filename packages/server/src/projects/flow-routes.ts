@@ -112,7 +112,7 @@ export function registerFlowRoutes(app: FastifyInstance, d: FlowRouteDeps): void
       await visible(who.login, project);
       if (!who.admin) throw new HttpError(403, 'forbidden', 'only Mandate admins can change the project policy');
       const b = policyPatchSchema.parse(req.body);
-      if (!Object.values(b).some((v) => v !== undefined)) throw new HttpError(400, 'invalid_input', 'pass flowPolicy, strictFlow, commit, branch or push');
+      if (!Object.values(b).some((v) => v !== undefined)) throw new HttpError(400, 'invalid_input', 'pass flowPolicy, strictFlow, commit, branch, push or components');
       const s = d.settings(project);
       const before = s.policy();
       const policy = await s.setPolicy(b);

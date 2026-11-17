@@ -79,6 +79,8 @@ export interface FlowGit {
   tree?: { dirty?: boolean; noHead?: boolean };
   /** Number of live components of the project. */
   components?: number;
+  /** Project setting components: required (completion is refused while touched files are unowned). */
+  componentsRequired?: boolean;
   /** Touched files (`repo:path`) of each work order that no component owns. */
   unowned?: Record<string, string[]>;
 }
@@ -396,8 +398,9 @@ function driveWorkOrder(w: WorkOrder, f: Feedback, snap: FlowSnapshot, now: numb
     }
   }
   const unowned = snap.git?.unowned?.[w.id] ?? [];
-  if (unowned.length && (snap.git?.components ?? 0) > 0) {
-    return { state: 'components', next: { tool: 'component_update', args: { owns: unowned.slice(0, 10) }, why: `These touched files are owned by no component: ${unowned.slice(0, 10).join(', ')}${unowned.length > 10 ? ` (+${unowned.length - 10})` : ''}. Create or update a component owning these paths (component_create, or add owns globs to the component that holds them with component_update; reuse before creating), then work_order_complete. Generated or vendored files that need no owner: go straight to work_order_complete.` } };
+  if (unowned.length) {
+    const none = !(snap.git?.components ?? 0);
+    return { state: 'components', next: { tool: none ? 'component_create' : 'component_update', args: { owns: unowned.slice(0, 10) }, why: `These touched files are owned by no component: ${unowned.slice(0, 10).join(', ')}${unowned.length > 10 ? ` (+${unowned.length - 10})` : ''}. ${none ? 'The project has no components yet: create the initial component(s) for the code this work added (component_create)' : 'Create or update the component(s) owning these paths (component_update: add owns globs to the one that holds them, or component_create; reuse before creating)'} (one per code boundary with a single responsibility and interface; code that fits an existing component extends its owns; an external system is kind external) with owns globs, tldr, Responsibility and Interfaces sections, depends_on, and affects links from the spec sections. Then work_order_complete${snap.git?.componentsRequired === false ? '' : ' (it is refused with components_missing while files stay unowned)'}.` } };
   }
   const push = snap.git?.push === 'auto' ? ` Then push the branch${snap.git.branch === 'per-request' ? ` ${branchOf(f)}` : ''} and, if gh is available and a remote exists, open a PR (best effort, never fail the flow on it; record it with work_order_git_update pr).` : '';
   return { state: 'complete', next: { tool: 'work_order_complete', args: { ref }, why: `Complete ${w.id} with outcome and reconciliation (spec / component text and code refs updated to what was built; pass git [{ repo, headCommit }]); resolve blocking comments first.${push}` } };

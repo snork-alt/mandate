@@ -18,7 +18,11 @@ describe('commit / branch / push settings', () => {
     writeFileSync(file, JSON.stringify({ version: 1, projects: [{ id: 'a', name: 'A', dataDir: '/a', createdAt: 'x' }] }));
     const s = projectSettings(new ProjectsStore(file), 'a');
     expect(s.policy()).toEqual({ flowPolicy: 'optional' });
-    expect(effective(s.policy(), undefined)).toMatchObject({ commit: 'auto', branch: 'per-request', push: 'off' });
+    expect(effective(s.policy(), undefined)).toMatchObject({ commit: 'auto', branch: 'per-request', push: 'off', components: 'required' });
+    expect((await s.setPolicy({ components: 'optional' })).components).toBe('optional');
+    expect(flowInstructions(effective(s.policy(), undefined))).toContain('Components: optional');
+    await s.setPolicy({ components: 'required' });
+    expect(s.policy().components).toBeUndefined();
     const before = s.policy();
     const after = await s.setPolicy({ commit: 'ask', branch: 'current', push: 'auto' });
     expect(after).toEqual({ flowPolicy: 'optional', commit: 'ask', branch: 'current', push: 'auto' });
@@ -126,7 +130,7 @@ describe('flow_next: commit, branch, push and component steps', () => {
     expect(flowFor(req, snap(w, git(), { verifications: recs })).next?.why).not.toContain('push the branch');
   });
 
-  it('unowned touched files: a component step when the project has components, nothing when it has none', () => {
+  it('unowned touched files: a component step (update when components exist, create the initial ones when none)', () => {
     const w = wo({ sections: [{ id: 'a', status: 'done' }], planSteps: [] });
     const recs = [{ criterion: 'mandate://specs/s/sections/ac', appliedTo: 'mandate://specs/s', at: '2026-01-01T11:59:50Z', result: 'pass', evidence: { test: 't' } }] as never;
     const withComps = flowFor(req, snap(w, git({ components: 2, unowned: { 'wo-1': ['app:src/new.ts'] } }), { verifications: recs }));
@@ -134,7 +138,12 @@ describe('flow_next: commit, branch, push and component steps', () => {
     expect(withComps.next?.tool).toBe('component_update');
     expect(withComps.next?.why).toMatch(/component_create/);
     expect(withComps.next?.why).toContain('app:src/new.ts');
-    const none = flowFor(req, snap(w, git({ components: 0, unowned: {} }), { verifications: recs }));
-    expect(none.state).toBe('complete');
+    const none = flowFor(req, snap(w, git({ components: 0, unowned: { 'wo-1': ['app:src/new.ts'] } }), { verifications: recs }));
+    expect(none.state).toBe('components');
+    expect(none.next?.tool).toBe('component_create');
+    expect(none.next?.why).toMatch(/no components yet/);
+    expect(none.next?.why).toContain('components_missing');
+    expect(flowFor(req, snap(w, git({ components: 1, componentsRequired: false, unowned: { 'wo-1': ['app:src/new.ts'] } }), { verifications: recs })).next?.why).not.toContain('components_missing');
+    expect(flowFor(req, snap(w, git({ components: 2, unowned: {} }), { verifications: recs })).state).toBe('complete');
   });
 });
