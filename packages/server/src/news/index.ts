@@ -49,6 +49,9 @@ export interface NewsItem {
   summary: string;
   at: string;
   readAt: string | null;
+  /** Push delivery (events stream / pending): the consumer that claimed it and when (null: not pushed yet). */
+  pushedTo?: string | null;
+  pushedAt?: string | null;
 }
 
 export interface NewsQuery {
@@ -64,6 +67,12 @@ export interface NewsStore {
   /** A client's items, newest first (filters applied by the caller). */
   items(project: string, client: string, q?: NewsQuery): Promise<NewsItem[]>;
   markRead(project: string, client: string, seqs: number[], at?: Date): Promise<number>;
+  /**
+   * Claim items for push delivery to `consumer` (the events stream or a catch-up): only unread items that are not
+   * claimed by another consumer, or whose claim is older than `staleBefore` (ISO), are taken. Atomic per item, so two
+   * streams of one client never both deliver an item. Returns the seqs claimed.
+   */
+  claim(project: string, client: string, seqs: number[], consumer: string, staleBefore: string, at?: Date): Promise<number[]>;
   /** Move a gone session's unread items and watches to another session. */
   adopt(project: string, client: string, from: string, to: string): Promise<void>;
   flowSig(project: string, client: string): Promise<string | undefined>;
@@ -197,6 +206,8 @@ export function readRefs(tool: string, args: Record<string, unknown>, result: Re
 
 /** Max items shown in a reply notice. */
 export const NEWS_NOTICE_MAX = 10;
+/** An item pushed to a consumer but still unread after this long is pushed again (to anyone asking). */
+export const PUSH_REDELIVER_MS = 10 * 60_000;
 /** Max seconds a news_list call may wait. */
 export const NEWS_WAIT_MAX = 300;
 
@@ -211,6 +222,8 @@ export class NewsService {
   /** Live MCP sessions (registered on their calls; `closed` set by the transport). */
   private readonly live = new Map<string, { closed?: boolean }>();
   private readonly waiters = new Set<{ client: string; session: string | null; wake: () => void }>();
+  /** Push consumers (events streams): called whenever an item is added for the client. */
+  private readonly listeners = new Set<{ client: string; fn: () => void }>();
 
   constructor(
     readonly project: string,
@@ -294,7 +307,30 @@ export class NewsService {
     if (item) this.wake(client, null);
   }
 
+  /** Call `fn` whenever an item is added for `client` (any session); returns the unsubscribe. */
+  onItems(client: string, fn: () => void): () => void {
+    const l = { client, fn };
+    this.listeners.add(l);
+    return () => void this.listeners.delete(l);
+  }
+
+  /**
+   * Items to push to `consumer` (events stream, catch-up): unread, after `since`, oldest first, across all of the
+   * client's sessions; each is claimed (store.claim) so it goes to one consumer only. `peek`: no claiming.
+   */
+  async pushable(client: string, consumer: string, o: { since?: number; peek?: boolean; limit?: number } = {}): Promise<NewsItem[]> {
+    const since = o.since ?? 0;
+    const staleBefore = new Date(Date.now() - PUSH_REDELIVER_MS).toISOString();
+    const items = (await this.store.items(this.project, client, { unread: true })).filter((i) => i.seq > since).sort((a, b) => a.seq - b.seq).slice(0, o.limit ?? 100);
+    if (o.peek) return items;
+    const eligible = items.filter((i) => !i.pushedTo || i.pushedTo === consumer || (i.pushedAt ?? '') < staleBefore);
+    if (!eligible.length) return [];
+    const won = new Set(await this.store.claim(this.project, client, eligible.map((i) => i.seq), consumer, staleBefore));
+    return eligible.filter((i) => won.has(i.seq));
+  }
+
   private wake(client: string, session: string | null) {
+    for (const l of [...this.listeners]) if (l.client === client) l.fn();
     for (const w of [...this.waiters]) if (w.client === client && (session === null || w.session === null || w.session === session || !this.alive(session))) w.wake();
   }
 
@@ -408,6 +444,17 @@ export class MemoryNewsStore implements NewsStore {
     for (const r of this.rows) if (r.project === project && r.client === client && seqs.includes(r.seq) && !r.readAt) (r.readAt = at.toISOString()), n++;
     return n;
   }
+  async claim(project: string, client: string, seqs: number[], consumer: string, staleBefore: string, at = new Date()) {
+    const out: number[] = [];
+    for (const r of this.rows) {
+      if (r.project !== project || r.client !== client || !seqs.includes(r.seq) || r.readAt) continue;
+      if (r.pushedTo && r.pushedTo !== consumer && (r.pushedAt ?? '') >= staleBefore) continue;
+      r.pushedTo = consumer;
+      r.pushedAt = at.toISOString();
+      out.push(r.seq);
+    }
+    return out;
+  }
   async adopt(project: string, client: string, from: string, to: string) {
     for (const r of this.rows) if (r.project === project && r.client === client && r.session === from && !r.readAt) r.session = to;
     for (const w of this.watches.values()) if (w.project === project && w.client === client && w.session === from) w.session = to;
@@ -438,7 +485,14 @@ CREATE TABLE IF NOT EXISTS ${d.table('news_flow')} (
   PRIMARY KEY (project, client_id)
 );
 `;
-export const NEWS_MIGRATIONS: Migration[] = [{ id: 1, name: 'news feed', sqlite: newsSchemaV1, postgres: newsSchemaV1 }];
+const newsSchemaV2 = (d: Dialect) => `
+ALTER TABLE ${d.table('news_items')} ADD COLUMN pushed_to TEXT;
+ALTER TABLE ${d.table('news_items')} ADD COLUMN pushed_at TEXT;
+`;
+export const NEWS_MIGRATIONS: Migration[] = [
+  { id: 1, name: 'news feed', sqlite: newsSchemaV1, postgres: newsSchemaV1 },
+  { id: 2, name: 'news push delivery', sqlite: newsSchemaV2, postgres: newsSchemaV2 },
+];
 
 interface ItemRow {
   client_id: string;
@@ -450,8 +504,10 @@ interface ItemRow {
   summary: string;
   at: string;
   read_at: string | null;
+  pushed_to?: string | null;
+  pushed_at?: string | null;
 }
-const fromItem = (r: ItemRow): NewsItem => ({ seq: Number(r.seq), client: r.client_id, session: r.session_id, eventId: r.event_id, kind: r.kind, ref: r.ref, summary: r.summary, at: r.at, readAt: r.read_at });
+const fromItem = (r: ItemRow): NewsItem => ({ seq: Number(r.seq), client: r.client_id, session: r.session_id, eventId: r.event_id, kind: r.kind, ref: r.ref, summary: r.summary, at: r.at, readAt: r.read_at, pushedTo: r.pushed_to ?? null, pushedAt: r.pushed_at ?? null });
 
 /** News on the server-state database (migration scope `news`). */
 export class DbNewsStore implements NewsStore {
@@ -519,6 +575,15 @@ export class DbNewsStore implements NewsStore {
     let n = 0;
     for (const s of seqs) n += (await this.db.run(`UPDATE ${this.t('news_items')} SET read_at = ? WHERE project = ? AND client_id = ? AND seq = ? AND read_at IS NULL`, [at.toISOString(), project, client, s])).changes ?? 0;
     return n;
+  }
+  async claim(project: string, client: string, seqs: number[], consumer: string, staleBefore: string, at = new Date()) {
+    await this.ready;
+    const out: number[] = [];
+    for (const s of seqs) {
+      const n = (await this.db.run(`UPDATE ${this.t('news_items')} SET pushed_to = ?, pushed_at = ? WHERE project = ? AND client_id = ? AND seq = ? AND read_at IS NULL AND (pushed_to IS NULL OR pushed_to = ? OR pushed_at < ?)`, [consumer, at.toISOString(), project, client, s, consumer, staleBefore])).changes ?? 0;
+      if (n) out.push(s);
+    }
+    return out;
   }
   async adopt(project: string, client: string, from: string, to: string) {
     await this.ready;
