@@ -64,7 +64,7 @@ import type { HistoryService } from './history.js';
 import { newId } from './ids.js';
 import type { MarkdownDirRepository } from './MarkdownDirRepository.js';
 import { openChangingOrders } from './model.js';
-import { applyCodeToSection, checkPlanTests, checkStepLinks, checkTaskCoverage, coveredCriteria, renderPlan } from './work-order-plan.js';
+import { applyCodeToSection, checkPlanTests, type InheritedCriterion, checkStepLinks, checkTaskCoverage, coveredCriteria, renderPlan } from './work-order-plan.js';
 import type { Mutex } from './Mutex.js';
 import {
   defaultTitle,
@@ -196,6 +196,14 @@ export class WorkOrderService {
   lock?: Mutex;
   /** Ids of the recorded verification results (wo-section `verifications` validation; set by createStorage). */
   verificationIds?: () => Promise<string[]>;
+  /** Inherited criteria from the CURRENT spec (a `follows` link added after the work order's pin counts). */
+  private async currentInherited(specId: string, targets: string[]): Promise<InheritedCriterion[]> {
+    const spec = await this.specs.get(specId).catch(() => null);
+    return spec ? ((await this.inheritedCriteria?.(spec, targets)) ?? []) : [];
+  }
+
+  /** The inherited (followed standards) criteria that apply to the given spec sections (set by createStorage). */
+  inheritedCriteria?: (spec: StoredSpec, targets: string[]) => Promise<InheritedCriterion[]>;
   /** The recorded verification results (criteria proof at completion; set by createStorage). */
   verificationRecords?: () => Promise<VerificationRecord[]>;
   /** Called after a work order completed (the requests it acted on may close; set by createStorage). */
@@ -370,7 +378,8 @@ export class WorkOrderService {
     let planTests: WorkOrderPlanInput['tests'] | undefined;
     let planSteps: PlanStep[] | undefined;
     if (input.plan && typeof input.plan === 'object') {
-      const criteria = coveredCriteria(at, input.sections.map((s) => s.id));
+      const inherited = at ? await this.inheritedCriteria?.(at, input.sections.map((s) => s.id)) ?? [] : [];
+      const criteria = [...coveredCriteria(at, input.sections.map((s) => s.id)), ...inherited.map((c) => ({ id: c.id, title: `${c.title} (${c.standardTitle ?? c.standard})` }))];
       const desired = planTasksOf(input.plan).map(toDesired);
       const problems = [...checkPlanTests(input.plan.tests ?? [], criteria), ...checkStepLinks(desired, input.sections.map((s) => s.id), criteria), ...(input.fastPath ? [] : checkTaskCoverage(desired, input.sections.map((s) => s.id), criteria))];
       const made = reconcileSteps([], desired.map(({ id: _id, ...d }) => d), 0, { now: (meta.date ?? new Date()).toISOString(), by: input.createdBy ?? meta.agent ?? 'agent' });
@@ -550,7 +559,7 @@ export class WorkOrderService {
     if (desiredInput?.some((d) => d.sections?.length || d.proves?.length)) {
       const at = await this.specAt(probe.spec, probe.specCommit);
       const targets = probe.sections.filter(isWoSection).map(targetSection);
-      links = { targets, criteria: coveredCriteria(at, targets) };
+      links = { targets, criteria: [...coveredCriteria(at, targets), ...(await this.currentInherited(probe.spec, targets))] };
     }
     const now = (meta.date ?? new Date()).toISOString();
     const d = await this.modify(
@@ -936,24 +945,27 @@ export class WorkOrderService {
     if (!this.verificationRecords || !(doc.kind === 'implement' || doc.kind === 'update' || doc.kind === 'fix')) return;
     const spec = await this.specs.get(doc.spec).catch(() => null);
     const targets = doc.sections.filter(isWoSection).filter((s) => s.status !== 'obsolete').map(targetSection);
-    const criteria = coveredCriteria(spec, targets);
+    const own = coveredCriteria(spec, targets).map((c) => ({ ...c, uri: buildRef({ kind: 'specs', id: doc.spec, sectionId: c.id }), standard: undefined as string | undefined }));
+    const inh = spec ? ((await this.inheritedCriteria?.(spec, targets)) ?? []).map((c) => ({ id: c.id, title: c.title, uri: c.uri, method: c.method, standard: c.standardTitle ?? c.standard })) : [];
+    const criteria = [...own, ...inh];
     if (!criteria.length) return;
     const specUri = buildRef({ kind: 'specs', id: doc.spec });
     const recs = (await this.verificationRecords()).filter((r) => r.appliedTo === specUri && r.at >= doc.createdAt && r.result !== 'skipped');
-    const missing: { criterion: string; title: string; reason: string }[] = [];
+    const missing: { criterion: string; title: string; reason: string; standard?: string }[] = [];
     for (const c of criteria) {
-      const uri = buildRef({ kind: 'specs', id: doc.spec, sectionId: c.id });
+      const uri = c.uri;
       const mine = recs.filter((r) => r.criterion === uri);
       const last = mine.at(-1);
       const tested = mine.some((r) => r.result === 'pass' && (r.evidence?.test?.trim() || r.codeRefs?.length));
-      if (!last) missing.push({ criterion: uri, title: c.title, reason: 'no passing result recorded' });
-      else if (last.result === 'fail') missing.push({ criterion: uri, title: c.title, reason: 'the latest result is a failure' });
-      else if ((c.method ?? 'test') === 'test' && !tested) missing.push({ criterion: uri, title: c.title, reason: 'the passing result names no test (evidence.test or codeRefs)' });
+      const tag = c.standard ? { standard: c.standard } : {};
+      if (!last) missing.push({ criterion: uri, title: c.title, reason: 'no passing result recorded', ...tag });
+      else if (last.result === 'fail') missing.push({ criterion: uri, title: c.title, reason: 'the latest result is a failure', ...tag });
+      else if ((c.method ?? 'test') === 'test' && !tested) missing.push({ criterion: uri, title: c.title, reason: 'the passing result names no test (evidence.test or codeRefs)', ...tag });
     }
     if (missing.length) {
       throw new WorkOrderError(
         'criteria_unproven',
-        `criteria_unproven: work order ${doc.id} cannot complete: ${missing.length} acceptance criteri${missing.length === 1 ? 'on has' : 'a have'} no test proof: ${missing.map((m) => `${m.criterion.replace('mandate://', '')} (${m.reason})`).join('; ')}`,
+        `criteria_unproven: work order ${doc.id} cannot complete: ${missing.length} acceptance criteri${missing.length === 1 ? 'on has' : 'a have'} no test proof: ${missing.map((m) => `${m.criterion.replace('mandate://', '')}${m.standard ? ` (inherited from standard ${m.standard})` : ''} (${m.reason})`).join('; ')}. Inherited criteria are verified with verification_record { criterion: <the standard rule>, appliedTo: <the spec>, result, evidence.test }, or waived with a user-approved deviates_from`,
         { kind: 'criteria', missing },
       );
     }

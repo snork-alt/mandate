@@ -116,7 +116,10 @@ describe('the gate: matches recorded and acted on before work_order_create', () 
     await read('component_match', { request: 'Limit the zebra quota per user', files: ['app:src/zq/limit.ts'], for: rid });
     expect((await create()).body.error.message).toMatch(/matched component updated/);
     await ok('update_meta', { ref: comp, tldr: 'Handles zebra quota sessions, limits and per-user caps.', addresses: [ref] });
-    const made = await create();
+    // The followed standard's must rule is a criterion of the work order too: the plan has to prove it.
+    expect((await create()).body.error.message).toMatch(/validate-quota-input/);
+    const inh = `${std.split('/').pop()}/validate-quota-input`;
+    const made = await fx.call('work_order_create', { agent: A, spec, kind: 'implement', sections: ['design', 'ac-works'], reason: [ref], plan: { tasks: [{ text: 'Do it', sections: ['design'], proves: ['ac-works', inh] }], files: ['src/zq/a.ts'], tests: [{ name: 't', proves: ['ac-works', inh] }], risks: ['none'] } });
     expect(made.body.error, JSON.stringify(made.body.error)).toBeUndefined();
   });
 

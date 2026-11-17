@@ -29,6 +29,32 @@ export function coveredCriteria(spec: Pick<StoredSpec, 'sections'> | null | unde
   return [...ids].map((id) => live.find((x) => x.id === id)!).map((s) => ({ id: s.id, title: s.title, ...(s.method ? { method: s.method } : {}) }));
 }
 
+/** A criterion a work order must prove because the sections it targets follow a standard: its id is `<standard>/<section>`. */
+export interface InheritedCriterion {
+  /** `<standard id>/<rule section id>`: what a task's `proves` / a plan test's `proves` names. */
+  id: string;
+  /** The standard section URI: what verification_record takes as `criterion` (appliedTo the spec). */
+  uri: string;
+  title: string;
+  standard: string;
+  standardTitle?: string;
+  level?: string;
+  method?: string;
+  /** Spec sections that follow it (empty: spec-wide). */
+  sections: string[];
+}
+
+/** The gating (must, not waived) inherited criteria of the targeted sections, from a spec's verification (`forSpec`). */
+export function inheritedOf(v: { inherited: { standard: string; title: string; criteria: { uri: string; sectionId: string; title: string; method?: string; level?: string; state: string; sections?: string[]; upcoming?: boolean }[] }[] } | null | undefined, targets: string[]): InheritedCriterion[] {
+  if (!v) return [];
+  const t = new Set(targets);
+  return v.inherited.flatMap((g) =>
+    g.criteria
+      .filter((c) => (c.level ?? 'must') === 'must' && c.state !== 'waived' && !c.upcoming && (!c.sections?.length || c.sections.some((x) => t.has(x))))
+      .map((c) => ({ id: `${g.standard.replace(/^mandate:\/\/standards\//, '')}/${c.sectionId}`, uri: c.uri, title: c.title, standard: g.standard, standardTitle: g.title, ...(c.level ? { level: c.level } : {}), ...(c.method ? { method: c.method } : {}), sections: c.sections ?? [] })),
+  );
+}
+
 /** Problems of a plan's tests against the criteria the work order covers: unknown ids, uncovered criteria. */
 export function checkPlanTests(tests: PlanTest[], criteria: { id: string; title: string }[]): string[] {
   const known = new Set(criteria.map((c) => c.id));

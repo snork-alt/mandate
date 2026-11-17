@@ -19,7 +19,7 @@ import {
   type VerificationRecord,
   type WorkOrder,
 } from '@mandate/shared';
-import { coveredCriteria } from '../storage/work-order-plan.js';
+import { coveredCriteria, type InheritedCriterion } from '../storage/work-order-plan.js';
 import { matchGaps } from './gates.js';
 
 export type FlowState =
@@ -99,6 +99,8 @@ export interface FlowSnapshot {
   verifications: VerificationRecord[];
   /** Comment threads (any state): a blocking open one on a request stops its flow until resolved. */
   comments?: CommentThread[];
+  /** Gating inherited criteria (followed standards, not waived) per spec id. */
+  inherited?: Map<string, InheritedCriterion[]>;
   /** Implemented sections that changed since (Outdated), per spec id: who changed them and the work order that implemented them. */
   outdated?: Map<string, Record<string, { implementedBy?: string; changedBy?: string; changedAt?: string; changedCommit?: string }>>;
   /** Git / components context (project settings and what the agent reported); absent: no git guidance. */
@@ -137,15 +139,21 @@ const hasCriterion = (spec: Pick<StoredSpec, 'sections'>, sid: string): boolean 
   return (s.verifiedBy ?? []).some((v) => live.some((x) => x.id === v && x.type === 'acceptance'));
 };
 
+/** The inherited criteria that apply to the live sections of a work order. */
+const inheritedFor = (w: WorkOrder, snap: FlowSnapshot): InheritedCriterion[] => {
+  const live = new Set(w.sections.filter((x) => x.status !== 'obsolete').map((x) => x.id));
+  return (snap.inherited?.get(w.spec) ?? []).filter((c) => !c.sections.length || c.sections.some((x) => live.has(x)));
+};
+
 /** Tasks and proved criteria of the request's newest work order that is not cancelled. */
 export function progressOf(f: Feedback, snap: FlowSnapshot): FlowProgress | undefined {
   const w = snap.workOrders.filter((x) => x.reason.includes(f.id) && x.status !== 'cancelled').sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
   if (!w) return undefined;
   const live = w.sections.filter((x) => x.status !== 'obsolete');
-  const criteria = coveredCriteria(snap.specs.get(w.spec) ?? null, live.map((x) => x.id));
+  const criteria = [...coveredCriteria(snap.specs.get(w.spec) ?? null, live.map((x) => x.id)).map((c) => ({ ...c, uri: secRef(w.spec, c.id) })), ...inheritedFor(w, snap).map((c) => ({ id: c.id, title: c.title, uri: c.uri }))];
   const specUri = specRef(w.spec);
   const recs = snap.verifications.filter((r) => r.appliedTo === specUri && r.at >= w.createdAt && r.result === 'pass');
-  const proved = criteria.filter((c) => recs.some((r) => r.criterion === secRef(w.spec, c.id) && (r.evidence?.test?.trim() || r.codeRefs?.length))).length;
+  const proved = criteria.filter((c) => recs.some((r) => r.criterion === c.uri && (r.evidence?.test?.trim() || r.codeRefs?.length))).length;
   return {
     workOrder: w.id,
     kind: w.kind,
@@ -397,6 +405,11 @@ function driveWorkOrder(w: WorkOrder, f: Feedback, snap: FlowSnapshot, now: numb
   }
   // Tasks first, while sections are open; when every section is done only unfinished steps remain (complete refuses them).
   const steps = (w.planSteps ?? []) as PlanStep[];
+  // Inherited criteria (followed standards, also a `follows` link added mid-work) must be proved by a task of the plan.
+  const unplanned = inheritedFor(w, snap).filter((c) => !steps.some((t) => t.proves?.includes(c.id)));
+  if (!allDone && steps.length && unplanned.length) {
+    return { state: 'tasks', next: { tool: 'work_order_plan_set', args: { ref, tasks: [{ text: `Verify the inherited rules: ${unplanned.map((c) => c.title).join('; ').slice(0, 120)}`, proves: unplanned.map((c) => c.id) }] }, why: `The sections follow standards whose must rules are criteria of this work order: ${unplanned.map((c) => `${c.id} (${c.standardTitle ?? c.standard})`).join(', ')}. Add a task proving them (work_order_plan_set: keep the existing tasks, append this one; proves = those ids) and implement what they require; then verification_record each against the standard rule.` } };
+  }
   const stepBlocked = (s: PlanStep) => blockingQuestions(snap.questions, `${ref}/tasks/${s.id}`).map((q) => q.id);
   const inProgress = steps.find((s) => s.status === 'in_progress');
   if (inProgress) {
@@ -433,24 +446,25 @@ function driveWorkOrder(w: WorkOrder, f: Feedback, snap: FlowSnapshot, now: numb
   }
   // Every section done: prove the criteria, then complete.
   const spec = snap.specs.get(w.spec);
-  const criteria = coveredCriteria(spec ?? null, sections.filter((s) => s.status !== 'obsolete').map((s) => s.id));
+  const criteria = [...coveredCriteria(spec ?? null, sections.filter((s) => s.status !== 'obsolete').map((s) => s.id)).map((c) => ({ ...c, uri: secRef(w.spec, c.id), inherited: undefined as InheritedCriterion | undefined })), ...inheritedFor(w, snap).map((c) => ({ id: c.id, title: c.title, method: c.method, uri: c.uri, inherited: c }))];
   const specUri = specRef(w.spec);
   const recs = snap.verifications.filter((r) => r.appliedTo === specUri && r.at >= w.createdAt && r.result !== 'skipped');
   const needsRecord = criteria.some((c) => {
-    const mineRecs = recs.filter((r) => r.criterion === secRef(w.spec, c.id));
+    const mineRecs = recs.filter((r) => r.criterion === c.uri);
     const last = mineRecs.at(-1);
     return !last || last.result === 'fail' || ((c.method ?? 'test') === 'test' && !mineRecs.some((r) => r.result === 'pass' && (r.evidence?.test?.trim() || r.codeRefs?.length)));
   });
   const commit = commitStep(w, f, snap);
   if (commit && (needsRecord || (w.kind !== 'review' && w.kind !== 'verify'))) return commit;
   for (const c of criteria) {
-    const uri = secRef(w.spec, c.id);
+    const uri = c.uri;
     const mineRecs = recs.filter((r) => r.criterion === uri);
     const last = mineRecs.at(-1);
     const tested = mineRecs.some((r) => r.result === 'pass' && (r.evidence?.test?.trim() || r.codeRefs?.length));
     if (!last || last.result === 'fail' || ((c.method ?? 'test') === 'test' && !tested)) {
       const planned = (w.planTests ?? []).filter((t) => t.proves.includes(c.id)).map((t) => t.ref ?? t.name);
-      return { state: 'verify', next: { tool: 'verification_record', args: { criterion: uri, appliedTo: specUri, result: 'pass' }, why: `Run the test for criterion ${c.id} (${c.title})${planned.length ? ` [planned: ${planned.join(', ')}]` : ''} and record the result with evidence.test or codeRefs naming it.` } };
+      const via = c.inherited ? ` inherited from standard ${c.inherited.standardTitle ?? c.inherited.standard} (a must rule: verify it or get a user-approved waiver; work_order_complete is refused otherwise)` : '';
+      return { state: 'verify', next: { tool: 'verification_record', args: { criterion: uri, appliedTo: specUri, result: 'pass' }, why: `Run the test for criterion ${c.id} (${c.title})${via}${planned.length ? ` [planned: ${planned.join(', ')}]` : ''} and record the result with evidence.test or codeRefs naming it.` } };
     }
   }
   const unowned = snap.git?.unowned?.[w.id] ?? [];

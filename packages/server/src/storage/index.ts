@@ -1,3 +1,4 @@
+import { inheritedOf } from './work-order-plan.js';
 import { auditSchema, type StoredAudit, componentSchema, type StoredComponent, verificationRecordSchema, type VerificationRecord, feedbackSchema, workOrderDocSchema, specSchema, standardSchema, type StoredFeedback, type StoredWorkOrderDoc, type WorkOrder, type StoredSpec, type StoredStandard } from '@mandate/shared';
 import type { GitStore } from '../git/GitStore.js';
 import type { DocFormat } from '@mandate/doc';
@@ -248,6 +249,7 @@ export function createStorage(git: GitStore, opts: StorageOptions = {}): Storage
   workOrderService.lock = lock;
   workOrderService.verificationIds = async () => (await verifications.list()).map((v) => v.id);
   workOrderService.verificationRecords = () => verifications.list();
+  workOrderService.inheritedCriteria = async (spec, targets) => inheritedOf(await verificationService!.forSpec(spec as never), targets);
   // A request closes by itself when every work order acting on it is done (and something changed): applied.
   workOrderService.onCompleted = async (wo, meta) => {
     const all = await wos.list();

@@ -7,6 +7,7 @@ import { isClaimStale, replayComments, type CommentThread, type StoredSpec } fro
 import { z } from 'zod';
 import { ANY, assignedSummary, deliverAssigned, mayStart, wakeableAny } from '../../flow/assign.js';
 import { requestAssignInputSchema, requestPlanApproveInputSchema } from '@mandate/shared';
+import { inheritedOf } from '../../storage/work-order-plan.js';
 import { flowAll, flowFor, type FlowGit, type FlowItem, type FlowSnapshot } from '../../flow/next.js';
 import { clientIdentity, effective } from '../../projects/settings.js';
 import type { CommitMeta } from '../../storage/index.js';
@@ -41,7 +42,15 @@ async function snapshot(ctx: ToolContext, agent?: string, tree?: TreeInput): Pro
     const bad = Object.fromEntries(Object.entries(impl).filter(([, v]) => v.outdated).map(([k, v]) => [k, { ...(v.implementedBy ? { implementedBy: v.implementedBy } : {}), ...(v.changedBy ? { changedBy: v.changedBy } : {}), ...(v.changedAt ? { changedAt: v.changedAt } : {}), ...(v.changedCommit ? { changedCommit: v.changedCommit } : {}) }]));
     if (Object.keys(bad).length) outdated.set(sp.id, bad);
   }
-  return { requests, comments, workOrders, questions, specs: new Map(specList.map((s) => [s.id, s])), verifications, ...(outdated.size ? { outdated } : {}), ...(git ? { git } : {}), ...(agent ? { agent } : {}) };
+  const inherited: NonNullable<FlowSnapshot['inherited']> = new Map();
+  for (const w of workOrders) {
+    if (!['pending', 'in_progress'].includes(w.status) || inherited.has(w.spec)) continue;
+    const sp = specList.find((x) => x.id === w.spec);
+    if (!sp) continue;
+    const list = inheritedOf(await st.verificationService.forSpec(sp).catch(() => null), sp.sections.map((x) => x.id));
+    if (list.length) inherited.set(w.spec, list);
+  }
+  return { requests, comments, workOrders, questions, specs: new Map(specList.map((s) => [s.id, s])), verifications, ...(inherited.size ? { inherited } : {}), ...(outdated.size ? { outdated } : {}), ...(git ? { git } : {}), ...(agent ? { agent } : {}) };
 }
 
 /** Outdated sections as re-verify items (flow_next without a request). */

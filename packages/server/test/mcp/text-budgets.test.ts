@@ -54,9 +54,10 @@ describe('total tool descriptions', () => {
   it('the default list (core) stays small: descriptions and schemas', () => {
     const core = listedTools(new Set(DEFAULT_SETS));
     expect(core.length).toBeLessThanOrEqual(56); // +2: component_match, standard_match (the work-order gate needs them); -2 hidden aliases not counted; +2: request_assign, request_plan_approve (requests from the UI); +2: ask_pending, ask_answer (Ask is answered by agents)
+    // +section_reverify and editorial (outdated sections), inherited criteria: 7,687 / 24,502.
     // 5,883 description and 16,137 schema tokens over the 47 core tools (the whole request flow: the former intake set moved into core;
     // before that 3,624 / 9,335 over 29 tools; every tool: ~11,221 / ~26,870).
-    expect(core.reduce((n, t) => n + tok(t.description as string), 0)).toBeLessThanOrEqual(7600);
+    expect(core.reduce((n, t) => n + tok(t.description as string), 0)).toBeLessThanOrEqual(7800);
     expect(core.reduce((n, t) => n + tok(JSON.stringify(toolJsonSchema(t))), 0)).toBeLessThanOrEqual(18400);
   });
 
@@ -65,7 +66,7 @@ describe('total tool descriptions', () => {
     for (const t of AGENT_TOOLS) total += tok(JSON.stringify(toolJsonSchema(t)));
     // 28,865 over 143 tools before the prompts review; 26,870 over the 132 agent tools after it (incl. the 5 question tools);
     // 22,513 over the 98 tools of all sets after merging per-type tools (tool-sets.ts).
-    expect(total).toBeLessThanOrEqual(24500);
+    expect(total).toBeLessThanOrEqual(24700);
     const gn = AGENT_TOOLS.find((t) => t.name === 'graph_neighbors')!;
     expect(JSON.stringify(toolJsonSchema(gn))).not.toContain('duplicate_finding_of');
   });
