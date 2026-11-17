@@ -147,7 +147,7 @@ describe('MCP tools (seeded project)', () => {
     expect(on.body.instructions).toMatch(/ON for this coding agent/);
     expect(on.body.instructions).toMatch(/project_info at the start of each task/);
     expect(on.body.instructions).toMatch(/every instruction the user gives is a request/);
-    expect(on.body.instructions).toMatch(/FULL plan/);
+    expect(on.body.instructions).toMatch(/FULL concrete plan/);
     expect(on.body.instructions).not.toMatch(/approval checkpoint/);
     expect(on.body.instructions).toMatch(/memory/);
     // The approval setting is gone: flow_set takes flow and questions only.

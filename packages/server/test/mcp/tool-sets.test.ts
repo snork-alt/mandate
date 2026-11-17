@@ -22,9 +22,9 @@ const strip = ({ news: _n, ...b }: Record<string, any>) => b;
 const names = async (c: Awaited<ReturnType<typeof connect>>) => (await c.listTools()).tools.map((t) => t.name);
 
 describe('sets', () => {
-  it('the default list is core (the whole request flow) and has at most 54 tools', async () => {
+  it('the default list is core (the whole request flow) and has at most 56 tools', async () => {
     const listed = await names(fx.client);
-    expect(listed.length).toBeLessThanOrEqual(54);
+    expect(listed.length).toBeLessThanOrEqual(56);
     expect(listed.sort()).toEqual([...TOOL_SETS.core].sort());
     expect(DEFAULT_SETS).toEqual(['core']);
   });
@@ -97,7 +97,7 @@ describe('merged tools and hidden aliases', () => {
       // The old feedback names alias the request tools (merged get / list, or the request_* write tools).
       expect(MERGED.some((m) => m.name === merged) || all.has(merged)).toBe(true);
     }
-    expect(Object.keys(ALIASES)).toHaveLength(56);
+    expect(Object.keys(ALIASES)).toHaveLength(58);
     expect(ALIASES.feedback_create).toBe('request_create');
   });
 
