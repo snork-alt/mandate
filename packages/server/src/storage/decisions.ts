@@ -34,6 +34,8 @@ const one = (s: string, n = 140) => {
   return t.length > n ? `${t.slice(0, n - 1)}…` : t;
 };
 const HOUR = 3_600_000;
+/** An agent with an active work order and no open question is shown as stopped after this much silence. */
+export const AGENT_IDLE_MS = 3 * 60_000;
 const ago = (iso: string, now: number) => {
   const h = Math.max(0, (now - Date.parse(iso)) / HOUR);
   return h < 1 ? `${Math.round(h * 60)} min` : h < 48 ? `${Math.round(h)} h` : `${Math.round(h / 24)} days`;
@@ -58,7 +60,8 @@ export async function listDecisions(storage: Storage, input: DecisionsListInput 
   const integrity = await storage.integrity.current();
 
   // Open questions agents asked through Mandate (question_ask): the user answers them in the web UI.
-  for (const q of await storage.questionService.list(now)) {
+  const allQuestions = await storage.questionService.list(now);
+  for (const q of allQuestions) {
     if (q.status !== 'open') continue;
     const first = q.questions[0]!;
     const rec = Array.isArray(first.recommended) ? first.recommended[0] : first.recommended;
@@ -141,19 +144,48 @@ export async function listDecisions(storage: Storage, input: DecisionsListInput 
     }
   }
 
-  // Draft standards: their rules apply only once the user confirms them.
+  // Pending standard proposals (legacy stored drafts): their rules apply only once the user confirms them.
   for (const s of m.standards) {
     if (s.status !== 'draft') continue;
     items.push({
       ref: buildRef({ kind: 'standards', id: s.id }),
-      kind: 'standard_draft',
+      kind: 'standard_proposal',
       title: s.title,
-      question: `Confirm the rules of draft standard "${s.title}" and make it active?`,
+      question: `Confirm the rules of the proposed standard "${s.title}" and put it in force?`,
       options: [
         { id: 'activate', label: 'Confirm the rules and activate it', tool: 'status_set' },
-        { id: 'keep_draft', label: 'Keep it as a draft (not in force)' },
+        { id: 'keep_draft', label: 'Leave it pending (not in force)' },
       ],
     });
+  }
+
+  // Stopped agents: an active work order whose agent has been idle for a few minutes (no MCP call, no task progress) while no
+  // Mandate question is open for it: it may be asking in chat (which never counts) or have quit. Past the stale window the
+  // stale_claim item below takes over.
+  if (want('agent_stopped')) {
+    for (const w of open) {
+      if (!w.claim || allSectionsFinished(w.sections) || isClaimStale(w.claim, now)) continue;
+      const idle = now - Date.parse(w.claim.heartbeatAt);
+      if (!(idle > AGENT_IDLE_MS)) continue;
+      const wRef = buildRef({ kind: 'work-orders', id: w.id });
+      const reqs = w.reason.map((r) => buildRef({ kind: 'feedback', id: r }));
+      const asking = allQuestions.some((q) => q.status === 'open' && ((q.blocks ?? []).some((b) => b === wRef || b.startsWith(`${wRef}/`) || reqs.includes(b)) || (q.request !== undefined && w.reason.includes(q.request)) || q.asker.agent === w.claim!.agent));
+      if (asking) continue;
+      const on = w.reason[0] ?? w.id;
+      items.push({
+        ref: wRef,
+        kind: 'agent_stopped',
+        title: `${w.claim.agent} stopped on ${on}`,
+        question: `${w.claim.agent} stopped on ${on} (idle ${ago(w.claim.heartbeatAt, now)}) — no question open. Open its session: it may be asking you in chat. Release the claim if it is gone.`,
+        options: [
+          { id: 'release', label: 'Release the claim', tool: 'work_order_release' },
+          { id: 'wait', label: 'Wait for the agent' },
+        ],
+        context: `claimed by ${w.claim.agent}; last activity ${ago(w.claim.heartbeatAt, now)} ago; no open Mandate question`,
+        subject: buildRef({ kind: 'specs', id: w.spec }),
+        since: w.claim.heartbeatAt,
+      });
+    }
   }
 
   // Stale claims: no heartbeat for a while; another agent may take the work over.
@@ -189,7 +221,7 @@ export async function listDecisions(storage: Storage, input: DecisionsListInput 
         question: `"${s.title}" is done but its gate no longer holds (${one(drift.join('; '), 100)}): verify again or reopen it?`,
         options: [
           { id: 'verify', label: 'Verify the criteria again', tool: 'verification_record' },
-          { id: 'reopen', label: 'Reopen the spec (done → ready)', tool: 'status_set' },
+          { id: 'reopen', label: 'Reopen the spec (done → active)', tool: 'status_set' },
         ],
         suggested: 'verify',
       });

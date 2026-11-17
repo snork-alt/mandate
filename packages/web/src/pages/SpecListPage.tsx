@@ -41,7 +41,6 @@ function countBy<T extends string>(specs: Spec[], key: (s: Spec) => T | T[] | un
 }
 
 const STEP_COLOR: Record<string, string> = {
-  draft: 'var(--app-text-faint)',
   specified: 'var(--app-text-muted)',
   in_progress: 'var(--mantine-color-lilac-5, var(--mantine-primary-color-filled))',
   implemented: 'var(--mantine-color-blue-5)',

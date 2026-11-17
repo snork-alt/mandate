@@ -114,7 +114,7 @@ export async function projectOverview(storage: Storage, input: ProjectOverviewIn
     c.total++;
     c.steps[mat.step]++;
     cats.set(cat, c);
-    if (spec.status !== 'draft') {
+    {
       for (const k of Object.keys(criteria) as (keyof typeof criteria)[]) criteria[k] += mat.criteria[k];
       {
         const a = audits[spec.id];

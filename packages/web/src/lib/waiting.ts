@@ -48,6 +48,6 @@ export function useWaitingCounts(): WaitingCounts {
   const plans = usePlansToApprove().data?.length ?? 0;
   const comments = useCommentsForMe().data?.length ?? 0;
   const questions = d?.counts.question ?? 0;
-  const approvals = (d?.counts.waiver_pending ?? 0) + (d?.counts.standard_draft ?? 0);
+  const approvals = (d?.counts.waiver_pending ?? 0) + (d?.counts.standard_proposal ?? 0);
   return { questions, approvals, plans, comments, total: questions + approvals + plans + comments };
 }

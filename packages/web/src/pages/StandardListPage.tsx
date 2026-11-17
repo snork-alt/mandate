@@ -24,7 +24,7 @@ import { bareRef } from '../lib/lineage';
 
 const STD_COLS: ColDef[] = [
   { key: 'applies', width: 40, hide: '2xl', label: 'Auto', tip: 'Applies automatically to specs with these tags or paths' },
-  { key: 'lifecycle', width: 84, hide: 'lg', label: 'Lifecycle', tip: 'Draft or deprecated (empty: active)' },
+  { key: 'lifecycle', width: 84, hide: 'lg', label: 'Lifecycle', tip: 'Proposed or deprecated (empty: active)' },
   { key: 'rules', width: 176, hide: 'xl', label: 'Rules', tip: 'Rules by level: MUST, SHOULD, MAY' },
   { key: 'sections', width: 40, hide: '2xl', label: 'Sect.', tip: 'Number of sections' },
   { key: 'audit', width: 44, hide: 'sm', label: 'Audit', tip: 'Audit: last audit and whether it has open findings (red: open findings)' },
@@ -72,7 +72,7 @@ function StandardRow({ std }: { std: Standard }) {
         ),
         lifecycle: std.status && std.status !== 'active' && (
           <span className="lifecycle-badge" data-status={std.status}>
-            {std.status === 'draft' ? 'Draft' : 'Deprecated'}
+            {std.status === 'draft' ? 'Proposed' : 'Deprecated'}
           </span>
         ),
         rules: std.ruleCounts && (

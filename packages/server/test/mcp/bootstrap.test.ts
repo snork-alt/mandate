@@ -31,9 +31,9 @@ describe('bootstrap skill', () => {
     expect(t).not.toContain('workOrder:');
     expect(t).not.toMatch(/ready → done/);
     for (const type of NOTE_TYPES) expect(t).toContain(type);
-    // Standards are inferred drafts (no question per standard); one review at the end activates them.
+    // No draft standards: one review at the end proposes them; a standard is written only once approved.
     expect(t).not.toMatch(/before creating or changing ANY standard/);
-    expect(t).toMatch(/No question per standard/);
+    expect(t).toMatch(/no draft standards/i);
     expect(t).toMatch(/one review at the end/);
     // Components at the architecture level, proposed once.
     expect(t).toMatch(/not the folders/);

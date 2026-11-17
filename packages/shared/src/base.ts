@@ -12,7 +12,7 @@ export const idSchema = z
   .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, 'id must be a lowercase slug (a-z, 0-9, dashes)');
 
 /** Re-exported by index.ts. */
-export const STORED_SPEC_STATUSES = ['draft', 'ready', 'done', 'archived'] as const;
+export const STORED_SPEC_STATUSES = ['active', 'done', 'archived'] as const;
 
 /** Re-exported by index.ts. */
 export const PRIORITIES = ['p0', 'p1', 'p2', 'p3'] as const;
@@ -51,7 +51,7 @@ export const exemptionSchema = z.object({
 });
 
 /** Re-exported by index.ts. */
-export const SPEC_STATUSES = ['draft', 'ready', 'in_progress', 'done', 'archived'] as const;
+export const SPEC_STATUSES = ['active', 'in_progress', 'done', 'archived'] as const;
 
 /** Re-exported by index.ts. */
 export const WORK_ORDER_STATUSES = ['pending', 'in_progress', 'done', 'failed', 'cancelled'] as const;
@@ -65,7 +65,9 @@ export const CRITERION_STATES = ['verified', 'failing', 'stale', 'unverified', '
 /** Re-exported by index.ts (standard lifecycle). */
 /** Component lifecycle (transitions: COMPONENT_TRANSITIONS in lifecycle.ts). */
 export const COMPONENT_STATUSES = ['active', 'deprecated', 'archived'] as const;
-export const STANDARD_STATUSES = ['draft', 'active', 'deprecated'] as const;
+export const STANDARD_STATUSES = ['active', 'deprecated'] as const;
+/** Stored standard statuses: `draft` is LEGACY (read-only): a pending proposal that applies nowhere until the user confirms it. Never written any more. */
+export const STORED_STANDARD_STATUSES = ['draft', 'active', 'deprecated'] as const;
 
 /** Longest `tldr` (plain-language overview of a spec, standard or component) a write accepts, in characters. */
 export const TLDR_MAX_CHARS = 1200;

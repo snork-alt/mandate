@@ -255,7 +255,7 @@
 .dec-group-head[data-kind='feedback_accepted'], .dec-row[data-kind='feedback_accepted'] { --dec-c: var(--mantine-color-pink-6); }
 .dec-group-head[data-kind='waiver_pending'], .dec-row[data-kind='waiver_pending'],
 .dec-group-head[data-kind='approval_override'], .dec-row[data-kind='approval_override'] { --dec-c: var(--mantine-color-lilac-6, var(--mantine-primary-color-filled)); }
-.dec-group-head[data-kind='standard_draft'], .dec-row[data-kind='standard_draft'] { --dec-c: var(--mantine-color-teal-6); }
+.dec-group-head[data-kind='standard_proposal'], .dec-row[data-kind='standard_proposal'] { --dec-c: var(--mantine-color-teal-6); }
 .dec-group-head[data-kind='stale_claim'], .dec-row[data-kind='stale_claim'],
 .dec-group-head[data-kind='spec_drifted'], .dec-row[data-kind='spec_drifted'] { --dec-c: var(--mantine-color-orange-6); }
 .dec-group-head[data-kind='audit_contradicted'], .dec-row[data-kind='audit_contradicted'] { --dec-c: var(--mantine-color-red-6); }

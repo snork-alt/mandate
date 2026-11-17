@@ -4,6 +4,7 @@
  * services (inside the write lock), the whole document validated before the commit. Every write returns the
  * canonical refs, the commit(s), warnings and, for section edits, the resulting section with its derived states.
  */
+import { sectionsWithoutCriteria } from '../../storage/model.js';
 import { queueAuditAfterWorkOrder } from '../../flow/audit-flow.js';
 import {
   allSectionsFinished,
@@ -180,7 +181,7 @@ function docWriteTools(kind: DocKind): AnyToolDef[] {
       name: `${k}_create`,
       title: `Create a ${k}`,
       kind: 'write',
-      description: `Create a ${k} (Mandate assigns the id from the title: use the returned ref / ids; never pass id). ${kind === 'specs' ? 'Starts as draft; use spec_status_set to move it.' : kind === 'standards' ? 'appliesTo rules (repo:x, tag:x, category:x) make it apply to matching specs.' : 'kind service|module|library|datastore|external; owns: code path globs per repo (most specific glob wins in code_owner). layer (optional): ui|api|service|domain|data|infra or another slug; omitted, it is inherited from the parent or derived from depends_on. parent (optional): the containing component (a tree: one parent, no cycles, not archived). A component = one responsibility + an interface others use (service, package, module behind an API, CLI); one per code boundary, not per file or whole repo (~3-15 per repo); code that fits an existing one extends its owns (architecture_get first); external systems (Firecracker, a DB) = kind external, no owns. Needs owns, tldr, responsibility + interfaces sections (APIs, proto, CLI flags), depends_on, and affects links from the spec sections it implements. Optional: context (mermaid), rationale.'} Sections are optional here (${k}_section_insert).${COMMON}${TLDR_GUIDE}`,
+      description: `Create a ${k} (Mandate assigns the id from the title: use the returned ref / ids; never pass id). ${kind === 'specs' ? 'In force from creation (no draft).' : kind === 'standards' ? 'appliesTo rules (repo:x, tag:x, category:x) make it apply to matching specs.' : 'kind service|module|library|datastore|external; owns: code path globs per repo (most specific glob wins in code_owner). layer (optional): ui|api|service|domain|data|infra or another slug; omitted, it is inherited from the parent or derived from depends_on. parent (optional): the containing component (a tree: one parent, no cycles, not archived). A component = one responsibility + an interface others use (service, package, module behind an API, CLI); one per code boundary, not per file or whole repo (~3-15 per repo); code that fits an existing one extends its owns (architecture_get first); external systems (Firecracker, a DB) = kind external, no owns. Needs owns, tldr, responsibility + interfaces sections (APIs, proto, CLI flags), depends_on, and affects links from the spec sections it implements. Optional: context (mermaid), rationale.'} Sections are optional here (${k}_section_insert).${COMMON}${TLDR_GUIDE}`,
       // DF-11: spec_create takes addresses / workOrder like the other doc writes (Request / Work-Order trailers).
       input: (kind === 'specs' ? withExtras(createSchema as unknown as z.ZodObject) : createSchema) as unknown as z.ZodObject,
       ...(kind === 'specs' ? { trailers: docEditTrailers } : {}),
@@ -261,11 +262,13 @@ function docWriteTools(kind: DocKind): AnyToolDef[] {
             name: 'spec_status_set',
             title: 'Set spec status',
             kind: 'write',
-            description: `Set a spec's status (in_progress is derived, never set). A failing done gate returns done_gate with detail.failures (criterion, state, provenance path).${COMMON}`,
+            description: `Set a spec's status: active (also reopens done / restores archived), done, archived. ready / draft = aliases of active. A failing done gate returns done_gate with detail.failures (criterion, state, provenance path).${COMMON}`,
             input: withExtras(specStatusSetInputSchema),
             trailers: docEditTrailers,
             run: async (a, ctx) => {
-              const { ref, status } = specStatusSetInputSchema.parse(strip(a));
+              const { ref, status: asked } = specStatusSetInputSchema.parse(strip(a));
+              // ready / draft are legacy aliases for active: an active spec is unchanged (no-op), done / archived specs are reopened / restored.
+              const status = asked;
               const commits: string[] = [];
               const out = await writes(ctx).setStatus(ref, status, metaOf(ctx, commits));
               const spec = out.value as StoredSpec;
@@ -291,7 +294,7 @@ Example: {"ref":"mandate://specs/login/sections/create-vm","codeRefs":["app:src/
             name: 'spec_archive',
             title: 'Archive a spec',
             kind: 'write',
-            description: `Archive a spec (never deleted; cancels its open work orders; spec_status_set draft restores it).${COMMON}`,
+            description: `Archive a spec (never deleted; cancels its open work orders; spec_status_set active restores it).${COMMON}`,
             input: withExtras(specArchiveInputSchema),
             trailers: docEditTrailers,
             run: async (a, ctx) => {
@@ -493,6 +496,17 @@ const workOrderTools: AnyToolDef[] = [
       const needsPlan = (a.kind === 'implement' || a.kind === 'update' || a.kind === 'fix') && !a.fastPath;
       if (needsPlan && (!a.plan || typeof a.plan === 'string')) {
         throw new ToolError('plan_required', `a ${a.kind} work order carries the full plan from creation: plan { tasks (text, sections it implements, proves: criteria), files, tests: [{ name, proves: [criterion ids] }], risks }`, ERROR_ACTIONS.plan_required!, 'plan');
+      }
+      // Criteria gate (replaces the old spec "ready" gate): every live section an implement / update work order targets has
+      // an acceptance criterion (its own, a verifiedBy one or an inherited rule), so there is something to prove.
+      // Applies to work orders acting on a request (the flow); a work order made directly (no reason) is the user's explicit choice.
+      if ((a.kind === 'implement' || a.kind === 'update') && !a.fastPath && (a.reason?.length ?? 0) > 0) {
+        const sp = await ctx.storage.specs.get(spec).catch(() => null);
+        if (sp) {
+          const targeted = new Set(sections);
+          const lacking = sectionsWithoutCriteria(sp, await ctx.storage.model()).filter((id) => targeted.has(id));
+          if (lacking.length) throw new ToolError('criteria_missing', `criteria_missing: spec ${spec} sections without an acceptance criterion: ${lacking.join(', ')}`, ERROR_ACTIONS.criteria_missing!, 'sections');
+        }
       }
       // Flow order: a request is matched against the specs and changed (spec / standard commits that address it) before
       // work orders exist for it. The fast-path fix route is exempt (no behaviour change).
@@ -880,7 +894,7 @@ const verificationTools: AnyToolDef[] = [
 ];
 
 /** Standards are cross-cutting: every standard write needs the user's explicit confirmation first (recorded, not enforced). */
-export const STANDARD_CONFIRMATION = 'Needs the user\'s confirmation, even with approval off: cite an answered standard_confirmation question (question_ask) as cause (questions in chat: confirmedByUser: true). Drafts with only inferred sections: not until activation.\n';
+export const STANDARD_CONFIRMATION = 'Needs the user\'s confirmation, even with approval off: cite an answered standard_confirmation question (question_ask) as cause (questions in chat: confirmedByUser: true).\n';
 
 /**
  * Flow on (settings known): a standard write needs proof of the user's confirmation, an answered standard_confirmation
@@ -900,30 +914,6 @@ async function requireConfirmation(ctx: ToolContext, flag: boolean): Promise<voi
   );
 }
 
-/**
- * Inferred drafts (e.g. /mandate-bootstrap) need no confirmation yet: creating a standard whose sections are all
- * provenance "inferred", or editing a DRAFT standard whose live sections are all inferred (and stay so). The user
- * reviews the drafts later; activating (standard_status_set) and any change to an active standard still need it.
- */
-async function inferredDraftWrite(tool: string, a: Record<string, unknown>, ctx: ToolContext): Promise<boolean> {
-  if (tool === 'standard_status_set') return false;
-  const inferred = (s: unknown) => (s as { provenance?: unknown } | undefined)?.provenance === 'inferred';
-  if (tool === 'standard_create') {
-    const sections = (a.sections as unknown[] | undefined) ?? [];
-    return sections.length > 0 && sections.every(inferred);
-  }
-  if (tool === 'standard_section_insert' && !inferred(a.section)) return false;
-  if (tool === 'standard_section_update' && a.provenance !== undefined && a.provenance !== 'inferred') return false;
-  const ref = (a.doc ?? a.ref) as string | undefined;
-  if (!ref) return false;
-  try {
-    const std = (await ctx.storage.standards.get(idOf(ref))) as unknown as { status?: string; sections: { archived?: boolean; provenance?: string }[] };
-    return std.status === 'draft' && std.sections.filter((s) => !s.archived).every(inferred);
-  } catch {
-    return false;
-  }
-}
-
 /** Adds the confirmation note and the optional `confirmedByUser` flag (→ `User-Confirmed: yes` trailer) to a standard write tool. */
 export function withUserConfirmation(def: AnyToolDef): AnyToolDef {
   const input = def.input as unknown as z.ZodObject;
@@ -939,14 +929,9 @@ export function withUserConfirmation(def: AnyToolDef): AnyToolDef {
       if (def.name === 'standard_update_meta' && Object.keys(rest).every((k) => ['ref', 'tldr', 'agent', 'branch', 'idempotencyKey', 'cause', 'addresses', 'workOrder'].includes(k)) && rest.tldr !== undefined) return def.run(rest as never, ctx);
       // An answered standard_confirmation question cited as cause: User-Confirmed names it and the answering user.
       const proof = await questionProof(ctx, ['standard_confirmation']);
-      let draft = false;
-      if (!proof)
-        await requireConfirmation(ctx, a.confirmedByUser === true).catch(async (e: unknown) => {
-          if (!(await inferredDraftWrite(def.name, rest, ctx))) throw e;
-          draft = true;
-        });
-      // An unconfirmed inferred standard is created as a draft (it applies nowhere until the user confirms it).
-      return def.run((draft && def.name === 'standard_create' ? { ...rest, status: 'draft' } : rest) as never, proof ? withTrailers(ctx, { 'User-Confirmed': proof.id, 'Confirmed-By': proof.by }) : ctx);
+      // No draft standards: a change that needs the user's confirmation is not applied until it is confirmed.
+      if (!proof) await requireConfirmation(ctx, a.confirmedByUser === true);
+      return def.run(rest as never, proof ? withTrailers(ctx, { 'User-Confirmed': proof.id, 'Confirmed-By': proof.by }) : ctx);
     },
   } as AnyToolDef;
 }

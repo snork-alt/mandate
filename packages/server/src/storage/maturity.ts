@@ -68,7 +68,7 @@ export function specMaturity(i: MaturityInput): SpecMaturity {
   };
 
   let step: MaturityStep;
-  if (spec.status === 'draft') step = 'draft';
+  if (sections.total === 0 && spec.status !== 'done') step = 'specified';
   else if (sections.total > 0 && implemented === 0 && inProgress === 0 && spec.status !== 'done') step = 'specified';
   else if (implemented < sections.total && spec.status !== 'done') step = 'in_progress';
   else step = 'implemented';

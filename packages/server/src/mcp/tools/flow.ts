@@ -8,7 +8,7 @@ import { z } from 'zod';
 import { ANY, assignedSummary, deliverAssigned, mayStart, wakeableAny } from '../../flow/assign.js';
 import { requestAssignInputSchema, requestPlanApproveInputSchema } from '@mandate/shared';
 import { inheritedOf } from '../../storage/work-order-plan.js';
-import { flowAll, flowFor, type FlowGit, type FlowItem, type FlowSnapshot } from '../../flow/next.js';
+import { flowAll, flowFor, type FlowDecision, type FlowGit, type FlowItem, type FlowSnapshot } from '../../flow/next.js';
 import { clientIdentity, effective } from '../../projects/settings.js';
 import type { CommitMeta } from '../../storage/index.js';
 import { newsOfProject, routeState, seedKnownClients, shortTarget, unansweredFor } from '../../comments/route.js';
@@ -23,7 +23,7 @@ interface TreeInput {
   noHead?: boolean | undefined;
 }
 
-async function snapshot(ctx: ToolContext, agent?: string, tree?: TreeInput): Promise<FlowSnapshot> {
+async function snapshot(ctx: ToolContext, agent?: string, tree?: TreeInput, decision?: FlowDecision): Promise<FlowSnapshot> {
   const st = ctx.storage;
   const [requests, workOrders, questions, specList, verifications, comments] = await Promise.all([
     st.feedbackService.list(),
@@ -61,7 +61,7 @@ async function snapshot(ctx: ToolContext, agent?: string, tree?: TreeInput): Pro
     const list = inheritedOf(await st.verificationService.forSpec(sp).catch(() => null), sp.sections.map((x) => x.id));
     if (list.length) inherited.set(w.spec, list);
   }
-  return { requests, comments, workOrders, questions, specs: new Map(specList.map((s) => [s.id, s])), verifications, ...(inherited.size ? { inherited } : {}), ...(outdated.size ? { outdated } : {}), ...(dependents.size ? { dependents } : {}), ...(git ? { git } : {}), ...(agent ? { agent } : {}) };
+  return { ...(decision ? { decision } : {}), requests, comments, workOrders, questions, specs: new Map(specList.map((s) => [s.id, s])), verifications, ...(inherited.size ? { inherited } : {}), ...(outdated.size ? { outdated } : {}), ...(dependents.size ? { dependents } : {}), ...(git ? { git } : {}), ...(agent ? { agent } : {}) };
 }
 
 /** Outdated sections as re-verify items (flow_next without a request). */
@@ -124,12 +124,13 @@ export const flowTools = [
     name: 'flow_next',
     title: 'Next step of the flow',
     kind: 'read',
-    description: `What to do next, from the stored state (never guess the order): { request, state, next: { tool, args, why } | null, waitingOn?: [question ids], waitingOnWorkOrders?, parallel?: [other actionable requests], done }. Also comments: unanswered comment threads routed to you (reply to each; see commentsNote). With request: that request's next step; do it, then call flow_next again until done or waiting (then continue with parallel items, or report what the user must answer). Code { dirty: true } (uncommitted changes) or { noHead: true } (repo without a commit) makes the next step a commit (project commit policy: auto = commit now with the given message, ask = a question_ask); report it whenever you changed files since your last commit. Without request: every in-flight (not closed) request of this project with its next step (mine: only the ones you created).
+    description: `What to do next, from the stored state (never guess the order): { request, state, next: { tool, args, why } | null, waitingOn?: [question ids], waitingOnWorkOrders?, parallel?: [other actionable requests], done }. Also comments: unanswered comment threads routed to you (reply to each; see commentsNote). With request: that request's next step; do it, then call flow_next again until done or waiting (then continue with parallel items, or report what the user must answer). Decision { kind: restore_files | destructive_git | irreversible | tradeoff ("question | option | option"), detail }: before acting on something needing the user: next = question_ask; ask, END YOUR TURN. Code { dirty: true } (uncommitted changes) or { noHead: true } (repo without a commit) makes the next step a commit (project commit policy: auto = commit now with the given message, ask = a question_ask); report it whenever you changed files since your last commit. Without request: every in-flight (not closed) request of this project with its next step (mine: only the ones you created).
 Example: {"request":"fb-0007"}`,
-    input: z.object({ request: z.string().trim().min(1).optional(), mine: z.boolean().default(false), agent: z.string().trim().min(1).max(120).optional(), code: z.object({ repo: z.string().trim().min(1).max(200).optional(), commit: z.string().trim().min(7).max(40).optional(), dirty: z.boolean().optional(), noHead: z.boolean().optional() }).strict().optional() }).strict(),
+    input: z.object({ request: z.string().trim().min(1).optional(), mine: z.boolean().default(false), agent: z.string().trim().min(1).max(120).optional(), code: z.object({ repo: z.string().trim().min(1).max(200).optional(), commit: z.string().trim().min(7).max(40).optional(), dirty: z.boolean().optional(), noHead: z.boolean().optional() }).strict().optional(), decision: z.object({ kind: z.enum(['restore_files', 'destructive_git', 'irreversible', 'tradeoff']), detail: z.string().trim() }).strict().optional() }).strict(),
     run: async (a, ctx) => {
+      if (a.decision?.kind === 'tradeoff' && a.decision.detail.split('|').length < 3) throw new ToolError('validation', 'a tradeoff decision is "<question> | <option> | <option>"', 'give the question and 2-4 options separated by |', 'decision.detail');
       const me = a.agent ?? ctx.clientName;
-      const snap = await snapshot(ctx, a.agent, a.code);
+      const snap = await snapshot(ctx, a.agent, a.code, a.decision);
       const agentCall = ctx.principal?.kind !== 'ui';
       const myId = clientIdentity(ctx).id;
       const presence = newsOfProject(ctx)?.presence;

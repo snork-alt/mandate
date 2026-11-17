@@ -85,7 +85,7 @@ export const questionTools = [
     input: questionAskInputSchema,
     run: async (a, ctx) => {
       if (ctx.principal?.kind === 'ui') throw new ToolError('forbidden', 'questions are asked by agents', 'answer with question_answer');
-      // Inside the flow a question belongs to a request (standard confirmations may precede one: bootstrap drafts).
+      // Inside the flow a question belongs to a request (standard confirmations may precede one: bootstrap standard proposals).
       if (!a.request && a.purpose !== 'standard_confirmation' && (await inFlow(ctx))) {
         throw new ToolError('request_required', 'request_required: a question inside the Mandate flow belongs to a request', 'pass request: the request id (flow_next {} lists the requests in flight) and blocks: [what it blocks, if anything]', 'request');
       }

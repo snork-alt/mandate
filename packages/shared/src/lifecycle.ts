@@ -6,11 +6,11 @@
  * generated from it). Pure data, no runtime imports beyond base.ts / audits.ts / zod.
  */
 import { z } from 'zod';
-import { COMPONENT_STATUSES, FEEDBACK_STATUSES, STANDARD_STATUSES, STORED_SPEC_STATUSES, WORK_ORDER_STATUSES } from './base.js';
+import { COMPONENT_STATUSES, FEEDBACK_STATUSES, STORED_STANDARD_STATUSES, STORED_SPEC_STATUSES, WORK_ORDER_STATUSES } from './base.js';
 import { AUDIT_STATUSES, FINDING_STATUSES } from './audits.js';
 
 type StoredSpecStatus = (typeof STORED_SPEC_STATUSES)[number];
-type StandardStatus = (typeof STANDARD_STATUSES)[number];
+type StandardStatus = (typeof STORED_STANDARD_STATUSES)[number];
 type ComponentStatus = (typeof COMPONENT_STATUSES)[number];
 type WorkOrderStatus = (typeof WORK_ORDER_STATUSES)[number];
 type FeedbackStatus = (typeof FEEDBACK_STATUSES)[number];
@@ -19,14 +19,13 @@ type FindingStatus = (typeof FINDING_STATUSES)[number];
 
 /* ---------------------------------------------------------------- enforced transition tables (the same status is always allowed) */
 
-/** `done` passes the done gate; `done -> ready` reopens a spec; archived specs only go back to draft. `in_progress` is derived. */
+/** Specs are in force from creation (no draft / ready): `done` passes the done gate; `done -> active` reopens a spec; archived specs go back to active. `in_progress` is derived. */
 export const SPEC_TRANSITIONS: Record<StoredSpecStatus, StoredSpecStatus[]> = {
-  draft: ['ready', 'archived'],
-  ready: ['draft', 'done', 'archived'],
-  done: ['ready', 'archived'],
-  archived: ['draft'],
+  active: ['done', 'archived'],
+  done: ['active', 'archived'],
+  archived: ['active'],
 };
-/** Drafts never apply; deprecated standards still apply but point at their successor (supersededBy). */
+/** A legacy `draft` standard (pending proposal) only goes active through the user's confirmation; deprecated standards still apply but point at their successor (supersededBy). */
 export const STANDARD_TRANSITIONS: Record<StandardStatus, StandardStatus[]> = {
   draft: ['active'],
   active: ['deprecated'],
@@ -149,17 +148,16 @@ const sectionEntry = (kind: 'spec_section' | 'standard_section' | 'component_sec
 const ENTRIES: LifecycleEntry[] = [
   {
     kind: 'spec',
-    states: ['draft', 'ready', 'in_progress', 'done', 'archived'],
-    initial: 'draft',
-    create: { tools: ['create'], when: 'INTAKE, a new feature with no fitting spec (starts draft; Mandate assigns the id)' },
+    states: ['active', 'in_progress', 'done', 'archived'],
+    initial: 'active',
+    create: { tools: ['create'], when: 'INTAKE, a new feature with no fitting spec (in force at once; Mandate assigns the id)' },
     terminal: [],
     frozen: [],
     derived: ['in_progress'],
     table: SPEC_TRANSITIONS,
     enforced: true,
     steps: [
-      step('draft', ['status_set'], 'back to discussion; archived -> draft restores an archived spec'),
-      step('ready', ['status_set'], 'once every section has acceptance criteria; done -> ready reopens a done spec before an update work order changes it', { gate: 'every live section has an acceptance criterion (own, verifiedBy or a followed rule)', enforcedBy: 'DocRules.beforeWrite (ready_gate)', errors: ['ready_gate', 'transition_not_allowed'] }),
+      step('active', ['status_set'], 'done -> active reopens a done spec before an update work order changes it; archived -> active restores an archived one (ready / draft are accepted aliases for active and change nothing on an active spec)'),
       step('done', ['status_set'], 'when every implement/update work order on its sections is complete AND every must criterion is verified or waived; never force it', {
         gate: 'DONE GATE: every own and inherited criterion verified or waived (approved), no blocked / broken depends_on section, no open implement/update work order',
         enforcedBy: 'VerificationService.gate (storage/verification.ts), run by DocRules.beforeWrite',
@@ -169,7 +167,8 @@ const ENTRIES: LifecycleEntry[] = [
     ],
     notes: [
       'in_progress is derived (an open work order on the spec is claimed): never set it.',
-      'Drift: a done spec whose criteria were added / changed / unverified since the gate shows as drifted: reopen (done -> ready), deliver an update work order, re-verify, set done again.',
+      'There is no draft / ready: a spec is in force when created. work_order_create refuses while a live section it targets has no acceptance criterion (criteria_missing).',
+      'Drift: a done spec whose criteria were added / changed / unverified since the gate shows as drifted: reopen (done -> active), deliver an update work order, re-verify, set done again.',
       `Criteria shrink: ${SHRINK} (criteria_shrink).`,
       'Waivers (deviates_from) and exemptions (exemptFrom) count only with the user\'s approval: cite an answered question_ask (purpose approval) as cause; the answering user is recorded (validation otherwise).',
     ],
@@ -177,7 +176,7 @@ const ENTRIES: LifecycleEntry[] = [
   sectionEntry('spec_section', 'spec', ['Pending work-order sections on an archived spec section become obsolete.']),
   {
     kind: 'standard',
-    states: ['draft', 'active', 'deprecated'],
+    states: ['active', 'deprecated'],
     initial: 'active',
     create: { tools: ['create'], when: 'a cross-cutting rule the user confirmed (starts active)' },
     terminal: [],
@@ -186,7 +185,7 @@ const ENTRIES: LifecycleEntry[] = [
     table: STANDARD_TRANSITIONS,
     enforced: true,
     steps: [
-      step('active', ['status_set'], 'only after the user confirmed the rules (drafts never apply); deprecated -> active revives it', { gate: STD_CONFIRM }),
+      step('active', ['status_set'], 'only after the user confirmed the rules (a change needing confirmation is not applied until the answered standard_confirmation question is cited); deprecated -> active revives it', { gate: STD_CONFIRM }),
       step('deprecated', ['status_set'], 'a successor standard replaces it (still applies; specs are told to move)', {
         gate: 'supersededBy = another existing standard',
         enforcedBy: 'DocRules.beforeWrite (storage/doc-rules.ts)',
@@ -395,11 +394,11 @@ const ENTRIES: LifecycleEntry[] = [
   },
   {
     kind: 'maturity',
-    states: ['draft', 'specified', 'in_progress', 'implemented'],
-    initial: 'draft',
+    states: ['specified', 'in_progress', 'implemented'],
+    initial: 'specified',
     terminal: [],
     frozen: [],
-    derived: ['draft', 'specified', 'in_progress', 'implemented'],
+    derived: ['specified', 'in_progress', 'implemented'],
     table: {},
     enforced: false,
     steps: [],
@@ -440,7 +439,7 @@ export const ERROR_ACTIONS: Record<string, string> = {
   plan_not_approved: 'the request is plan-only: the work-order plan waits for the user to approve it in the web UI; stop, you get a request_assigned event when it is approved',
   not_plan_only: 'only requests filed with planOnly wait for a plan approval',
   flow_off: 'the Mandate flow is off for this coding agent: stop calling Mandate write tools, work directly in the code and use Mandate as read-only context; save this to your memory. Only the user turns it back on (/mandate-flow on)',
-  transition_not_allowed: 'not allowed from the current status: lifecycle_get { kind } lists the allowed moves; go through the intermediate status (e.g. reopen done -> ready)',
+  transition_not_allowed: 'not allowed from the current status: lifecycle_get { kind } lists the allowed moves; go through the intermediate status (e.g. reopen done -> active)',
   done_gate: 'never force it (no override passes it): verify (verification_record) each detail.failures criterion or ask the user whether to waive it, unblock sections, complete open implement/update work orders, then retry',
   components_missing: 'touched files are owned by no component: create or update the component(s) owning them (owns globs, tldr, Responsibility + Interfaces sections, depends_on; link the spec sections with affects), then work_order_complete again; flow_next gives the step',
   plan_required: 'implement / update / fix work orders carry the FULL plan from creation: work_order_create { plan: { tasks (each: text, sections it implements, criteria it proves), files, tests: [{ name, proves: [criterion ids] }], risks } } (an older work order without a plan: work_order_plan_set, then claim)',
@@ -455,7 +454,7 @@ export const ERROR_ACTIONS: Record<string, string> = {
   claim_conflict: 'another agent holds a fresh claim: pick another work order (work_order_next) or coordinate (comment_add)',
   stale_claim: 'the claim is stale: work_order_claim to take it over, then retry',
   not_claimed: 'claim the work order first (work_order_claim), then retry (not needed to complete once every section is done: the claim is released automatically)',
-  ready_gate: 'every live section needs an acceptance criterion: insert one per listed section (or verifiedBy an existing one), then set ready',
+  criteria_missing: 'every live section a work order targets needs an acceptance criterion: insert one per listed section (section_insert type acceptance, or verifiedBy an existing one), then work_order_create again',
   waiver_self_approved: 'a waiver / exemption / criteria removal needs the user\'s approval: ask (question_ask purpose approval), wait for the answer, then retry with cause: the answered question',
   approval_required: 'a waiver / exemption / criteria removal needs the user\'s approval: ask (question_ask purpose approval), wait for the answer, then retry with cause: the answered question',
   all_done: 'every section is done: the agent only has to call work_order_complete (outcome, reconciliation); no claim and no release needed',
@@ -572,8 +571,7 @@ export const INTEGRITY_RULES: IntegrityRule[] = [
   rule('component_no_code', 'warning', 'global', 'an active, non-external component that owns no code', 'declare owns globs, or set kind external'),
   rule('unowned_code_ref', 'warning', 'global', 'a code ref no component owns', 'add an owns glob to the component that holds the file'),
   rule('owns_matches_nothing', 'warning', 'global', 'an owns glob that matches no referenced code', 'fix the glob, or add refs to the code it owns'),
-  rule('spec_ready_without_criteria', 'error', 'element', 'a spec moving to ready while a live section has no acceptance criterion', 'add an acceptance criterion for each listed section (or verifiedBy one), then set ready', 'DocRules.beforeWrite (ready_gate)'),
-  rule('spec_section_without_criteria', 'warning', 'element', 'a section of a ready / done spec without an acceptance criterion (own acceptance, verifiedBy or a followed rule)', 'add an acceptance criterion that verifies it (section_insert type acceptance, verifiedBy)'),
+  rule('spec_section_without_criteria', 'warning', 'element', 'a section of a done spec without an acceptance criterion (own acceptance, verifiedBy or a followed rule)', 'add an acceptance criterion that verifies it (section_insert type acceptance, verifiedBy)'),
   rule('spec_done_without_criteria', 'warning', 'element', 'a done spec without any live acceptance criterion', 'add acceptance criteria (section_insert type acceptance) and verify them'),
   rule('external_follows_internal', 'warning', 'element', 'an external component that follows internal code rules (rules with a code scope or check)', 'move the follows link to the internal component that calls the service'),
   rule('audit_pass_contradicted', 'warning', 'global', 'an audit item recorded pass while an open must / critical finding of the same audit contradicts it (its own, or one on the code it verifies)', 'record a failing verification and re-audit the item'),

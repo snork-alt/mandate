@@ -19,7 +19,7 @@ async function setup() {
       id: 'login',
       title: 'Login',
       tags: ['security'],
-      status: 'ready',
+      status: 'active',
       sections: [
         { id: 'flow', title: 'Flow', body: 'x', verifiedBy: ['ac-rotate'] },
         crit('ac-rotate', 'Tokens rotate', 'Refresh rotates the token.'),
@@ -84,7 +84,7 @@ describe('verification', () => {
     expect(st).toMatchObject({ state: 'stale', staleReason: expect.stringMatching(/Flow/) });
 
     const matrix = await v.forStandard(await storage.standards.get('sec'));
-    expect(matrix.specs).toEqual([{ spec: 'login', title: 'Login', status: 'ready', states: { 'mandate://standards/sec/sections/ac-no-secrets': 'unverified' } }]);
+    expect(matrix.specs).toEqual([{ spec: 'login', title: 'Login', status: 'active', states: { 'mandate://standards/sec/sections/ac-no-secrets': 'unverified' } }]);
   });
 
   it('gates moving a spec to done until every own and inherited criterion is verified', async () => {

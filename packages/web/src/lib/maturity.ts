@@ -14,7 +14,7 @@ export function matchesMaturityFilter(s: { maturity?: SpecMaturity }, f: string[
 
 /**
  * "Maturity" sort: specs needing attention first: any overlay (worst first: failing, outdated, blocked; archived last),
- * then by step ascending (draft first), then title.
+ * then by step ascending (specified first), then title.
  */
 export function compareMaturity(a: { maturity?: SpecMaturity; title: string }, b: { maturity?: SpecMaturity; title: string }): number {
   const rank = (m?: SpecMaturity) => {
@@ -26,7 +26,7 @@ export function compareMaturity(a: { maturity?: SpecMaturity; title: string }, b
 }
 
 export const maturityOptions = (specs: { maturity?: SpecMaturity }[]) => [
-  ...(['draft', 'specified', 'in_progress', 'implemented'] as MaturityStep[]).map((s) => ({
+  ...(['specified', 'in_progress', 'implemented'] as MaturityStep[]).map((s) => ({
     value: s,
     label: MATURITY_LABELS[s],
     tone: STEP_TONE[s],

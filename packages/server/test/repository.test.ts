@@ -31,14 +31,14 @@ describe(`EntityRepository + GitStore (${testBackend})`, () => {
     expect(created.id).toBe('hello-world');
     const raw = await readFile(path.join(git.dir, 'specs/hello-world.md'), 'utf8');
     expect(raw).toBe(
-      '---\ntitle: Hello World\nstatus: draft\nsections:\n  - id: main\n    title: Main\n    type: markdown\n---\n\n<!-- @section main -->\n## Main\n\nHi\n',
+      '---\ntitle: Hello World\nstatus: active\nsections:\n  - id: main\n    title: Main\n    type: markdown\n---\n\n<!-- @section main -->\n## Main\n\nHi\n',
     );
 
     const updated = await storage.specs.update('hello-world', {
       sections: covered('changed'),
-      status: 'ready',
+      status: 'active',
     });
-    expect(updated).toMatchObject({ status: 'ready', tags: [] });
+    expect(updated).toMatchObject({ status: 'active', tags: [] });
     expect(bodyOf(await storage.specs.get('hello-world'))).toBe('changed');
 
     // Documents are archive-only (C3): delete is refused, archiving is a status.
@@ -63,7 +63,7 @@ describe(`EntityRepository + GitStore (${testBackend})`, () => {
     const t1 = new Date('2026-01-02T12:00:00Z');
     await storage.specs.create(spec('Timed', 'x'), { date: t0 });
     await storage.standards.create(std('Unrelated', ''), { date: t1 });
-    await storage.specs.update('timed', { status: 'ready', sections: covered('x') } as never, { date: t1, message: 'spec(timed): start', agent: 'claude@box', branch: 'spec/timed' });
+    await storage.specs.update('timed', { status: 'archived', sections: covered('x') } as never, { date: t1, message: 'spec(timed): start', agent: 'claude@box', branch: 'spec/timed' });
 
     const file = storage.specs.pathOf('timed');
     expect(await storage.history.meta(file)).toMatchObject({
@@ -90,7 +90,7 @@ describe(`EntityRepository + GitStore (${testBackend})`, () => {
     const storage = createStorage(git);
     await storage.specs.create(spec('Versioned', 'one'));
     const c1 = (await git.log(1))[0]!.id;
-    await storage.specs.update('versioned', { status: 'ready', sections: covered('one') } as never);
+    await storage.specs.update('versioned', { status: 'archived', sections: covered('one') } as never);
     const c2 = (await git.log(1))[0]!.id;
     // A hand-made deletion (documents cannot be deleted through the storage API).
     const { rm } = await import('node:fs/promises');
@@ -100,8 +100,8 @@ describe(`EntityRepository + GitStore (${testBackend})`, () => {
 
     expect(await git.resolveCommit(c1.slice(0, 7))).toBe(c1);
     expect(await git.resolveCommit('nope')).toBeNull();
-    expect(await git.readFileAt(c1, file)).toContain('status: draft');
-    expect(await git.readFileAt(c2, file)).toContain('status: ready');
+    expect(await git.readFileAt(c1, file)).toContain('status: active');
+    expect(await git.readFileAt(c2, file)).toContain('status: archived');
     expect(await git.readFileAt(c3, file)).toBeNull();
     expect(await git.readFileAt(c1, 'specs')).toBeNull(); // directory
     await expect(git.readFileAt('deadbeef', file)).rejects.toThrow(/unknown commit/);
@@ -110,8 +110,8 @@ describe(`EntityRepository + GitStore (${testBackend})`, () => {
     expect(created).toMatchObject({ commit: c1, status: 'added', before: null, base: null, older: null, newer: c2, index: 1, total: 3 });
     const modified = await storage.history.version(file, c2);
     expect(modified).toMatchObject({ status: 'modified', base: c1, older: c1, newer: c3, index: 2 });
-    expect(modified.before).toContain('draft');
-    expect(modified.after).toContain('ready');
+    expect(modified.before).toContain('active');
+    expect(modified.after).toContain('archived');
     const deleted = await storage.history.version(file, c3);
     expect(deleted).toMatchObject({ status: 'deleted', after: null, newer: null, index: 3 });
     const vsHead = await storage.history.version(file, c1, 'head');

@@ -18,7 +18,7 @@ import { componentCodec, specCodec, standardCodec } from './codecs.js';
 import { actorOf, ConflictError, type WriteContext } from './GitBackedRepository.js';
 import { approvalOf, type LinkService } from './links.js';
 import type { MarkdownDirRepository } from './MarkdownDirRepository.js';
-import { samePrincipal, sectionsWithoutCriteria, sectionUri, waiverPolicy, type Doc, type Kind, type Model } from './model.js';
+import { samePrincipal, sectionUri, waiverPolicy, type Doc, type Kind, type Model } from './model.js';
 import type { VerificationService } from './verification.js';
 
 class RuleError extends Error {
@@ -127,12 +127,6 @@ export class DocRules {
       const from = (current as StoredSpec | undefined)?.status;
       const to = (next as unknown as StoredSpec).status;
       if (from && from !== to && !SPEC_TRANSITIONS[from].includes(to)) throw new RuleError('invalid_transition', `${next.id}: ${from} -> ${to} is not allowed (allowed: ${SPEC_TRANSITIONS[from].join(', ') || 'none'})`, undefined, 409);
-      // Ready gate: a spec becomes ready only when every live section has a criterion (its own acceptance section,
-      // one it lists in verifiedBy, or an inherited rule it follows).
-      if (from && from !== to && to === 'ready') {
-        const missing = sectionsWithoutCriteria(next as unknown as StoredSpec, m);
-        if (missing.length) throw new RuleError('ready_gate', `${next.id} cannot be ready: sections without an acceptance criterion: ${missing.join(', ')}`, missing, 409);
-      }
     }
     if (kind === 'components') {
       const c = next as unknown as StoredComponent;

@@ -78,7 +78,7 @@ function stepsFor(s: SeedSpec, index: number): Step[] {
       tags: s.tags,
       owner: s.owner,
       repo: s.repo,
-      status: 'draft',
+      status: 'active',
       sections: first ? [draft(first)] : [],
     },
   });
@@ -112,11 +112,11 @@ function stepsFor(s: SeedSpec, index: number): Step[] {
     add(DAY, { ...human, message: `spec(${s.id}): archive\n\nReplaced by the CSV export.` }, { update: () => ({ status: 'archived' }) });
     return steps;
   }
-  if (s.final === 'draft') return steps;
+  
 
   // Ready gate: every section has an acceptance criterion before ready (criteria written with the ready step).
-  add(5 * HOUR, { ...human, message: `spec(${s.id}): ready for implementation` }, { update: ({ current }) => ({ status: 'ready', sections: withCriteria(s.id, current) }) });
-  if (s.final === 'ready') return steps;
+  add(5 * HOUR, { ...human, message: `spec(${s.id}): ready for implementation` }, { update: ({ current }) => ({ sections: withCriteria(s.id, current) }) });
+  if (s.final === 'active') return steps;
 
   // In progress = a claimed work order (claims live on work orders; see WORK_ORDER_CLAIMS).
   if (s.final === 'in_progress' || s.final === 'in_progress_stale') return steps;
@@ -148,7 +148,7 @@ function stepsFor(s: SeedSpec, index: number): Step[] {
       }),
     });
     add(DAY, { ...human, message: `spec(${s.id}): reopen\n\nUsage was double-counted when the flush job retried; reporting must be idempotent.` }, {
-      update: () => ({ status: 'ready' }),
+      update: () => ({ status: 'active' }),
     });
   }
   return steps;
@@ -287,7 +287,7 @@ async function main() {
   // audit-log got its acceptance criteria after it was done: re-complete it so its gate snapshot covers them
   // (user-sessions is left as is: done, verified, but Drifted because criteria were added after done).
   const reDone = () => new Date(NOW - 5 * MIN + (linkMinute += 0.2) * MIN);
-  await storage.specs.update('audit-log', { status: 'ready' } as never, { date: reDone(), author: person('giulia'), message: 'spec(audit-log): reopen to re-run the gate with the new criteria' });
+  await storage.specs.update('audit-log', { status: 'active' } as never, { date: reDone(), author: person('giulia'), message: 'spec(audit-log): reopen to re-run the gate with the new criteria' });
   await storage.specs.update('audit-log', { status: 'done' } as never, { date: reDone(), author: person('giulia'), message: 'spec(audit-log): done (gate re-run)' });
   // Richer standards: rule sections, lifecycle (deprecated rate-limit-headers, draft observability).
   // Rules added after a spec was done make it Drifted (never retroactively failed).

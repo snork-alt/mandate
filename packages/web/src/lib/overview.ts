@@ -93,7 +93,6 @@ export const specsFiltered = (...maturity: string[]) => `/specs?maturity=${matur
 
 /** Maturity step colours (the same as the Specs summary bar). */
 export const STEP_COLOR: Record<string, string> = {
-  draft: 'var(--app-text-faint)',
   specified: 'var(--app-text-muted)',
   in_progress: 'var(--mantine-color-lilac-5, var(--mantine-primary-color-filled))',
   implemented: 'var(--mantine-color-blue-5)',

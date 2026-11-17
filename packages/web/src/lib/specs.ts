@@ -2,14 +2,13 @@ import { useEffect, useState } from 'react';
 import type { Claim, Priority, Spec, SpecStatus, WorkOrderKind } from '@mandate/shared';
 
 export const SPEC_STATUS_META: Record<SpecStatus, { label: string; color: string }> = {
-  draft: { label: 'Draft', color: 'var(--app-text-faint)' },
-  ready: { label: 'Ready', color: 'var(--app-text-muted)' },
+  active: { label: 'Active', color: 'var(--app-text-muted)' },
   in_progress: { label: 'In progress', color: 'var(--mantine-color-lilac-6)' },
   done: { label: 'Done', color: 'var(--mantine-color-teal-6)' },
   archived: { label: 'Archived', color: 'var(--app-text-faint)' },
 };
 /** Display / grouping order: active work first. */
-export const SPEC_STATUS_ORDER: SpecStatus[] = ['in_progress', 'ready', 'draft', 'done', 'archived'];
+export const SPEC_STATUS_ORDER: SpecStatus[] = ['in_progress', 'active', 'done', 'archived'];
 
 export const PRIORITY_META: Record<Priority, { label: string; short: string }> = {
   p0: { label: 'Urgent', short: 'P0' },

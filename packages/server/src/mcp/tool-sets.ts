@@ -94,7 +94,7 @@ Example: {"of":"work-orders","status":["pending"],"spec":"login-sso"}`,
     kind: 'write',
     refField: null,
     description: `Create a spec, standard or component (of). Mandate assigns the id from the title: use the returned ref; never pass id. Sections are optional here (section_insert).
-specs: starts draft (status_set to move it); addresses / workOrder like other doc edits. standards: appliesTo rules (repo:x, tag:x, category:x) make it apply to matching specs. components: kind service|module|library|datastore|external; owns: code path globs per repo (most specific wins in code_owner); layer ui|api|service|domain|data|infra or a slug (default: inherited from parent or derived from depends_on); parent: the containing component (a tree, not archived). Architecture level, few: reuse first (architecture_get). Typical sections: responsibility, interfaces, context (mermaid), rationale.`,
+specs: addresses / workOrder like other doc edits. standards: appliesTo rules (repo:x, tag:x, category:x) make it apply to matching specs. components: kind service|module|library|datastore|external; owns: code path globs per repo (most specific wins in code_owner); layer ui|api|service|domain|data|infra or a slug (default: inherited from parent or derived from depends_on); parent: the containing component (a tree, not archived). Architecture level, few: reuse first (architecture_get). Typical sections: responsibility, interfaces, context (mermaid), rationale.`,
     doc: { specs: 'spec_create', standards: 'standard_create', components: 'component_create' },
   },
   {
@@ -118,7 +118,7 @@ specs: starts draft (status_set to move it); addresses / workOrder like other do
     title: 'Archive a document or section',
     kind: 'write',
     refField: 'ref',
-    description: `Archive (never delete) a spec, a component or a section of a spec / standard / component (reason optional). Spec: cancels its open work orders; status_set draft restores it. Component (final): leaves architecture_get, its owns globs stop claiming code, new links to it are rejected. Section: stays in the document (ids never reused), no longer in force; pending work-order sections on a spec section become obsolete. Standards: status_set deprecated (supersededBy).`,
+    description: `Archive (never delete) a spec, a component or a section of a spec / standard / component (reason optional). Spec: cancels its open work orders; status_set active restores it. Component (final): leaves architecture_get, its owns globs stop claiming code, new links to it are rejected. Section: stays in the document (ids never reused), no longer in force; pending work-order sections on a spec section become obsolete. Standards: status_set deprecated (supersededBy).`,
     doc: { specs: 'spec_archive', components: 'component_archive' },
     section: { specs: 'spec_section_archive', standards: 'standard_section_archive', components: 'component_section_archive' },
     noTarget: { standards: 'a whole standard is not archived: status_set { status: "deprecated", supersededBy } (or archive its sections)' },

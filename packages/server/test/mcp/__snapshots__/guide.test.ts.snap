@@ -20,9 +20,9 @@ Call \`project_info\`; follow \`effective\` (\`reason\` says why).
 ## Hard rules
 
 1. **Ask via Mandate, only when necessary** (ambiguity that changes behaviour, conflict with a spec / standard, irreversible step, standard confirmation; else decide and \`request_decision_add\`): \`question_ask { request, blocks }\` (options + recommended), not your harness's question tool; keep working on what
-   doesn't depend on it (\`flow_next\` skips what it blocks); answers arrive as \`news\` (rule 10) (if the user is chatting with you, you may also ask in chat).
+   doesn't depend on it (\`flow_next\` skips what it blocks); answers arrive as \`news\` (rule 10). Chat questions never count: never wait on chat; needs-the-user decisions (restore deleted files, destructive git, irreversible, trade-offs): \`flow_next { request, decision: { kind, detail } }\` → \`question_ask\`, end your turn.
 2. **Standards need explicit confirmation**, even if the user says "don't ask": before ANY standard write
-   (inferred drafts excepted; activating them needs it), \`question_ask\` purpose \`standard_confirmation\` (the
+   (no draft standards), \`question_ask\` purpose \`standard_confirmation\` (the
    standard, the exact change: rule text, level, scope; why; Approve / Edit / Skip; title = name, badge = level,
    evidence), then cite the answered question as \`cause\` (questions in chat: \`confirmedByUser: true\`).
 3. **Requests need no approval; waivers do**: a waiver (\`deviates_from\`), exemption or criteria removal on a done / claimed spec needs the user: \`question_ask\` purpose \`approval\`, cite the answered question as \`cause\`. Never approve for the user.
@@ -38,8 +38,7 @@ Call \`project_info\`; follow \`effective\` (\`reason\` says why).
    (no token in env: \`upload_url_create\`); never paste file contents into tool calls.
 10. **News**: any reply may carry \`news\` about your own work; act on it before continuing (answered question →
    \`get\` it, continue the blocked work; work order cancelled / reassigned / claim released → stop that work; claim expired → reclaim it or stop;
-   findings / changes requested → address them; waiver rejected → follow the standard; draft standard dropped → don't
-   rely on it; flow changed → follow the new instructions, update memory). An item stays until you read its ref or
+   findings / changes requested → address them; waiver rejected → follow the standard; flow changed → follow the new instructions, update memory). An item stays until you read its ref or
    \`news_ack\` it; \`news_list\` is the history (filters, paging). Pushed events (channel / wake-up): never poll.
    Else, all blocked: \`news_list\` \`{ unread: true, wait: 300 }\` up to 6 times, then tell the user and stop;
    never wait while other work is possible.
@@ -53,7 +52,7 @@ Call \`project_info\`; follow \`effective\` (\`reason\` says why).
 2. Fit: \`spec_match { request, for: <request id> }\` (records the match; the work-order gate needs it), then \`get\` (spec or section refs) / \`graph_neighbors\`. Decide: covered · extend section X · new
    section in spec Y · new spec · cross-cutting rule (\`list { of: "standards" }\`, \`standard_usage\`) · partial match (extend + a linked new spec for the uncovered part) · several. A NEW spec only with \`request_decision_add\` "no existing spec covers ...".
    Then \`standard_match { request, files, for }\` (standards by appliesTo for the files and by meaning) and \`component_match { request, files, for }\` (components by meaning and by the code they own): each is recorded on the request.
-3. Take it on: update the matched spec sections (default), then link the changed sections to the matched standards (\`follows\`; inherited criteria; a standard you cannot meet: waiver via an \`approval\` question; a new convention: a draft standard proposal that needs the user's confirmation and never blocks). Edit with \`addresses: [<request ref>]\`: \`create\`, \`section_insert\`, \`section_update\`. Every new or
+3. Take it on: update the matched spec sections (default), then link the changed sections to the matched standards (\`follows\`; inherited criteria; a standard you cannot meet: waiver via an \`approval\` question; a new convention: a standard_confirmation question; never blocks). Edit with \`addresses: [<request ref>]\`: \`create\`, \`section_insert\`, \`section_update\`. Every new or
    changed section needs a criterion: a \`type: acceptance\` section (method test | manual | review | metric) in its
    \`verifiedBy\`. \`section_link_add\`: \`follows\` (standards), \`depends_on\` (specs), \`affects\` (components). Rules
    (\`section_insert\` on a standard): level must | should | may, Do / Don't examples, scope, check.
@@ -61,7 +60,7 @@ Call \`project_info\`; follow \`effective\` (\`reason\` says why).
 4. Components: update the matched component (extend \`owns\` / its Interfaces section: \`update_meta\` / \`section_update\` on the component); a new one (\`create { of: "components" }\`: owns globs, layer, parent) only with \`request_decision_add\` "no existing component covers ...". \`affects\` links from the spec sections that change it,
    \`follows\` its standards, \`owns\` code (or \`kind: external\`). Architecture level, few (reuse first; not one per
    folder or class; depth ≤ 2), one responsibility each, non-overlapping \`owns\`, acyclic \`depends_on\` by layer.
-5. Plan first: read the code to change, \`rules_for_code\` for those paths and the owning components. Then \`status_set\` ready → \`work_order_create\` (refused with \`flow_out_of_order\` until spec_match, standard_match and component_match are recorded and acted on and a spec / standard change addresses the request; fast path exempt) (kind implement | update, the sections, \`reason: [<request ref>]\`) with the
+5. Plan first: read the code to change, \`rules_for_code\` for those paths and the owning components. Then \`work_order_create\` (refused with \`criteria_missing\` without a criterion per targeted section, and \`flow_out_of_order\` until spec_match, standard_match and component_match are recorded and acted on and a spec / standard change addresses the request; fast path exempt) (kind implement | update, the sections, \`reason: [<request ref>]\`) with the
    FULL concrete \`plan\`: \`tasks\` (text naming files / functions, \`sections\` it implements, \`proves\` criteria; every targeted section needs a task, every criterion a test task), \`files\`, \`tests\` (name, ref, \`proves\`: the acceptance criteria ids each test proves; every criterion
    needs one) and \`risks\`; the plan lists the components it creates / updates and the standards it follows. Keep it current: \`work_order_plan_set\` (task ids are kept). Never use your harness's plan mode and never ask "shall I proceed?" inside /mandate: plan only (\`planOnly\`) is the user's review point. The request closes by itself when its work orders complete (else \`request_close\`).
 
@@ -101,8 +100,8 @@ Follow \`effective\` \`commit\` / \`branch\` / \`push\` (\`instructions\` has th
 
 ## States (transitions and gates: \`lifecycle_get { kind }\`)
 
-- Never set derived states (\`in_progress\`, maturity). Spec \`ready\` needs a criterion per section (\`ready_gate\`).
-- Changing a done spec: \`done → ready\`, an update work order, re-verify, \`done\` again.
+- Never set derived states (\`in_progress\`, maturity). No draft / ready: specs are active when created (\`ready\` = alias of \`active\`).
+- Changing a done spec: \`done → active\`, an update work order, re-verify, \`done\` again.
 - Requests: closed automatically when their work orders complete; else \`request_close\` applied (after the last write that addresses it), rejected with a reason, or duplicate. Closed is immutable.
 - Waivers, exemptions and criteria removals on done / claimed specs need the user's answer to an \`approval\` question (rule 3).
 - Standards: deprecate with \`supersededBy\`. Components: deprecate before archiving; archive children first.

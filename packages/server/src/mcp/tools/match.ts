@@ -294,7 +294,7 @@ Example: {"request":"let users stay signed in for 30 days","files":["app:src/aut
         candidates,
         suggestion: {
           decision,
-          note: decision === 'follow' ? 'Link the changed spec sections to these standards (section_link_add rel follows) so they inherit the criteria; read the rules before coding (rules_for_code).' : 'No standard applies: nothing to follow. A convention this request introduces: propose a draft standard (needs the user\'s confirmation; it never blocks the work).',
+          note: decision === 'follow' ? 'Link the changed spec sections to these standards (section_link_add rel follows) so they inherit the criteria; read the rules before coding (rules_for_code).' : 'No standard applies: nothing to follow. A convention this request introduces: propose it through a standard_confirmation question (needs the user\'s confirmation; it never blocks the work).',
         },
         semantic: res.semantic,
       };

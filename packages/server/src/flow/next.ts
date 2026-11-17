@@ -42,8 +42,45 @@ export type FlowState =
   | 'comments'
   | 'outdated'
   | 'plan_ready'
+  | 'decision'
   | 'waiting'
   | 'done';
+
+/** What the agent reports it is about to do that needs the user (flow_next { decision }). */
+export interface FlowDecision {
+  kind: 'restore_files' | 'destructive_git' | 'irreversible' | 'tradeoff';
+  /** What exactly (files, command, the choice). */
+  detail: string;
+}
+
+const DECISION_DEFAULTS: Record<FlowDecision['kind'], { header: string; ask: (d: string) => string; options: { label: string; description: string }[] }> = {
+  restore_files: { header: 'Restore', ask: (d) => `Files were deleted in the working tree (${d}). Restore them?`, options: [{ label: 'Restore them', description: 'Bring the deleted files back' }, { label: 'Leave them deleted', description: 'The deletion is intended' }] },
+  destructive_git: { header: 'Git change', ask: (d) => `This needs a destructive git operation: ${d}. May I run it?`, options: [{ label: 'Go ahead', description: 'Run it as described' }, { label: 'Do not', description: 'Find another way' }] },
+  irreversible: { header: 'Irreversible', ask: (d) => `This step cannot be undone: ${d}. May I do it?`, options: [{ label: 'Go ahead', description: 'Do it as described' }, { label: 'Do not', description: 'Skip it' }] },
+  tradeoff: { header: 'Decision', ask: (d) => d, options: [] },
+};
+
+/**
+ * A step that needs the user's decision: the question to ask through Mandate (purpose decision, blocks the work order or
+ * the request), pre-written. The agent ends its turn; the answer wakes it. Asking in chat does not count.
+ */
+function decisionStep(f: Feedback, target: string, d: FlowDecision, snap: FlowSnapshot): { step?: FlowStep; answer?: string } {
+  const def = DECISION_DEFAULTS[d.kind];
+  // tradeoff: "question | option | option"; the other kinds carry the options Go ahead / Do not (or Restore / Leave).
+  const parts = d.detail.split('|').map((x) => x.trim()).filter(Boolean);
+  const question = def.ask(d.kind === 'tradeoff' ? parts[0] ?? d.detail.trim() : d.detail.trim());
+  const existing = snap.questions.find((q) => q.purpose === 'decision' && (q.blocks ?? []).includes(target) && q.questions[0]?.question === question && q.status !== 'cancelled' && q.status !== 'superseded' && q.status !== 'expired');
+  if (existing?.status === 'answered') return { answer: answerText(existing.answer?.answers[existing.questions[0]!.id]) };
+  if (existing) return {};
+  const options = d.kind === 'tradeoff' ? parts.slice(1, 5).map((o) => ({ label: o.slice(0, 60), description: o })) : def.options;
+  return {
+    step: {
+      tool: 'question_ask',
+      args: { purpose: 'decision', request: f.id, blocks: [target], blocking: true, questions: [{ header: def.header, question, options, ...(options[0] ? { recommended: options[0].label } : {}) }] },
+      why: 'This needs the user\'s decision. Ask it with this question_ask (it shows in Waiting for you and blocks the work), then END YOUR TURN: the answer wakes you (flow_next again). A question asked in chat does not count; never wait in chat and never decide it yourself.',
+    },
+  };
+}
 
 export interface FlowStep {
   tool: string;
@@ -63,6 +100,8 @@ export interface FlowItem {
   waitingOn?: string[];
   /** Work orders (of other requests) this one waits for, with the request that holds each. */
   waitingOnWorkOrders?: { workOrder: string; request?: string; claimedBy?: string; why: string }[];
+  /** The user's answer to the decision the agent reported (act on it). */
+  decisionAnswer?: string;
   /** Git rules for this work (commit mode, branch, push, the commit message to use). */
   git?: { commit: string; branch: string; push: string; message?: string };
   done: boolean;
@@ -105,6 +144,8 @@ export interface FlowSnapshot {
   outdated?: Map<string, Record<string, { implementedBy?: string; changedBy?: string; changedAt?: string; changedCommit?: string }>>;
   /** Sections whose upstream item changed ("Upstream changed"), keyed by the upstream section URI: the dependent sections and the change summaries. */
   dependents?: Map<string, { spec: string; section: string; summaries: (string | null)[] }[]>;
+  /** A decision the agent says it needs from the user (flow_next `decision`): answered through a Mandate question, never in chat. */
+  decision?: FlowDecision;
   /** Git / components context (project settings and what the agent reported); absent: no git guidance. */
   git?: FlowGit;
   /** The calling agent (claims by other agents are not yours); unknown: every claim is assumed to be yours. */
@@ -168,7 +209,9 @@ export function progressOf(f: Feedback, snap: FlowSnapshot): FlowProgress | unde
 export function flowFor(f: Feedback, snap: FlowSnapshot): FlowItem {
   const now = snap.now ?? Date.now();
   const progress = progressOf(f, snap);
+  let decisionAnswer: string | undefined;
   const item = (state: FlowState, next: FlowStep | null, extra: Partial<FlowItem> = {}): FlowItem => ({
+    ...(decisionAnswer !== undefined ? { decisionAnswer } : {}),
     ...(progress ? { progress } : {}),
     request: { id: f.id, ref: reqRef(f.id), kind: f.kind, status: f.status, summary: summaryOf(f), ...(f.createdBy ? { createdBy: f.createdBy } : {}), ...(f.source ? { source: f.source } : {}), ...(f.assignee ? { assignee: f.assignee } : {}), ...(f.startedBy ? { startedBy: f.startedBy } : {}), ...(f.priority ? { priority: f.priority } : {}), ...(f.planOnly ? { planOnly: true } : {}) },
     ...(f.assignee && !f.startedBy && f.status !== 'closed' ? { queued: true } : {}),
@@ -191,6 +234,11 @@ export function flowFor(f: Feedback, snap: FlowSnapshot): FlowItem {
 
   const mine = snap.workOrders.filter((w) => w.reason.includes(f.id));
   const live = mine.filter(isOpenWo);
+  if (snap.decision) {
+    const r = decisionStep(f, live[0] ? woRef(live[0].id) : reqRef(f.id), snap.decision, snap);
+    if (r.step) return item('decision', r.step);
+    if (r.answer !== undefined) decisionAnswer = r.answer;
+  }
   const waiting = new Set<string>();
   const waitWos: NonNullable<FlowItem['waitingOnWorkOrders']> = [];
 

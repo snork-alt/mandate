@@ -665,7 +665,7 @@ export class AuditService {
     const m = await this.deps.model();
     const t = await this.targetDoc(input.target, m);
     if (t.spec?.status === 'archived') throw invalid(`${t.uri} is archived`);
-    if (t.std?.status === 'draft') throw invalid(`${t.uri} is a draft standard (it applies nowhere yet)`);
+    if (t.std?.status === 'draft') throw invalid(`${t.uri} is a proposed standard (it applies nowhere until confirmed)`);
     const commit = await this.deps.git.resolveCommit(input.commit ?? 'HEAD');
     if (!commit) throw invalid(input.commit ? `unknown commit '${input.commit}'` : 'the repository has no commits');
     const plan = await this.plan(t.uri, m);

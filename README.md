@@ -80,10 +80,12 @@ it, the standards it follows and the code it owns.
 <img src="docs/media/overview.gif" alt="The Mandate overview: spec maturity across the project, what needs attention, and questions from coding agents waiting for a decision" />
 
 The Overview answers "how far along are we, and what is waiting on me?". The maturity bar shows every spec on the ladder
-*Draft → Specified → In progress → Implemented → Audited*, with overlays for **failing**, **drifted**,
+*Specified → In progress → Implemented* (the audit is a separate indicator), with overlays for **failing**, **drifted**,
 **blocked** and **stale**. **Action needed** collects every human decision in one list: open questions from agents,
-legacy waivers, draft standards, stale claims, drifted done specs, contradicted audits and integrity issues. **In progress**
+legacy waivers, proposed standards awaiting your confirmation, stopped agents (idle with no question open), stale claims, drifted done specs, contradicted audits and integrity issues. **In progress**
 shows claimed work orders with their branches and heartbeats; **Health** shows verification and audit coverage.
+
+There is no draft mode: specs and components are in force from the moment they are created (statuses `active`, `done`, `archived`; `in_progress` is derived). A work order can only be created once every section it targets has an acceptance criterion. A standard change that needs your confirmation is simply not applied until you answer the agent's `standard_confirmation` question. A work order's own spec edits (the final "reconcile the spec" task) are part of its delivery: the sections it implemented are not Outdated afterwards, only later or unrelated edits are (`implementedCommit` = the spec version the implementation matches).
 
 Agents ask you questions **asynchronously** (`question_ask`): they keep working on what doesn't depend on the answer, and
 you answer in the UI when you get to it. An answered question becomes the recorded proof for the write it decides, for

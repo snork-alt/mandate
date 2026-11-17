@@ -120,7 +120,7 @@ describe('over MCP', () => {
     const one = await fx.call('lifecycle_get', { kind: 'spec' });
     expect(one.isError).toBe(false);
     expect(one.body.derived).toEqual(['in_progress']);
-    expect(one.body.steps.find((s: { to: string }) => s.to === 'done').from).toEqual(['ready']);
+    expect(one.body.steps.find((s: { to: string }) => s.to === 'done').from).toEqual(['active']);
     expect(one.body.errorActions.done_gate).toBe(ERROR_ACTIONS.done_gate);
     // enforcedBy (server internals) is not returned to agents.
     expect(JSON.stringify(one.body)).not.toContain('enforcedBy');
@@ -144,6 +144,7 @@ describe('over MCP', () => {
     const id = `lc-${Date.now().toString(36)}`;
     const created = await fx.call('spec_create', { agent: 'lc@test', id, title: `Spec ${id}` });
     expect(created.isError).toBe(false);
+    await fx.call('spec_status_set', { agent: 'lc@test', ref: id, status: 'archived' });
     const r = await fx.call('spec_status_set', { agent: 'lc@test', ref: id, status: 'done' });
     expect(r.body.error.code).toBe('transition_not_allowed');
     expect(r.body.error.hint).toBe(ERROR_ACTIONS.transition_not_allowed);

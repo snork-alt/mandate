@@ -190,7 +190,7 @@ export function StandardDetailPage() {
   );
 }
 
-/** Lifecycle pill: Draft / Active / Deprecated (+ not in force yet). */
+/** Lifecycle pill: Proposed (legacy pending) / Active / Deprecated (+ not in force yet). */
 function StandardStatusPill({ std }: { std: Standard }) {
   const status = std.status ?? 'active';
   if (status === 'active' && std.effectiveFrom && Date.parse(std.effectiveFrom) > Date.now()) {
@@ -198,12 +198,12 @@ function StandardStatusPill({ std }: { std: Standard }) {
   }
   return (
     <span className="lifecycle-badge" data-status={status}>
-      {status === 'draft' ? 'Draft' : status === 'deprecated' ? 'Deprecated' : 'Active'}
+      {status === 'draft' ? 'Proposed' : status === 'deprecated' ? 'Deprecated' : 'Active'}
     </span>
   );
 }
 
-/** Banner for deprecated (points at the successor) and draft (never applies) standards. */
+/** Banner for deprecated (points at the successor) and proposed (pending, never applies) standards. */
 function LifecycleBanner({ std }: { std: Standard }) {
   if (std.status === 'deprecated') {
     return (
@@ -220,7 +220,7 @@ function LifecycleBanner({ std }: { std: Standard }) {
   if (std.status === 'draft') {
     return (
       <Alert color="gray" variant="light" radius="md" mb="md" icon={<IconPencil size={16} />}>
-        Draft: this standard does not apply to any spec until it is activated.
+        Proposed: this standard does not apply to any spec until you confirm it (your coding agent asks you through a standard_confirmation question).
       </Alert>
     );
   }

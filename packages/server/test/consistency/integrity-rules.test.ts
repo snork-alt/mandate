@@ -157,16 +157,9 @@ const CASES: Case[] = [
     bad: () => ({ m: { ...baseModel(), components: patch(baseModel().components!, 'svc', (c) => ({ ...c, owns: [{ repo: 'app', paths: ['src/**', 'lib/**'] }] })) } }),
   },
   {
-    rule: 'spec_ready_without_criteria',
-    // Good: the spec is still a draft with an uncovered section; the write moves it to ready.
-    good: () => ({ m: withSpec(baseModel(), spec('app', [...sections(baseModel(), 'app'), { id: 'bare', title: 'Bare', body: 'b' }], { status: 'draft' })) }),
-    bad: () => ({ ...written(CASES.find((c) => c.rule === 'spec_ready_without_criteria')!), opts: { readyTransitions: new Set(['app']) } }),
-    write: () => ['specs', spec('app', [...sections(baseModel(), 'app'), { id: 'bare', title: 'Bare', body: 'b' }], { status: 'ready' })],
-  },
-  {
     rule: 'spec_section_without_criteria',
     good,
-    bad: () => ({ m: withSpec(baseModel(), spec('app', [...sections(baseModel(), 'app'), { id: 'bare', title: 'Bare', body: 'b' }])) }),
+    bad: () => ({ m: withSpec(baseModel(), spec('app', [...sections(baseModel(), 'app'), { id: 'bare', title: 'Bare', body: 'b' }], { status: 'done' })) }),
   },
   {
     rule: 'spec_done_without_criteria',

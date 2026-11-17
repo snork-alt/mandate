@@ -222,7 +222,7 @@ export function GettingStartedModal({
               <PathCard selected={path === 'existing'} onSelect={() => setPath('existing')} icon={<IconCode size={22} stroke={1.7} />} title="Existing codebase" testId="gs-existing">
                 <div className="gs-pd">Bootstrap it. Open your coding agent in the code repository and run the command.</div>
                 <ul className="gs-bul">
-                  {['Maps the components of your code', 'Drafts specs and standards from it', 'Asks you its decisions in Mandate', 'Everything starts as a draft you review in Actions'].map((t) => (
+                  {['Maps the components of your code', 'Writes specs from it and proposes standards', 'Asks you its decisions in Mandate', 'Standards are proposed to you and apply once you confirm'].map((t) => (
                     <li key={t}>
                       <IconCheck size={14} stroke={2.4} />
                       {t}

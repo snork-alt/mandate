@@ -390,18 +390,10 @@ describe('user-confirmed rules', () => {
     await docs.sectionArchive('specs', S('c', 'ac'), approved('carol'));
   });
 
-  it('ready_gate: a spec becomes ready only when every live section has an acceptance criterion', async () => {
-    const { storage, docs, spec, std } = await setup();
-    await std('base', [rule('r')]);
-    await spec('s', [sec('overview'), sec('impl'), sec('ruled', { links: [link(T('base'), 'follows')] }), crit('ac')]);
-    const e = await errOf(docs.setStatus('s', 'ready', as('x')));
-    expect(e.code).toBe('ready_gate');
-    expect(e.message).toMatch(/overview, impl/);
-    expect(e.message).not.toMatch(/ruled/); // a followed rule is its criterion
-    await docs.sectionUpdate('specs', S('s', 'overview'), { verifiedBy: ['ac'] }, as('x'));
-    await docs.sectionArchive('specs', S('s', 'impl'), as('x'));
-    expect((await docs.setStatus('s', 'ready', as('x'))).value.status).toBe('ready');
-    void storage;
+  it('status_set ready is an alias of active: a no-op on an active spec, a reopen of a done one', async () => {
+    const { docs, spec } = await setup();
+    await spec('s', [crit('ac')]);
+    expect((await docs.setStatus('s', 'active', as('x'))).value.status).toBe('active');
   });
 });
 

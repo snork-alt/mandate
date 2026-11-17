@@ -53,8 +53,9 @@ async function newSpec(opts: { criteria?: boolean; title?: string } = {}) {
     id,
     title: opts.title ?? `Spec ${id}`,
     summary: 'A test spec.',
+    tldr: 'A spec for the tests.',
     sections: [
-      // Ready gate: every section has a criterion (verifiedBy the acceptance section).
+      // Work orders need a criterion per section: every section has a criterion (verifiedBy the acceptance section).
       { id: 'overview', title: 'Overview', summary: 'What it does.', body: 'The overview.', ...(opts.criteria === false ? {} : { verifiedBy: ['ac-works'] }) },
       { id: 'design', title: 'Design', summary: 'How it works.', body: 'The design.', ...(opts.criteria === false ? {} : { verifiedBy: ['ac-works'] }) },
       ...(opts.criteria === false ? [] : [{ id: 'ac-works', title: 'It works', type: 'acceptance', method: 'test', summary: 'The feature works.', body: 'A test proves it works.' }]),
@@ -143,7 +144,7 @@ describe('specs and standards', () => {
 
     const meta = await ok('spec_update_meta', { ref: id, tags: ['api'], priority: 'p1', category: null });
     expect(meta.document).toMatchObject({ tags: ['api'], priority: 'p1' });
-    expect((await ok('spec_status_set', { ref: id, status: 'ready' })).status).toBe('ready');
+    expect((await ok('spec_status_set', { ref: id, status: 'ready' })).status).toBe('active'); // alias of active
     expect((await ok('spec_archive', { ref: id, reason: 'superseded' })).status).toBe('archived');
   }, 60_000);
 
@@ -174,10 +175,10 @@ describe('tldr', () => {
     const c = await ok('spec_create', { id: sid, title: `Spec ${sid}`, tldr: TLDR, sections: [{ id: 'a', title: 'A', summary: 'Part a.', body: 'Body a.' }] });
     expect(c.document.tldr).toBe(TLDR);
     expect(JSON.stringify(await read('get', { ref: `mandate://specs/${sid}` }))).toContain('Lets people sign in once');
-    expect(c.warnings.join(' ')).not.toMatch(/no tldr/); // drafts never warn
+    expect(c.warnings.join(' ')).not.toMatch(/no tldr/);
     const cleared = await ok('spec_update_meta', { ref: sid, tldr: null });
     expect(cleared.document.tldr).toBeUndefined();
-    expect(cleared.warnings.join(' ')).not.toMatch(/no tldr/); // still a draft
+    expect(cleared.warnings.join(' ')).toMatch(/no tldr/); // specs are in force from creation: no tldr is advised
     const again = await ok('spec_update_meta', { ref: sid, tldr: 'Back again.' });
     expect(again.document.tldr).toBe('Back again.');
     expect((await fail('spec_update_meta', { ref: sid, tldr: 'x'.repeat(1201) })).code).toMatch(/invalid_input|validation/);
@@ -197,7 +198,9 @@ describe('tldr', () => {
 describe('error codes', () => {
   it('transition_not_allowed (spec and work order)', async () => {
     const id = await newSpec({ criteria: false });
-    expect((await fail('spec_status_set', { ref: id, status: 'done' })).code).toBe('transition_not_allowed');
+    const gone = await newSpec({ criteria: false });
+    await ok('spec_status_set', { ref: gone, status: 'archived' });
+    expect((await fail('spec_status_set', { ref: gone, status: 'done' })).code).toBe('transition_not_allowed');
     const wo = await ok('work_order_create', { plan: 'The plan.', spec: id, sections: ['overview'], kind: 'review' });
     await ok('work_order_cancel', { ref: wo.ref, note: 'not needed' });
     expect((await fail('work_order_claim', { ref: wo.ref })).code).toBe('transition_not_allowed');
@@ -292,7 +295,7 @@ describe('transition tables', () => {
         if (from === to) continue;
         const id = await newSpec();
         await pass(id);
-        const path: Record<string, string[]> = { draft: [], ready: ['ready'], done: ['ready', 'done'], archived: ['archived'] };
+        const path: Record<string, string[]> = { active: [], done: ['done'], archived: ['archived'] };
         for (const s of path[from]!) await ok('spec_status_set', { ref: id, status: s });
         const r = await fx.call('spec_status_set', { agent: AGENT, ref: id, status: to });
         if (SPEC_TRANSITIONS[from].includes(to)) expect(r.isError, `${from} -> ${to}: ${JSON.stringify(r.body.error)}`).toBe(false);
@@ -300,7 +303,7 @@ describe('transition tables', () => {
         checked++;
       }
     }
-    expect(checked).toBe(12);
+    expect(checked).toBe(6);
   }, 120_000);
 
   it('work orders and feedback through their tools', async () => {
@@ -450,10 +453,10 @@ describe('full agent workflow', () => {
     // What changed since implemented: nothing (just implemented).
     const diff = await read('spec_diff_since_implemented', { workOrder: wo.ref });
     expect(diff.sections.map((s: { section: string }) => s.section)).toEqual(['design', 'ac-works']);
-    // The section was clarified after the work order pinned it: implemented at the pin, so it reads as modified since.
+    // The section was clarified by the work order itself (Work-Order trailer): part of its delivery, so its wording is not a change since implemented.
     const since = await read('spec_diff_since_implemented', { sections: [`mandate://specs/${id}/sections/design`] });
-    expect(since.sections[0]).toMatchObject({ status: 'modified', section: 'design' });
-    expect(JSON.stringify(since.sections[0].body)).toContain('Postgres');
+    expect(since.sections[0].body).toBeUndefined(); // no wording change since: only the implementedCommit marker moved
+    expect(since.sections[0].meta.map((m: { key: string }) => m.key)).toEqual(['implementedCommit']);
     // The activity feed and history show the agent's commits.
     const hist = await read('history_search', { agent });
     expect(hist.total).toBeGreaterThanOrEqual(5);

@@ -166,7 +166,7 @@ export async function checkTarget(ctx: ToolContext, t: { kind: DocKind; docId: s
     throw new UploadError(404, 'not_found', `${t.kind}/${t.docId} does not exist`, `check the id (list { of: "${t.kind}" })`);
   }
   if (doc.status && FROZEN[t.kind].includes(doc.status)) {
-    throw new UploadError(409, 'target_frozen', `${t.kind}/${t.docId} is ${doc.status}; it takes no new content`, t.kind === 'standards' ? 'write to its successor (supersededBy)' : 'restore it first (status draft / active) or write to another document');
+    throw new UploadError(409, 'target_frozen', `${t.kind}/${t.docId} is ${doc.status}; it takes no new content`, t.kind === 'standards' ? 'write to its successor (supersededBy)' : 'restore it first (status active) or write to another document');
   }
   if (t.after && !doc.sections.some((s) => s.id === t.after)) throw new UploadError(404, 'not_found', `section '${t.after}' (after) is not in ${t.kind}/${t.docId}`, 'pass an existing section id, or omit after (appends)');
   if (t.mode === 'new_section') {

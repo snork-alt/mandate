@@ -6,10 +6,10 @@ import { gitContextSchema, pastClaimSchema, planTestSchema, touchedFileSchema, t
 import { codeLinkSchema } from './code-context.js';
 import { z } from 'zod';
 import { layerSchema, type LayerInfo } from './layers.js';
-import { idSchema, STORED_SPEC_STATUSES, PRIORITIES, exemptionSchema, appliesToSchema, WORK_ORDER_KINDS, FEEDBACK_KINDS, FEEDBACK_RESOLUTIONS, VERIFICATION_RESULTS, VERIFICATION_METHODS, SPEC_STATUSES, WORK_ORDER_STATUSES, FEEDBACK_STATUSES, CRITERION_STATES, STANDARD_STATUSES, COMPONENT_STATUSES } from './base.js';
+import { idSchema, STORED_SPEC_STATUSES, PRIORITIES, exemptionSchema, appliesToSchema, WORK_ORDER_KINDS, FEEDBACK_KINDS, FEEDBACK_RESOLUTIONS, VERIFICATION_RESULTS, VERIFICATION_METHODS, SPEC_STATUSES, WORK_ORDER_STATUSES, FEEDBACK_STATUSES, CRITERION_STATES, STANDARD_STATUSES, STORED_STANDARD_STATUSES, COMPONENT_STATUSES } from './base.js';
 // Leaf module (no imports from this file): modules re-exported below can use these at load time without a cycle.
 export { TLDR_MAX_CHARS } from './base.js';
-export { idSchema, STORED_SPEC_STATUSES, PRIORITIES, exemptionSchema, appliesToSchema, WORK_ORDER_KINDS, FEEDBACK_KINDS, FEEDBACK_RESOLUTIONS, VERIFICATION_RESULTS, VERIFICATION_METHODS, SPEC_STATUSES, WORK_ORDER_STATUSES, FEEDBACK_STATUSES, CRITERION_STATES, STANDARD_STATUSES, COMPONENT_STATUSES } from './base.js';
+export { idSchema, STORED_SPEC_STATUSES, PRIORITIES, exemptionSchema, appliesToSchema, WORK_ORDER_KINDS, FEEDBACK_KINDS, FEEDBACK_RESOLUTIONS, VERIFICATION_RESULTS, VERIFICATION_METHODS, SPEC_STATUSES, WORK_ORDER_STATUSES, FEEDBACK_STATUSES, CRITERION_STATES, STANDARD_STATUSES, STORED_STANDARD_STATUSES, COMPONENT_STATUSES } from './base.js';
 import { parseLinkTarget, sectionSchema, type CodeRef, type Section, type SectionInput, type SectionType } from '@mandate/doc';
 
 /**
@@ -90,8 +90,8 @@ export const specStatusSchema = z.enum(SPEC_STATUSES);
 export type SpecStatus = z.infer<typeof specStatusSchema>;
 /** Statuses stored in the spec file. */
 export type StoredSpecStatus = (typeof STORED_SPEC_STATUSES)[number];
-/** Reads tolerate the legacy stored `in_progress` (it means `ready` + a claimed work order). */
-export const storedSpecStatusSchema = z.preprocess((v) => (v === 'in_progress' ? 'ready' : v), z.enum(STORED_SPEC_STATUSES));
+/** Specs are in force from creation. Reads tolerate the legacy stored `draft`, `ready` and `in_progress`: all read as `active` (no migration). */
+export const storedSpecStatusSchema = z.preprocess((v) => (v === 'in_progress' || v === 'draft' || v === 'ready' ? 'active' : v), z.enum(STORED_SPEC_STATUSES));
 
 
 /** p0 = urgent ... p3 = low. */
@@ -155,7 +155,7 @@ export const specFrontmatterSchema = z.object({
   /** Plain-language overview for a human reader (markdown, max TLDR_MAX_CHARS); `summary` stays the terse agent line. */
   tldr: z.string().optional(),
   category: z.string().min(1).optional(),
-  status: storedSpecStatusSchema.default('draft'),
+  status: storedSpecStatusSchema.default('active'),
   priority: prioritySchema.optional(),
   tags: z.array(z.string().min(1)).default([]),
   owner: z.string().min(1).optional(),
@@ -245,8 +245,8 @@ export interface SectionTypeInfo {
 
 /** `appliesTo` selector: `repo:app`, `tag:api`, `category:billing`, `path:<glob>` or `lang:<language>`. */
 
-/** Standard lifecycle: drafts never apply; deprecated standards still apply but point at their successor. */
-export type StandardStatus = (typeof STANDARD_STATUSES)[number];
+/** Standard lifecycle: no draft status any more (a legacy stored `draft` is a pending proposal that applies nowhere); deprecated standards still apply but point at their successor. */
+export type StandardStatus = (typeof STORED_STANDARD_STATUSES)[number];
 
 /** Standard frontmatter (everything except `sections`). */
 export const standardFrontmatterSchema = z.object({
@@ -255,7 +255,7 @@ export const standardFrontmatterSchema = z.object({
   /** Plain-language overview for a human reader (markdown, max TLDR_MAX_CHARS). */
   tldr: z.string().optional(),
   /** Lifecycle (default active). */
-  status: z.enum(STANDARD_STATUSES).default('active'),
+  status: z.enum(STORED_STANDARD_STATUSES).default('active'),
   /** In force from this ISO date or commit (sha); before that its rules are announced, not required. */
   effectiveFrom: z.string().min(4).optional(),
   /** The successor (required when deprecated). */
@@ -283,7 +283,7 @@ export type Standard = StoredStandard & FileMeta & {
   usedBy?: number;
   /** Rules per level (lists). */
   ruleCounts?: Record<'must' | 'should' | 'may', number>;
-  /** Not in force yet (draft, or effectiveFrom in the future / not reached). */
+  /** Not in force yet (a legacy pending proposal, or effectiveFrom in the future / not reached). */
   inForce?: boolean;
 };
 

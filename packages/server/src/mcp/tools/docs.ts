@@ -29,7 +29,7 @@ export const docTools = [
     name: 'spec_list',
     title: 'List specs',
     kind: 'read',
-    description: `List specs (metadata, newest change first) with verification rollup, blocked sections, lastAudit (null = never) and maturity (draft | specified | in_progress | implemented; overlays failing | outdated | blocked | archived).
+    description: `List specs (metadata, newest change first) with verification rollup, blocked sections, lastAudit (null = never) and maturity (specified | in_progress | implemented; overlays failing | outdated | blocked | archived).
 Filters: status (${SPEC_STATUSES.join('|')}), category, repo, tags (any), standard (id), blocked, verification, audit (never|stale|open_findings|fail|warn|pass), maturity, q (id/title substring). Paginated.
 Example: {"status":["ready"],"blocked":true}`,
     input: specListInputSchema,

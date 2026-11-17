@@ -10,14 +10,13 @@ interface Props {
   withTooltip?: boolean;
 }
 
-/** Linear-style status glyph: dashed = draft, ring = ready, half = in progress, check = done, minus = archived. */
+/** Linear-style status glyph: ring = active, half = in progress, check = done, minus = archived. */
 export function StatusIcon({ status, size = 14, reopened, withTooltip }: Props) {
   const { color, label } = SPEC_STATUS_META[status];
   const svg = (
     <span style={{ position: 'relative', display: 'inline-flex', flexShrink: 0 }}>
       <svg width={size} height={size} viewBox="0 0 14 14" fill="none" role="img" aria-label={label}>
-        {status === 'draft' && <circle cx="7" cy="7" r="5.5" stroke={color} strokeWidth="1.5" strokeDasharray="2.2 1.6" />}
-        {status === 'ready' && <circle cx="7" cy="7" r="5.5" stroke={color} strokeWidth="1.5" />}
+        {status === 'active' && <circle cx="7" cy="7" r="5.5" stroke={color} strokeWidth="1.5" />}
         {status === 'in_progress' && (
           <>
             <circle cx="7" cy="7" r="5.5" stroke={color} strokeWidth="1.5" />

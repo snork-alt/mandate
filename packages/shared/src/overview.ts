@@ -202,7 +202,7 @@ export interface ProjectOverview {
   }[];
   /** Health: maturity steps per category (non-archived specs). */
   byCategory: { category: string; total: number; steps: Record<MaturityStep, number>; specs: { id: string; title: string; step: MaturityStep }[] }[];
-  /** Health: specified (non-draft) specs never audited, and specs with unverified / stale must criteria (capped). */
+  /** Health: specified specs never audited, and specs with unverified / stale must criteria (capped). */
   neverAudited: { id: string; title: string }[];
   unverified: { id: string; title: string; unverified: number; stale: number; total: number }[];
   /** Health: verification gaps per specified spec, worst first (failing, stale, unverified must criteria; never / stale audit). Not capped. */
@@ -212,7 +212,7 @@ export interface ProjectOverview {
   /** Integrity warnings not snoozed (capped), to fix or acknowledge. */
   warnings: { rule: string; uri: string; message: string; hint?: string }[];
   coverage: {
-    /** Gating (must, in force) criteria of non-archived, non-draft specs. */
+    /** Gating (must, in force) criteria of non-archived specs. */
     criteria: { total: number; verified: number; waived: number; failing: number; stale: number; unverified: number };
     sections: { implemented: number; total: number };
     /** Latest audit per non-archived, non-draft spec. */
@@ -228,7 +228,8 @@ export const DECISION_KINDS = [
   'question',
   'integrity_error',
   'waiver_pending',
-  'standard_draft',
+  'standard_proposal',
+  'agent_stopped',
   'stale_claim',
   'audit_contradicted',
   'spec_drifted',

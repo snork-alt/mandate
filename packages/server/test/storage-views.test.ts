@@ -47,7 +47,7 @@ describe('documents', () => {
       { title: 'My Spec', category: 'auth', tags: ['api'], sections: [{ id: 'flow', title: 'Flow', type: 'mermaid', body: 'graph TD\n  A-->B' }] },
       { agent: 'claude@box', branch: 'spec/my-spec' },
     );
-    expect(created).toMatchObject({ id: 'my-spec', status: 'draft' });
+    expect(created).toMatchObject({ id: 'my-spec', status: 'active' });
     let list = (await views.list({ kind: 'specs' })).items;
     expect(list).toHaveLength(1);
     expect(list[0]).toMatchObject({ id: 'my-spec', revisions: 1, updatedBy: 'claude@box', createdAt: expect.stringMatching(/^\d{4}-/) });

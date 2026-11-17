@@ -129,7 +129,7 @@ function implied(e: ActivityEvent): { from: MaturityStep; to: MaturityStep } | n
   const d = (e.details ?? {}) as Record<string, any>;
   switch (e.type) {
     case 'spec.status_changed':
-      return d.status?.from === 'draft' && d.status?.to && d.status.to !== 'draft' && d.status.to !== 'archived' ? { from: 'draft', to: 'specified' } : null;
+      return null;
     case 'work_order.claimed':
       return BUILD_KINDS.has(d.kind) ? { from: 'specified', to: 'in_progress' } : null;
     case 'work_order.section_done':

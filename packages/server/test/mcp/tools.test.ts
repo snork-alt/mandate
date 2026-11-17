@@ -87,10 +87,10 @@ const HAPPY: Record<string, { args: () => Record<string, unknown>; check: (b: Re
     },
   },
   spec_list: {
-    args: () => ({ status: ['draft', 'ready', 'done'], limit: 200 }),
+    args: () => ({ status: ['active', 'done'], limit: 200 }),
     check: (b) => {
       expect(b.items.length).toBeGreaterThan(0);
-      expect(b.items.every((s: any) => ['draft', 'ready', 'done'].includes(s.status))).toBe(true);
+      expect(b.items.every((s: any) => ['active', 'done'].includes(s.status))).toBe(true);
     },
   },
   spec_get: {

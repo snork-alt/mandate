@@ -68,7 +68,7 @@ export function specCols(wide: boolean): ColDef[] {
     { key: 'claim', width: 40, hide: 'lg', align: 'center', label: 'Agent', tip: 'Agent: the agent currently working on it (claimed work order)' },
     { key: 'audit', width: 44, hide: 'sm', label: 'Audit', tip: 'Audit: last audit and whether it has open findings (red: open findings)' },
     wide
-      ? { key: 'progress', width: 196, hide: 'xs', narrow: { at: 'xl', width: 164 }, label: 'Maturity', tip: 'Maturity: how far the spec is from draft to audited, plus flags (failing, drifted, blocked, stale)' }
+      ? { key: 'progress', width: 196, hide: 'xs', narrow: { at: 'xl', width: 164 }, label: 'Maturity', tip: 'Maturity: how far the spec is from specified to audited, plus flags (failing, drifted, blocked, stale)' }
       : { key: 'progress', width: 56, hide: 'md', label: 'Verified', tip: 'Acceptance criteria verified' },
     { key: 'version', width: 52, hide: '2xl', label: 'Version', tip: 'Version: number of committed versions and the last commit' },
   ];

@@ -73,7 +73,7 @@ export function coveredBy(i: IntegrityIssue, scope: Set<string>): boolean {
  */
 export function checkIntegrity(
   m: Model,
-  opts: { scope?: Set<string>; feedbackWarnings?: Map<string, string[]>; audits?: StoredAudit[]; drift?: Map<string, string[]>; readyTransitions?: Set<string> } = {},
+  opts: { scope?: Set<string>; feedbackWarnings?: Map<string, string[]>; audits?: StoredAudit[]; drift?: Map<string, string[]>} = {},
 ): IntegrityIssue[] {
   const f = finder(m);
   const inScope = (uri: string) => !opts.scope || opts.scope.has(uri);
@@ -119,12 +119,9 @@ export function checkIntegrity(
       } else {
         const spec = d as StoredSpec;
         if (spec.status === 'done' && !spec.sections.some((s) => s.type === ACCEPTANCE && !s.archived)) out.push(issue('spec_done_without_criteria', docUri, `${spec.id} is done without any live acceptance criterion`));
-        // Every live section of a ready / done spec has a criterion: the transition is gated (spec_ready_without_criteria,
-        // only for specs moving to ready in this write); the existing state is a warning (never retroactive errors).
-        if (spec.status === 'ready' || spec.status === 'done') {
-          const missing = sectionsWithoutCriteria(spec, m);
-          if (missing.length && opts.readyTransitions?.has(spec.id)) out.push(issue('spec_ready_without_criteria', docUri, `${spec.id} moves to ready with sections without an acceptance criterion: ${missing.join(', ')}`));
-          for (const sid of missing) out.push(issue('spec_section_without_criteria', sectionUri('specs', spec.id, sid), `section ${sid} of ${spec.status} spec ${spec.id} has no acceptance criterion`));
+        // Every live section of a done spec has a criterion (work_order_create refuses sections without one; the existing state is a warning).
+        if (spec.status === 'done') {
+          for (const sid of sectionsWithoutCriteria(spec, m)) out.push(issue('spec_section_without_criteria', sectionUri('specs', spec.id, sid), `section ${sid} of ${spec.status} spec ${spec.id} has no acceptance criterion`));
         }
       }
     }
@@ -471,10 +468,7 @@ export class IntegrityService {
           neighbours(after, uri, scope);
         }
         const before = checkIntegrity(m, { scope, audits });
-        // A spec moving to ready in this write (an existing spec whose status changes) is checked by the transition rule.
-        const prior = kind === 'specs' ? m.specs.find((x) => x.id === next.id) : undefined;
-        const toReady = !!prior && prior.status !== 'ready' && (next as unknown as { status?: string }).status === 'ready';
-        const afterIssues = checkIntegrity(after, { scope, audits: afterAudits, ...(toReady ? { readyTransitions: new Set([next.id]) } : {}) });
+        const afterIssues = checkIntegrity(after, { scope, audits: afterAudits });
         const d = diffIssues(before, afterIssues);
         const errors = d.introduced.filter((i) => i.severity === 'error');
         if (errors.length) throw new IntegrityViolationError(errors);

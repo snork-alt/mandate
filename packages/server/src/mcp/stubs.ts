@@ -10,7 +10,7 @@ import { BOOTSTRAP_COMMAND, BOOTSTRAP_SKILL_BODY } from './bootstrap.js';
 import { FLOW_COMMAND, MANDATE_COMMAND, SKILL_BODY } from './guide.js';
 
 /** Version of the installed stub files (stamped into each one). */
-export const STUB_VERSION = 10;
+export const STUB_VERSION = 11;
 
 export const INSTRUCTION_NAMES = ['core', 'bootstrap', 'flow', 'mandate'] as const;
 export type InstructionName = (typeof INSTRUCTION_NAMES)[number];
@@ -33,7 +33,7 @@ export function stubUpdateNotice(reported: number | undefined): string | null {
 }
 
 /** When the server cannot be reached: the only rule a stub holds itself. */
-export const STUB_FALLBACK = 'If that tool is missing or the Mandate server cannot be reached: stop and tell the user that Mandate is unreachable. Do not work from memory or from an older copy of these instructions.';
+export const STUB_FALLBACK = 'If that tool is missing or the Mandate server cannot be reached: stop and tell the user that Mandate is unreachable. Do not work from memory or from an older copy of these instructions. Questions go through Mandate (question_ask), never chat: ask, end your turn, the answer wakes you.';
 
 const load = (name: InstructionName, extra = '') => `\`instructions_get {"name":"${name}"${extra},"stubVersion":${STUB_VERSION}}\``;
 

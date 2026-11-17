@@ -56,7 +56,7 @@ describe('list "Clear" removes every filter in one URL update', () => {
   });
 
   it('Spec list: toolbar Clear drops all filters; "Clear filters" also drops the search', async () => {
-    const spec = { id: 'a', title: 'A', summary: '', status: 'ready', priority: 'p1', tags: ['x'], category: 'auth', updatedAt: new Date().toISOString(), createdAt: new Date().toISOString(), versionCount: 1, sections: [] } as unknown as Spec;
+    const spec = { id: 'a', title: 'A', summary: '', status: 'active', priority: 'p1', tags: ['x'], category: 'auth', updatedAt: new Date().toISOString(), createdAt: new Date().toISOString(), versionCount: 1, sections: [] } as unknown as Spec;
     mount(<SpecListPage />, '/specs?priority=p0&tag=nope&category=none&audit=never&q=zzz&group=none', { specs: [spec], standards: [], 'work-orders': [] });
     fireEvent.click(await screen.findByText('Clear filters'));
     await waitFor(() => expect(where()).toBe('?group=none'));

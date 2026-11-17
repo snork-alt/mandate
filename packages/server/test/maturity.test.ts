@@ -11,23 +11,22 @@ const ver = (own: CriterionState[], inherited: CriterionState[] = []): SpecVerif
 const wo = (sections: { id: string; status: 'pending' | 'done' }[], extra: Partial<WorkOrder> = {}): WorkOrder =>
   ({ id: 'wo-1', spec: 's', specCommit: 'a'.repeat(40), kind: 'implement', status: 'pending', sections, reason: [], createdAt: '', updatedAt: '', ...extra }) as WorkOrder;
 const audit = (o: Partial<LastAudit> = {}): LastAudit => ({ id: 'au', uri: 'mandate://audits/au', at: '2026-11-12', auditor: { agent: 'x' }, result: 'pass', openFindings: 0, openMust: 0, openShould: 0, stale: false, commitsSince: 0, ...o });
-const run = (o: Partial<MaturityInput>) => specMaturity({ spec: spec('ready'), verification: ver([crit('unverified')]), workOrders: [], lastAudit: null, blockedSections: [], drift: [], ...o });
+const run = (o: Partial<MaturityInput>) => specMaturity({ spec: spec('active'), verification: ver([crit('unverified')]), workOrders: [], lastAudit: null, blockedSections: [], drift: [], ...o });
 
 describe('maturity ladder', () => {
-  it('draft, specified, in progress (done work-order sections or claims), implemented', () => {
-    expect(run({ spec: spec('draft') }).step).toBe('draft');
+  it('specified, in progress (done work-order sections or claims), implemented', () => {
     const sp = run({});
-    expect(sp).toMatchObject({ step: 'specified', stepIndex: 2, label: 'Specified', tone: 'neutral', sections: { implemented: 0, total: 2 } });
+    expect(sp).toMatchObject({ step: 'specified', stepIndex: 1, label: 'Specified', tone: 'neutral', sections: { implemented: 0, total: 2 } });
     const ip = run({ workOrders: [wo([{ id: 'a', status: 'done' }, { id: 'b', status: 'pending' }])] });
     expect(ip).toMatchObject({ step: 'in_progress', label: 'In progress · 1/2', tone: 'lilac' });
     const claimed = run({ workOrders: [wo([{ id: 'a', status: 'pending' }], { status: 'in_progress', claim: { agent: 'x', startedAt: '', heartbeatAt: '' } as never })] });
     expect(claimed).toMatchObject({ step: 'in_progress', label: 'In progress · 0/2', sections: { inProgress: 1 } });
-    const impl = run({ spec: spec('ready', [sec('a', { implementedCommit: 'a'.repeat(40) }), sec('b', { implementedCommit: 'b'.repeat(40) })]) });
+    const impl = run({ spec: spec('active', [sec('a', { implementedCommit: 'a'.repeat(40) }), sec('b', { implementedCommit: 'b'.repeat(40) })]) });
     expect(impl).toMatchObject({ step: 'implemented', tone: 'blue' });
   });
 
   it('archived sections are excluded; a review work order does not count', () => {
-    const s = spec('ready', [sec('a', { implementedCommit: 'a'.repeat(40) }), sec('old', { archived: true })]);
+    const s = spec('active', [sec('a', { implementedCommit: 'a'.repeat(40) }), sec('old', { archived: true })]);
     expect(run({ spec: s }).sections).toEqual({ implemented: 1, total: 1, inProgress: 0 });
     expect(run({ workOrders: [wo([{ id: 'a', status: 'done' }], { kind: 'review' })] }).step).toBe('specified');
   });
@@ -43,7 +42,7 @@ describe('maturity ladder', () => {
 
   it('there is no audited step: the audit does not change the step or the overlays', () => {
     const base = { spec: spec('done'), verification: ver([crit('verified')]) };
-    expect(run({ ...base, lastAudit: audit() })).toMatchObject({ step: 'implemented', stepIndex: 4, tone: 'blue' });
+    expect(run({ ...base, lastAudit: audit() })).toMatchObject({ step: 'implemented', stepIndex: 3, tone: 'blue' });
     const st = run({ ...base, lastAudit: audit({ stale: true, commitsSince: 4, openMust: 1, result: 'fail' }) });
     expect(st.step).toBe('implemented');
     expect(st.overlays).toEqual([]);

@@ -13,7 +13,7 @@ import { sortItems } from '../src/components/SortMenu';
 installDom();
 vi.mock('../src/mcp/client', () => ({ callTool: vi.fn(async () => ({})), McpToolError: class extends Error {}, onNotification: () => () => undefined, onConnectionChange: () => () => undefined }));
 
-const LABEL: Record<MaturityStep, string> = { draft: 'Draft', specified: 'Specified', in_progress: 'In progress · 3/5', implemented: 'Implemented' };
+const LABEL: Record<MaturityStep, string> = { specified: 'Specified', in_progress: 'In progress · 3/5', implemented: 'Implemented' };
 const mat = (step: MaturityStep, overlays: MaturityOverlayKind[] = [], o: Partial<SpecMaturity> = {}): SpecMaturity => ({
   step,
   stepIndex: MATURITY_STEPS.indexOf(step) + 1,
@@ -78,7 +78,7 @@ describe('maturity details (hover breakdown)', () => {
   });
 
   it('never audited, no gating criteria', () => {
-    const { container } = render(<R><MaturityDetails m={mat('draft', [], { criteria: { total: 0, verified: 0, waived: 0, failing: 0, stale: 0, unverified: 0 }, storedStatus: 'draft' })} /></R>);
+    const { container } = render(<R><MaturityDetails m={mat('specified', [], { criteria: { total: 0, verified: 0, waived: 0, failing: 0, stale: 0, unverified: 0 }, storedStatus: 'active' })} /></R>);
     expect(container.textContent).toContain('Never audited');
     expect(container.textContent).toContain('none gating');
   });
@@ -87,11 +87,11 @@ describe('maturity details (hover breakdown)', () => {
 describe('maturity filter, sort and component roll-up', () => {
   const spec = (id: string, m?: SpecMaturity, affects: string[] = []) =>
     ({ id, title: id, updatedAt: '', createdAt: '', versionCount: 0, maturity: m, sections: [{ id: 's', links: affects.map((c) => ({ rel: 'affects', to: buildRef({ kind: 'components', id: c }) })) }] }) as unknown as Spec;
-  const specs = [spec('a', mat('implemented')), spec('b', mat('draft')), spec('c', mat('implemented', ['failing'])), spec('d', mat('in_progress', ['blocked'])), spec('e', mat('implemented', ['archived'])), spec('f')];
+  const specs = [spec('a', mat('implemented')), spec('b', mat('specified')), spec('c', mat('implemented', ['failing'])), spec('d', mat('in_progress', ['blocked'])), spec('e', mat('implemented', ['archived'])), spec('f')];
 
   it('filters by step or overlay', () => {
     expect(specs.filter((s) => matchesMaturityFilter(s, ['implemented'])).map((s) => s.id)).toEqual(['a', 'c', 'e']);
-    expect(specs.filter((s) => matchesMaturityFilter(s, ['failing', 'draft'])).map((s) => s.id)).toEqual(['b', 'c']);
+    expect(specs.filter((s) => matchesMaturityFilter(s, ['failing', 'specified'])).map((s) => s.id)).toEqual(['b', 'c']);
     expect(specs.filter((s) => matchesMaturityFilter(s, [])).length).toBe(6);
   });
 
@@ -101,7 +101,7 @@ describe('maturity filter, sort and component roll-up', () => {
   });
 
   it('component: least mature step, worst overlay of the specs affecting it (archived ignored)', () => {
-    const list = [spec('a', mat('implemented'), ['auth']), spec('c', mat('implemented', ['outdated']), ['auth', 'db']), spec('e', mat('draft', ['archived']), ['auth'])];
+    const list = [spec('a', mat('implemented'), ['auth']), spec('c', mat('implemented', ['outdated']), ['auth', 'db']), spec('e', mat('specified', ['archived']), ['auth'])];
     const cm = componentMaturity(list, ['auth'])!;
     expect(cm.step).toBe('implemented');
     expect(cm.overlay).toBe('outdated');

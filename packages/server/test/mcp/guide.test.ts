@@ -180,19 +180,9 @@ describe('MCP tools on seeded data', () => {
     expect(other.body.error.code).toBe('confirmation_required');
   });
 
-  it('inferred drafts need no confirmation (bootstrap); a confirmed section, activation or a non-inferred create still do', async () => {
+  it('there are no draft standards: every standard write needs the confirmation, inferred or not', async () => {
     const rule = (title: string, provenance: 'inferred' | 'confirmed' = 'inferred') => ({ title, type: 'rule', level: 'must', rationale: 'Consistency.', body: `${title}.`, provenance, confidence: 0.9 });
-    const c = await fx.call('standard_create', { title: 'Inferred draft standard', sections: [rule('Keys are kebab case')], agent: 'tester' });
-    expect(c.isError, JSON.stringify(c.body)).toBe(false);
-    const ref = c.body.ref as string;
-    expect(c.body.document.status).toBe('draft');
-    const ins = await fx.call('standard_section_insert', { doc: ref, section: rule('Ids are slugs'), agent: 'tester' });
-    expect(ins.isError, JSON.stringify(ins.body)).toBe(false);
-    const upd = await fx.call('standard_section_update', { ref: ins.body.ref, summary: 'Still inferred.', agent: 'tester' });
-    expect(upd.isError, JSON.stringify(upd.body)).toBe(false);
-    expect((await fx.call('standard_section_insert', { doc: ref, section: rule('Confirmed rule', 'confirmed'), agent: 'tester' })).body.error.code).toBe('confirmation_required');
-    expect((await fx.call('standard_section_update', { ref: ins.body.ref, provenance: 'confirmed', agent: 'tester' })).body.error.code).toBe('confirmation_required');
-    expect((await fx.call('standard_status_set', { ref, status: 'active', agent: 'tester' })).body.error.code).toBe('confirmation_required');
+    expect((await fx.call('standard_create', { title: 'Inferred standard', sections: [rule('Keys are kebab case')], agent: 'tester' })).body.error.code).toBe('confirmation_required');
     expect((await fx.call('standard_create', { title: 'Unmarked standard', sections: [{ title: 'No provenance', type: 'rule', level: 'must', rationale: 'Consistency.', body: 'x.' }], agent: 'tester' })).body.error.code).toBe('confirmation_required');
     expect((await fx.call('standard_create', { title: 'Empty standard', agent: 'tester' })).body.error.code).toBe('confirmation_required');
   });
@@ -224,7 +214,7 @@ describe('no override past a gate (local mode too)', () => {
     expect((await fx.call('request_create', { kind: 'question', body: 'Which IdPs?', agent: 't' })).isError).toBe(true);
     const m = await fx.call('spec_match', { request: 'Add remember-me to login' });
     expect(m.body.candidates.length).toBeGreaterThan(0);
-    const spec = (await fx.storage.specs.list()).find((x) => x.status === 'draft' && x.sections.length) ?? (await fx.storage.specs.list()).find((x) => x.sections.length)!;
+    const spec = (await fx.storage.specs.list()).find((x) => x.sections.length)!;
     const ed = await fx.call('spec_section_update', { ref: `mandate://specs/${spec.id}/sections/${spec.sections[0]!.id}`, summary: 'Remember-me keeps the session for 30 days.', addresses: [fb.body.ref], agent: 't' });
     expect(ed.isError, JSON.stringify(ed.body)).toBe(false);
     expect(JSON.stringify(ed.body.warnings)).not.toContain('feedback_target_mismatch');
@@ -233,7 +223,7 @@ describe('no override past a gate (local mode too)', () => {
   });
 
   it('spec_status_set done has no override / force input, and done_gate holds in local mode', async () => {
-    const spec = (await fx.storage.specs.list()).find((x) => x.status === 'ready')!;
+    const spec = (await fx.storage.specs.list()).find((x) => x.status === 'active')!;
     for (const extra of [{ override: true, overrideReason: 'sole user' }, { force: true }]) {
       const r = await fx.call('spec_status_set', { ref: `mandate://specs/${spec.id}`, status: 'done', agent: 't', ...extra });
       expect(r.body.error.code).toBe('invalid_input');

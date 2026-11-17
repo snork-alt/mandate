@@ -15,11 +15,11 @@ const families = new Set(TOOLS.map((t) => t.name.split('_')[0]!));
 /** snake_case words in those families that are not tools: kinds, enum values, fields. */
 const NOT_TOOLS = new Set(['request_assigned', 
   'work_order', 'work_order_section', 'spec_section', 'standard_section', 'component_section', 'audit_finding', 'flow_policy', 'standard_confirmation', 'code_deviates', 'spec_wrong',
-  'spec_drifted', 'standard_draft', 'stale_claim', 'feedback_open', 'feedback_accepted', 'waiver_pending', 'approval_override', 'audit_contradicted', 'integrity_error',
+  'spec_drifted', 'standard_proposal', 'agent_stopped', 'criteria_missing', 'stale_claim', 'feedback_open', 'feedback_accepted', 'waiver_pending', 'approval_override', 'audit_contradicted', 'integrity_error',
   'question_frozen', 'question_not_answered', 'question_ineligible', 'question_purpose', 'feedback_target_mismatch', 'request_closed', 'feedback_tampered', 'code_repo_unavailable',
-  'index_unavailable', 'activity_unavailable', 'section_referenced', 'spec_ready_without_criteria', 'spec_section_without_criteria', 'spec_done_without_criteria', 'component_unreferenced',
+  'index_unavailable', 'activity_unavailable', 'section_referenced', 'spec_section_without_criteria', 'spec_done_without_criteria', 'component_unreferenced',
   'component_no_standards', 'component_no_code', 'component_cycle', 'contains_cycle', 'extends_cycle', 'supersedes_cycle', 'supersedes_successors', 'standard_successor_loop', 'audit_frozen',
-  'audit_incomplete', 'audit_not_completed', 'audit_pass_contradicted', 'done_gate', 'ready_gate', 'done_spec_drift', 'flow_enabled', 'code_owner_glob', 'spec_status', 'work_order_frozen',
+  'audit_incomplete', 'audit_not_completed', 'audit_pass_contradicted', 'done_gate', 'done_spec_drift', 'flow_enabled', 'code_owner_glob', 'spec_status', 'work_order_frozen',
   'component_candidate', 'doc_claim', 'spec_depends_on', 'component_depends_on', 'code_ranges', 'code_files', 'code_commit', 'code_file', 'code_range', 'question_answered', 'project_policy', 'graph_schema_v', 'search_kinds', 'rule_check', 'git_context',
 ]);
 
@@ -79,7 +79,7 @@ describe('agent-facing texts', () => {
   it('name only error codes the registry explains (and every lifecycle error has an action)', () => {
     const codes = new Set(LIFECYCLE_KINDS.flatMap((k) => [...(lifecycleView(k).create?.errors ?? []), ...lifecycleView(k).steps.flatMap((s) => s.errors ?? [])]));
     expect([...codes].filter((c) => ERROR_ACTIONS[c] === undefined)).toEqual([]);
-    for (const c of ['done_gate', 'ready_gate', 'confirmation_required', 'question_not_answered', 'question_ineligible', 'question_frozen', 'approval_required', 'waiver_self_approved', 'criteria_unproven', 'plan_required', 'plan_invalid', 'request_closed']) expect(ERROR_ACTIONS[c], c).toBeTruthy();
+    for (const c of ['done_gate', 'criteria_missing', 'confirmation_required', 'question_not_answered', 'question_ineligible', 'question_frozen', 'approval_required', 'waiver_self_approved', 'criteria_unproven', 'plan_required', 'plan_invalid', 'request_closed']) expect(ERROR_ACTIONS[c], c).toBeTruthy();
     for (const t of [SKILL_BODY, CORE_RULES]) for (const m of t.matchAll(/`(\w+_gate)`/g)) expect(ERROR_ACTIONS[m[1]!], m[1]).toBeTruthy();
   });
 

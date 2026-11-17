@@ -105,7 +105,7 @@ export const specCreateInputSchema = z
   .object({ ...specMeta, title: line(300), sections: z.array(specSectionCreateSchema).max(200).default([]) })
   .strict();
 export const standardCreateInputSchema = z
-  .object({ ...standardMeta, title: line(300), status: z.enum(['draft', 'active']).optional(), sections: z.array(standardSectionCreateSchema).max(200).default([]) })
+  .object({ ...standardMeta, title: line(300), status: z.literal('active').optional(), sections: z.array(standardSectionCreateSchema).max(200).default([]) })
   .strict();
 export const specUpdateMetaInputSchema = z
   .object({ ref: writeDocRef('specs'), ...specMeta })
@@ -120,7 +120,7 @@ export const standardStatusSetInputSchema = z
   .object({ ref: writeDocRef('standards'), status: z.enum(['active', 'deprecated']), supersededBy: docRefSchema(['standards'], { sections: false }).optional() })
   .strict();
 export const specArchiveInputSchema = z.object({ ref: writeDocRef('specs'), reason: line(500).optional() }).strict();
-export const specStatusSetInputSchema = z.object({ ref: writeDocRef('specs'), status: z.enum(STORED_SPEC_STATUSES) }).strict();
+export const specStatusSetInputSchema = z.object({ ref: writeDocRef('specs'), status: z.preprocess((v) => (v === 'ready' || v === 'draft' ? 'active' : v), z.enum(STORED_SPEC_STATUSES)) }).strict();
 
 const sectionTools = (kind: WritableDocKind) => ({
   insert: z

@@ -6,7 +6,7 @@
  *
  * Sources: the activity events (ActivityBus, derived from git) — no new data in the repo. What a client "owns" is
  * recorded when it writes (`WATCH_TOOLS`: question_ask, feedback_create, work_order_claim / next, comment_add, waivers,
- * draft standards, self-approval overrides), as
+ * self-approval overrides), as
  * watched refs; an event whose subject is a watched ref, made by someone else, becomes an item (`NEWS_RULES`; a new kind
  * is one rule). Flow settings changes are detected per call (the effective setting differs from the last one seen).
  * Claims that went stale (no heartbeat, `isClaimStale`) have no event: `sweepStaleClaims` finds them (agent calls, at
@@ -96,8 +96,6 @@ export const WATCH_TOOLS: Record<
   }
 > = {
   question_ask: { role: 'asked', refs: (r) => [r.ref] },
-  // Decisions the user takes on things the agent caused (the Actions list): its draft standard.
-  standard_create: { role: 'drafted', refs: (r) => [r.ref] },
   request_create: { role: 'created', refs: (r) => [r.ref] },
   feedback_create: { role: 'created', refs: (r) => [r.ref] },
   work_order_claim: { role: 'claimed', refs: (r) => workOrderRefs(r) },
@@ -169,7 +167,6 @@ const SECTION_TYPES = ['spec', 'standard', 'component'].flatMap((k) => [`${k}.se
 export const NEWS_RULES: NewsRule[] = [
   { kind: 'question_answered', types: ['question.answered'], roles: ['asked'] },
   { kind: 'question_closed', types: ['question.cancelled'], roles: ['asked'] },
-  { kind: 'standard_draft_decided', types: ['standard.status_changed', 'standard.deleted'], roles: ['drafted'] },
   { kind: 'claim_released', types: ['work_order.released'], roles: ['claimed'] },
   { kind: 'work_order_changed', types: ['work_order.status_changed', 'work_order.released', 'work_order.claimed', 'work_order.updated', 'work_order.deleted', 'work_order.completed'], roles: ['claimed'] },
   { kind: 'request_changed', types: ['request.closed', 'request.updated', 'request.deleted'], roles: ['created'] },
