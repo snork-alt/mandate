@@ -1,18 +1,7 @@
 /** Setup wizard + Settings: server contract (`/ui/setup/*`, `/ui/fs/*`, `/ui/projects/local`). Secrets are write-only. */
 import { useQuery } from '@tanstack/react-query';
-import { uiRequest, uiStream } from '../lib/ui';
+import { uiRequest } from '../lib/ui';
 import type { ProjectSummary } from '../connect/projects';
-
-export type AskProvider = 'anthropic' | 'openai' | 'google' | 'openai-compatible';
-
-export interface AskModelConfig {
-  id: string;
-  provider: AskProvider;
-  model: string;
-  baseUrl: string | null;
-  apiKeyEnv: string | null;
-  apiKeySet?: boolean;
-}
 
 export interface GithubAppSettings {
   id: number;
@@ -41,17 +30,6 @@ export interface SetupConfig {
   };
   /** The server address (`publicUrl` null: http://localhost:<port>). */
   server: { publicUrl: string | null; bind: string; port: number; trustProxy: boolean };
-  ask: {
-    default: string | null;
-    models: AskModelConfig[];
-    /** Limits per question (null = default). */
-    maxToolCalls?: number | null;
-    tokenBudget?: number | null;
-    timeoutMs?: number | null;
-    maxOutputTokens?: number | null;
-    /** `ask.limits`: tool-result truncation (+ per-tool overrides). */
-    limits?: AskLimits | null;
-  };
   embedding: EmbeddingSettings;
   git: GitConfig;
   /** Server-state database (Advanced). Older servers omit it. */
@@ -166,22 +144,6 @@ export interface GitTestInput {
   auth?: { sshKeyPath?: string; passphrase?: string; useAgent?: boolean; username?: string; token?: string };
 }
 
-/** `ask.limits` (per-tool override field name per the server's Ask schema). */
-export interface AskLimits {
-  maxToolResultTokens?: number;
-  [PER_TOOL_FIELD]?: Record<string, number>;
-}
-export const PER_TOOL_FIELD = 'perTool' as const;
-
-/** Defaults and ranges of the Ask limits (mirrors the server config schema). */
-export const ASK_LIMITS = {
-  maxToolCalls: { def: 12, min: 1, max: 50, label: 'Tool calls per question', help: 'How many tool calls (search, graph, reads) the model may make before it must answer.' },
-  tokenBudget: { def: 300_000, min: 2_000, max: 2_000_000, label: 'Token budget per question', help: 'Input + output tokens across the whole question; caps the cost of one answer.' },
-  timeoutMs: { def: 120_000, min: 5_000, max: 600_000, label: 'Timeout (ms)', help: 'Stop a question that runs longer than this.' },
-  maxOutputTokens: { def: 16_000, min: 256, max: 64_000, label: 'Max answer tokens', help: 'Longest answer the model may write in one step.' },
-  maxToolResultTokens: { def: 5_000, min: 100, max: 200_000, label: 'Max tokens per tool result', help: 'Longer tool results are truncated before the model reads them (keeps questions cheap).' },
-} as const;
-
 export interface SetupState {
   complete: boolean;
   configVersion: string;
@@ -282,16 +244,13 @@ export const setupApi = {
   patch: (configVersion: string, patch: ConfigPatch) => put<{ configVersion: string; applied?: AppliedSetting[]; restartRequired?: boolean }>('/ui/setup/config', { configVersion, patch }),
   secret: (name: string, value: string | null) => put<{ name: string; set: boolean; applied?: AppliedSetting[] }>('/ui/setup/secret', { name, value }),
   testGithub: (b: { clientId: string; clientSecret?: string }) => post<{ ok: boolean; message: string }>('/ui/setup/test/github', b),
-  askModels: (b: { provider: AskProvider; baseUrl?: string; apiKeyEnv?: string; apiKey?: string }) =>
-    post<{ ok: boolean; models: string[]; suggested: string | null; message: string }>('/ui/setup/ask/models', b),
-  askTest: (b: { provider: AskProvider; baseUrl?: string; apiKeyEnv?: string; apiKey?: string; model: string }) => post<{ ok: boolean; message: string; ms: number }>('/ui/setup/ask/test', b),
   embeddingDetect: () => post<{ ollama: boolean; baseUrl: string; models: string[]; hasNomic: boolean; install: string[] }>('/ui/setup/embedding/detect'),
   embeddingTest: (b: EmbedConn & { model: string; requestDimensions?: number | null; documentPrefix?: string }) =>
     post<{ ok: boolean; dimensions: number | null; ms: number; message: string; errorKind?: string; preset: EmbeddingModelPreset }>('/ui/setup/embedding/test', b),
   embeddingModels: (b: EmbedConn) =>
     post<{ ok: boolean; models: { id: string; pricePerMTok: number | null; known: boolean }[]; suggested: string | null; total: number; message: string; errorKind?: string }>('/ui/setup/embedding/models', b),
   embeddingKeys: (b: { baseUrl: string; apiKeyEnv?: string }) =>
-    post<{ candidates: { askModelId: string; label: string; apiKeyEnv: string; apiKeySet: boolean }[]; apiKeyEnvSet?: boolean }>('/ui/setup/embedding/keys', b),
+    post<{ apiKeyEnvSet?: boolean }>('/ui/setup/embedding/keys', b),
   embeddingPreset: (model: string) => post<EmbeddingModelPreset>('/ui/setup/embedding/preset', { model }),
   embeddingEstimate: (b: { model: string; pricePerMTok?: number | null }) => post<EmbeddingEstimate>('/ui/setup/embedding/estimate', b),
   /** The server address (applies on restart); listen address and proxy trust are derived unless given. */
@@ -326,28 +285,10 @@ export const useSetupState = () => useQuery({ queryKey: ['setup', 'state'], quer
 /** Env var names for secrets (defaults; the config may name others). */
 export const SECRET_DEFAULTS = {
   github: 'MANDATE_GITHUB_CLIENT_SECRET',
-  anthropic: 'ANTHROPIC_API_KEY',
   openai: 'OPENAI_API_KEY',
-  google: 'GOOGLE_GENERATIVE_AI_API_KEY',
   sshPassphrase: 'MANDATE_SSH_PASSPHRASE',
   gitToken: 'MANDATE_GIT_TOKEN',
 } as const;
 
-export const ASK_PRESETS: { id: string; label: string; provider: AskProvider; baseUrl: string | null; apiKeyEnv: string | null; hint: string; keyUrl?: string }[] = [
-  { id: 'anthropic', label: 'Anthropic', provider: 'anthropic', baseUrl: null, apiKeyEnv: SECRET_DEFAULTS.anthropic, hint: 'Claude models. Needs an API key.', keyUrl: 'https://console.anthropic.com/settings/keys' },
-  { id: 'openai', label: 'OpenAI', provider: 'openai', baseUrl: null, apiKeyEnv: SECRET_DEFAULTS.openai, hint: 'GPT models. Needs an API key.', keyUrl: 'https://platform.openai.com/api-keys' },
-  { id: 'google', label: 'Google', provider: 'google', baseUrl: null, apiKeyEnv: SECRET_DEFAULTS.google, hint: 'Gemini models. Needs an API key.', keyUrl: 'https://aistudio.google.com/apikey' },
-  { id: 'ollama', label: 'Ollama (local)', provider: 'openai-compatible', baseUrl: 'http://localhost:11434/v1', apiKeyEnv: null, hint: 'Runs on this machine; no key, nothing leaves your computer.' },
-  { id: 'compatible', label: 'OpenAI-compatible', provider: 'openai-compatible', baseUrl: '', apiKeyEnv: null, hint: 'Any server with the OpenAI API (LM Studio, vLLM, a gateway…).' },
-];
-
 /** `~/mandate-projects` for display (paths under the home dir). */
 export const tildify = (p: string, home?: string | null) => (home && (p === home || p.startsWith(`${home}/`)) ? `~${p.slice(home.length)}` : p);
-
-/** Model id for the config list: `<provider>-<model>` slugged. */
-export const modelConfigId = (provider: string, model: string) =>
-  `${provider}-${model}`
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 60);

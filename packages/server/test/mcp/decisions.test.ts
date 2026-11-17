@@ -55,7 +55,8 @@ describe('decisions_list', () => {
 describe('UI allow-list (uiAllowed)', () => {
   it('only the human-decision tools are uiAllowed, and they are write tools', () => {
     const allowed = TOOLS.filter((t) => t.uiAllowed).map((t) => t.name).sort();
-    expect(allowed).toEqual(['feedback_close', 'integrity_snooze', 'question_answer', 'request_close', 'work_order_release']);
+    // Human decisions, plus comments (a person comments from the UI; routing wakes the agents).
+    expect(allowed).toEqual(['comment_add', 'comment_reopen', 'comment_resolve', 'feedback_close', 'integrity_snooze', 'question_answer', 'request_close', 'work_order_release']);
     for (const n of allowed) expect(tool(n).kind).toBe('write');
   });
 

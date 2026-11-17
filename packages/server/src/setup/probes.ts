@@ -1,6 +1,5 @@
 /**
- * Setup probes ("Test" buttons): environment checks, GitHub OAuth App credentials, Ask providers (list models, tiny
- * prompt), Ollama embeddings, git access (system git with no prompts, or the embedded client with given credentials),
+ * Setup probes ("Test" buttons): environment checks, GitHub OAuth App credentials, Ollama embeddings, git access (system git with no prompts, or the embedded client with given credentials),
  * SSH public key fingerprints. Secrets are only sent to their provider; results and errors never contain them.
  */
 import { execFile } from 'node:child_process';
@@ -155,93 +154,6 @@ export async function testGithubApp(clientId: string, secret: string, f: Fetch =
     return { ok: false, message: `GitHub answered ${r.status}; try again.` };
   } catch (e) {
     return { ok: false, message: `Could not reach GitHub: ${scrub((e as Error).message, [secret])}` };
-  }
-}
-
-/* ------------------------------------------------------------------ Ask providers */
-
-export type AskProvider = 'anthropic' | 'openai' | 'google' | 'openai-compatible';
-export interface ProviderInput {
-  provider: AskProvider;
-  baseUrl?: string | null;
-  apiKey?: string;
-  model?: string;
-}
-
-const BASE: Record<AskProvider, string> = {
-  anthropic: 'https://api.anthropic.com/v1',
-  openai: 'https://api.openai.com/v1',
-  google: 'https://generativelanguage.googleapis.com/v1beta',
-  'openai-compatible': 'http://localhost:11434/v1',
-};
-
-function headersFor(p: ProviderInput): Record<string, string> {
-  const h: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (p.provider === 'anthropic') {
-    if (p.apiKey) h['x-api-key'] = p.apiKey;
-    h['anthropic-version'] = '2023-06-01';
-  } else if (p.provider === 'google') {
-    if (p.apiKey) h['x-goog-api-key'] = p.apiKey;
-  } else if (p.apiKey) h.Authorization = `Bearer ${p.apiKey}`;
-  return h;
-}
-
-const SUGGEST: Record<AskProvider, RegExp[]> = {
-  anthropic: [/sonnet/, /opus/, /haiku/],
-  openai: [/^gpt-[\d.]+$/, /^gpt-[\d.]+-mini$/, /^gpt/, /^o\d/],
-  google: [/gemini-[\d.]+-pro$/, /gemini.*flash$/, /gemini/],
-  'openai-compatible': [/llama|qwen|mistral|gemma|gpt/],
-};
-
-export function suggestModel(provider: AskProvider, models: string[]): string | null {
-  for (const re of SUGGEST[provider]) {
-    const hit = models.find((m) => re.test(m));
-    if (hit) return hit;
-  }
-  return models[0] ?? null;
-}
-
-export async function listModels(p: ProviderInput, f: Fetch = fetch): Promise<{ ok: boolean; models: string[]; suggested: string | null; message: string }> {
-  const base = (p.baseUrl || BASE[p.provider]).replace(/\/+$/, '');
-  if (p.provider !== 'openai-compatible' && !p.apiKey) return { ok: false, models: [], suggested: null, message: 'Enter the API key first.' };
-  try {
-    const r = await f(`${base}/models`, { headers: headersFor(p), signal: AbortSignal.timeout(15_000) });
-    if (r.status === 401 || r.status === 403) return { ok: false, models: [], suggested: null, message: 'The provider rejected the API key.' };
-    if (!r.ok) return { ok: false, models: [], suggested: null, message: `The provider answered ${r.status}.` };
-    const j = (await r.json()) as { data?: { id: string }[]; models?: { name: string; supportedGenerationMethods?: string[] }[] };
-    const models =
-      p.provider === 'google'
-        ? (j.models ?? []).filter((m) => !m.supportedGenerationMethods || m.supportedGenerationMethods.includes('generateContent')).map((m) => m.name.replace(/^models\//, ''))
-        : (j.data ?? []).map((m) => m.id);
-    models.sort();
-    return { ok: true, models, suggested: suggestModel(p.provider, models), message: `${models.length} models available.` };
-  } catch (e) {
-    return { ok: false, models: [], suggested: null, message: `Could not reach ${base}: ${scrub((e as Error).message, [p.apiKey])}` };
-  }
-}
-
-/** A tiny prompt (a few output tokens) to prove the model answers. */
-export async function testModel(p: ProviderInput, f: Fetch = fetch): Promise<{ ok: boolean; message: string; ms: number }> {
-  const base = (p.baseUrl || BASE[p.provider]).replace(/\/+$/, '');
-  const t0 = Date.now();
-  if (!p.model) return { ok: false, message: 'Pick a model first.', ms: 0 };
-  const prompt = 'Reply with the single word OK.';
-  const req =
-    p.provider === 'anthropic'
-      ? { url: `${base}/messages`, body: { model: p.model, max_tokens: 8, messages: [{ role: 'user', content: prompt }] } }
-      : p.provider === 'google'
-        ? { url: `${base}/models/${encodeURIComponent(p.model)}:generateContent`, body: { contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 8 } } }
-        : { url: `${base}/chat/completions`, body: { model: p.model, max_tokens: 8, messages: [{ role: 'user', content: prompt }] } };
-  try {
-    const r = await f(req.url, { method: 'POST', headers: headersFor(p), body: JSON.stringify(req.body), signal: AbortSignal.timeout(60_000) });
-    const ms = Date.now() - t0;
-    if (r.ok) return { ok: true, message: `${p.model} answered in ${ms} ms.`, ms };
-    const text = scrub(await r.text().catch(() => ''), [p.apiKey]);
-    if (r.status === 401 || r.status === 403) return { ok: false, message: 'The provider rejected the API key.', ms };
-    if (r.status === 404) return { ok: false, message: `Unknown model ${p.model}.`, ms };
-    return { ok: false, message: `The provider answered ${r.status}${text ? `: ${text.slice(0, 160)}` : ''}`, ms };
-  } catch (e) {
-    return { ok: false, message: `Could not reach ${base}: ${scrub((e as Error).message, [p.apiKey])}`, ms: Date.now() - t0 };
   }
 }
 

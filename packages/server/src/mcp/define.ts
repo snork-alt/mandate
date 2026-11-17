@@ -13,11 +13,9 @@ import type { IndexService } from '../index/service.js';
 import type { Storage } from '../storage/index.js';
 import type { DocReadService } from '../storage/read.js';
 import type { DocViewService } from '../storage/views.js';
-import type { ResolvedAskConfig } from '../config.js';
-import type { AskModelOverride } from '../ask/model.js';
 import type { ActivityBus, ActivityFilter } from '../events/bus.js';
 import type { AutoPusher } from '../git/autopush.js';
-import type { ConversationStore } from '../ask/agent.js';
+import type { AskService } from '../agent-ask/service.js';
 import type { Principal } from '../auth/http.js';
 import { clientIdentity, effective, FLOW_OFF_ALLOWED, flowInstructions, flowOffMessage, type ProjectSettings } from '../projects/settings.js';
 import { newsFallback, readRefs, WATCH_TOOLS, type NewsService } from '../news/index.js';
@@ -46,8 +44,8 @@ export interface ToolContext {
   uiAccess?: 'read' | 'write';
   /** Durable idempotency store of this project (falls back to the process-wide one). */
   idempotency?: IdempotencyStore;
-  /** Ask conversations of this project. */
-  conversations?: ConversationStore;
+  /** Ask threads of this project (answered by agents). */
+  asks?: AskService;
   storage: Storage;
   /** Null when the search index failed to open (search and graph tools then return `index_unavailable`). */
   index: IndexService | null;
@@ -68,10 +66,6 @@ export interface ToolContext {
   progress?: (progress: number, message?: string) => Promise<void>;
   /** Per-client news feed of this project (news/index.ts); a memory one per activity bus when unset. */
   news?: NewsService | null;
-  /** Override the configured Ask model (tests: an AI SDK mock model). */
-  askModel?: AskModelOverride;
-  /** `ask` config block (model for the Ask panel); the key never leaves the server. */
-  ask?: ResolvedAskConfig;
   /** MCP clientInfo name of the caller (agent identity fallback for write tools). */
   clientName?: string;
   /** MCP clientInfo version of the caller. */

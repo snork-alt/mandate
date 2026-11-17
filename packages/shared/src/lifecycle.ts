@@ -505,7 +505,6 @@ export const ERROR_ACTIONS: Record<string, string> = {
   activity_unavailable: 'activity is not available on this server: use history tools',
   no_session: 'needs an MCP session (Streamable HTTP with a session id)',
   unknown_tool: 'call tools/list for the available tools',
-  not_configured: 'Ask has no model configured: ask_status shows what is missing; tell the user',
   code_repo_unavailable: 'the server cannot read that code repo: pass touched files yourself (work_order_touch)',
   alt_required: 'image sections need alt text: pass alt (what the image shows, for agents, search and Ask)',
   type_mismatch: 'the uploaded bytes are not the declared image type: send the right Content-Type (or none) and a PNG, JPEG, GIF, WebP or SVG file',

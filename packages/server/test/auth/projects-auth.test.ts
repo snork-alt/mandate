@@ -60,7 +60,7 @@ beforeAll(async () => {
   keys.ensureProjectKeys(['alpha', 'beta']);
   store = new AuthStore(root, randomBytes(32), 3600_000);
   const embedding = { ...embeddingConfigSchema.parse({}), dimensions: 64 };
-  registry = new ProjectRegistry([testProject(root, 'alpha'), testProject(root, 'beta')], projectOpener({ embedding, ask: { default: null, models: [] } }, { provider: new FakeProvider(64, 'fake:64'), activityPollMs: 0 }));
+  registry = new ProjectRegistry([testProject(root, 'alpha'), testProject(root, 'beta')], projectOpener({ embedding }, { provider: new FakeProvider(64, 'fake:64'), activityPollMs: 0 }));
   app = Fastify({ logger: loggerOptions({ write: (l: string) => logs.push(l) }) });
   registerMcp(app, { projects: registry, auth: { keys, store } });
   await app.listen({ port: 0, host: '127.0.0.1' });

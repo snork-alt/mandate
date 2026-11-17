@@ -297,7 +297,7 @@ export const TOOL_SETS: Record<ToolSetName, readonly string[]> = {
     'work_order_next', 'work_order_claim', 'work_order_heartbeat', 'work_order_plan_set', 'work_order_step_set', 'work_order_touch', 'work_order_git_update', 'work_order_section_done', 'work_order_complete', 'work_order_fail', 'work_order_release',
     'verification_record', 'question_ask', 'question_cancel', 'comment_add', 'comment_resolve',
     'status_set', 'section_update', 'rules_for_code', 'news_list', 'news_ack',
-    'upload_url_create', 'architecture_get', 'code_owner', 'standard_usage', 'graph_neighbors',
+    'ask_pending', 'ask_answer', 'upload_url_create', 'architecture_get', 'code_owner', 'standard_usage', 'graph_neighbors',
   ],
   /** Legacy set name: its tools moved to core (listed by default). */
   intake: [],
@@ -318,7 +318,7 @@ export const TOOL_SETS: Record<ToolSetName, readonly string[]> = {
     'standard_where_used', 'standard_usage', 'code_rules', 'code_owner', 'architecture_get', 'project_overview',
   ],
   /** Operations: activity, Ask, index and git sync. */
-  admin: ['flow_edit_allowed', 'agents_presence', 'activity_list', 'activity_subscribe', 'ask', 'ask_status', 'index_status', 'git_status', 'git_push', 'git_pull', 'work_order_touch_from_commits', 'project_overview'],
+  admin: ['flow_edit_allowed', 'agents_presence', 'activity_list', 'activity_subscribe', 'ask_post', 'ask_get', 'ask_cancel', 'index_status', 'git_status', 'git_push', 'git_pull', 'work_order_touch_from_commits', 'project_overview'],
 };
 
 /** `?tools=` / tools_enable value: set names (comma separated) or `all`. Unknown names are returned separately. */
@@ -350,7 +350,7 @@ export const toolsEnableTool = defineTool({
   name: 'tools_enable',
   title: 'Enable tool sets',
   kind: 'ops',
-  description: `List more Mandate tools in this session (core, the whole request flow, is always on): bootstrap (/mandate-bootstrap), review (audits, comment_reopen, decisions), intake (legacy: already in core), lineage (graph_*, lineage, history, diffs, code and text search), admin (activity, ask, index, git sync); all = every set. Notifies the client that the tool list changed; any tool can still be called by name. A client that does not refresh its list: add ?tools=<sets> to the MCP URL.
+  description: `List more Mandate tools in this session (core, the whole request flow, is always on): bootstrap (/mandate-bootstrap), review (audits, comment_reopen, decisions), intake (legacy: already in core), lineage (graph_*, lineage, history, diffs, code and text search), admin (activity, Ask posting, index, git sync); all = every set. Notifies the client that the tool list changed; any tool can still be called by name. A client that does not refresh its list: add ?tools=<sets> to the MCP URL.
 Example: {"sets":["intake"]}`,
   input: z.object({ sets: z.array(z.enum([...SET_NAMES, 'all'] as [string, ...string[]])).min(1).max(SET_NAMES.length + 1) }).strict(),
   run: async (a, ctx) => {

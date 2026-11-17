@@ -32,6 +32,19 @@ describe('older settings (one setup: GitHub sign-in)', () => {
     expect((await load(undefined)).host).toBe('127.0.0.1');
   });
 
+  it('an old `ask` block (server-side model) is ignored with a warning, never an error; no ask config is exposed', async () => {
+    const home = await tempDir();
+    const mh = path.join(home, '.mandate');
+    mkdirSync(mh, { recursive: true });
+    writeFileSync(path.join(mh, 'config.json'), JSON.stringify({ embedding: { provider: 'none' }, ask: { default: 'opus', models: [{ id: 'opus', provider: 'anthropic', apiKeyEnv: 'ANTHROPIC_API_KEY' }] } }));
+    const cfg = loadConfig({ HOME: home, MANDATE_HOME: mh });
+    expect(cfg.warnings.join('\n')).toMatch(/`ask` block in config.json is ignored.*delete the block/);
+    expect(cfg).not.toHaveProperty('ask');
+    // the legacy single-model shape too
+    writeFileSync(path.join(mh, 'config.json'), JSON.stringify({ embedding: { provider: 'none' }, ask: { provider: 'openai', model: 'x' } }));
+    expect(loadConfig({ HOME: home, MANDATE_HOME: mh }).warnings.join('\n')).toMatch(/ask/);
+  });
+
   it('an older OAuth App install (auth.github, no app, no mode) keeps its allow-list behaviour', async () => {
     const cfg = await load(undefined, github);
     expect(cfg).toMatchObject({ legacyAuth: true });

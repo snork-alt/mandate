@@ -7,7 +7,7 @@ import { APP_NAME } from '../components/Logo';
 import { UiApiError } from '../lib/ui';
 import { goTo } from '../project';
 import { useSetupState, type SetupState } from './api';
-import { AccessSection, AskSection, configChangedMessage, GitSection, GithubSection, SearchSection, ServerInfo, AddressSection, type Saver, type SectionProps } from './sections';
+import { AccessSection, configChangedMessage, GitSection, GithubSection, SearchSection, ServerInfo, AddressSection, type Saver, type SectionProps } from './sections';
 import { SetupShell } from './SetupWizard';
 import { AgentFlowSection } from './AgentFlowSection';
 import { CodeReposSection } from './CodeReposSection';
@@ -26,7 +26,6 @@ const sectionsFor = (_s: SetupState): Entry[] => [
   { id: 'github', label: 'GitHub', Section: GithubSection },
   { id: 'access', label: 'Who may sign in', Section: AccessSection },
   { id: 'git', label: 'Git', Section: GitSection },
-  { id: 'ask', label: 'Ask models', Section: AskSection },
   { id: 'search', label: 'Semantic search', Section: SearchSection },
   { id: 'flow', label: 'Agent flow', Section: AgentFlowSection, instant: true },
   { id: 'code-repos', label: 'Code repositories', Section: CodeReposSection, instant: true },

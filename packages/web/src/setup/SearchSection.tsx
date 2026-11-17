@@ -4,7 +4,7 @@
  * and latency; per-model presets fill prefixes / limits (overridable under Advanced). The config hot-reloads; a model
  * switch re-embeds in the background while search keeps answering from the previous model.
  */
-import { Anchor, Autocomplete, Button, Group, NumberInput, Select, Switch, TextInput } from '@mantine/core';
+import { Anchor, Autocomplete, Button, Group, NumberInput, Select, TextInput } from '@mantine/core';
 import { IconAlertTriangle, IconCheck, IconChevronRight, IconCloud, IconExternalLink, IconInfoCircle, IconLock, IconRefresh, IconSearch } from '@tabler/icons-react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -85,7 +85,6 @@ export function SearchSection({ state, register, variant }: SectionProps) {
   const [baseUrl, setBaseUrl] = useState(wasRemote ? e.baseUrl : presetInfo.baseUrl);
   const [ownKeyEnv, setOwnKeyEnv] = useState(wasRemote && e.apiKeyEnv ? e.apiKeyEnv : presetInfo.apiKeyEnv);
   const [ownKeySet, setOwnKeySet] = useState(wasRemote ? !!e.apiKeySet : false);
-  const [reuse, setReuse] = useState<string | null>(null); // env var of the Ask key reused
   const [model, setModel] = useState(wasRemote ? e.model : '');
   const [dims, setDims] = useState<number | null>(wasRemote ? e.dimensions : null);
   const [modelPreset, setModelPreset] = useState<EmbeddingModelPreset | null>(null);
@@ -102,16 +101,11 @@ export function SearchSection({ state, register, variant }: SectionProps) {
     queryFn: () => setupApi.embeddingKeys({ baseUrl, ...(/^[A-Z][A-Z0-9_]{1,63}$/.test(ownKeyEnv) ? { apiKeyEnv: ownKeyEnv } : {}) }),
     enabled: mode === 'remote' && urlOk,
   });
-  const askKey = keys.data?.candidates.find((c) => c.apiKeySet) ?? null;
-  // Offer the Ask key by default when the same endpoint already has one (and no other key is configured).
-  useEffect(() => {
-    if (askKey && reuse === null && !(wasRemote && e.apiKeyEnv && e.apiKeyEnv !== askKey.apiKeyEnv)) setReuse(askKey.apiKeyEnv);
-  }, [askKey?.apiKeyEnv]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (keys.data?.apiKeyEnvSet !== undefined && !ownKeySet) setOwnKeySet(keys.data.apiKeyEnvSet);
   }, [keys.data?.apiKeyEnvSet]); // eslint-disable-line react-hooks/exhaustive-deps
-  const keyEnv = reuse && askKey ? askKey.apiKeyEnv : ownKeyEnv;
-  const keySet = reuse && askKey ? true : ownKeySet;
+  const keyEnv = ownKeyEnv;
+  const keySet = ownKeySet;
   const keyOptional = preset === 'custom';
   const ready = urlOk && (keySet || keyOptional);
   const conn = { baseUrl, preset, ...(keySet ? { apiKeyEnv: keyEnv } : {}) };
@@ -125,7 +119,6 @@ export function SearchSection({ state, register, variant }: SectionProps) {
     setBaseUrl(presetInfo.baseUrl);
     setOwnKeyEnv(presetInfo.apiKeyEnv);
     setOwnKeySet(false);
-    setReuse(null);
     setModel('');
     setDims(null);
     setLastTest(null);
@@ -320,19 +313,7 @@ export function SearchSection({ state, register, variant }: SectionProps) {
                 <TextInput size="sm" value={baseUrl} onChange={(ev) => setBaseUrl(ev.currentTarget.value.trim())} placeholder="https://api.together.xyz/v1" className="np-mono-input" data-testid="embed-base-url" />
               </Field>
             )}
-            {askKey && (
-              <Switch
-                checked={!!reuse}
-                onChange={(ev) => setReuse(ev.currentTarget.checked ? askKey.apiKeyEnv : '')}
-                label={
-                  <span>
-                    Use the same key as Ask model <b>{askKey.label}</b> <code className="su-env">{askKey.apiKeyEnv}</code>
-                  </span>
-                }
-                data-testid="embed-reuse-key"
-              />
-            )}
-            {!(reuse && askKey) && (
+            {(
               <>
                 {preset === 'custom' && (
                   <Field label="Key variable" hint="Name of the env var that holds the key (secrets.env). Leave the key empty if the server needs none.">

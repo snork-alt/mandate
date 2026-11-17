@@ -32,7 +32,7 @@ const short = () => fx.older.slice(0, 7);
 // Audit write tools: test/mcp/audits.test.ts. Work-order document and comment write tools: test/mcp/work-orders.test.ts.
 // The flow and news tools need project settings: covered by test/mcp/flow.test.ts and news.test.ts. Questions (and question_get): questions.test.ts.
 // Merged tools and tools_enable: test/mcp/tool-sets.test.ts.
-const WRITE_SUITE = new Set([...MERGED.map((m) => m.name), 'tools_enable', ...writeTools.map((t) => t.name), 'project_flow_set', 'flow_next', 'request_decision_add', 'flow_edit_allowed', 'flow_set', 'flow_policy_set', 'flow_clients_list', 'news_list', 'news_ack', 'upload_url_create', 'integrity_snooze', 'feedback_get', 'feedback_list', ...auditTools.filter((t) => t.kind === 'write').map((t) => t.name), ...workOrderDocTools.filter((t) => t.kind === 'write').map((t) => t.name), ...lineageTools.filter((t) => t.kind === 'write').map((t) => t.name), ...questionTools.filter((t) => t.kind === 'write' || t.name === 'question_get').map((t) => t.name)]);
+const WRITE_SUITE = new Set([...MERGED.map((m) => m.name), 'tools_enable', ...writeTools.map((t) => t.name), 'project_flow_set', 'flow_next', 'request_decision_add', 'flow_edit_allowed', 'flow_set', 'flow_policy_set', 'flow_clients_list', 'news_list', 'news_ack', 'ask_post', 'ask_get', 'ask_cancel', 'ask_pending', 'ask_answer', 'upload_url_create', 'integrity_snooze', 'feedback_get', 'feedback_list', ...auditTools.filter((t) => t.kind === 'write').map((t) => t.name), ...workOrderDocTools.filter((t) => t.kind === 'write').map((t) => t.name), ...lineageTools.filter((t) => t.kind === 'write').map((t) => t.name), ...questionTools.filter((t) => t.kind === 'write' || t.name === 'question_get').map((t) => t.name)]);
 const READ_TOOLS = TOOLS.filter((t) => !WRITE_SUITE.has(t.name));
 const HAPPY: Record<string, { args: () => Record<string, unknown>; check: (b: Record<string, any>) => void }> = {
   // (the security-baseline rule "rotating refresh tokens" competes for the top spot since standards have rule sections)
@@ -136,13 +136,6 @@ const HAPPY: Record<string, { args: () => Record<string, unknown>; check: (b: Re
   git_push: { args: () => ({}), check: (b) => expect(['no_remote', 'disabled']).toContain(b.state) },
   activity_list: { args: () => ({ ref: 'mandate://specs/login-sso', limit: 5 }), check: (b) => expect(b.events.length).toBeGreaterThan(0) },
   activity_subscribe: { args: () => ({ types: ['spec.*'] }), check: (b) => expect(b).toMatchObject({ subscribed: true, filter: { types: ['spec.*'] } }) },
-  ask: {
-    args: () => ({ question: 'What is login-sso?', context: ['mandate://specs/login-sso'] }),
-    check: (b) => {
-      expect(b.answer).toContain('mandate://specs/login-sso');
-      expect(b.references).toEqual([expect.objectContaining({ ref: 'mandate://specs/login-sso', resolved: true, kind: 'spec' })]);
-    },
-  },
   doc_list: { args: () => ({ kind: 'specs' }), check: (b) => expect(b.items.find((x: any) => x.id === 'login-sso')).toMatchObject({ title: expect.any(String), updatedAt: expect.any(String), verification: expect.any(Object) }) },
   doc_get: { args: () => ({ kind: 'specs', id: 'login-sso' }), check: (b) => expect(b).toMatchObject({ id: 'login-sso', sections: expect.any(Array), verification: expect.any(Object), links: expect.any(Object) }) },
   version_get: { args: () => ({ kind: 'specs', id: 'login-sso', commit: fx.older.slice(0, 7), against: 'head' }), check: (b) => expect(b.commit).toBe(fx.older) },
@@ -155,7 +148,7 @@ const HAPPY: Record<string, { args: () => Record<string, unknown>; check: (b: Re
   decision_access: { args: () => ({}), check: (b) => expect(typeof b.canDecide).toBe('boolean') },
   project_overview: { args: () => ({ limit: 5 }), check: (b) => expect(b.maturity.total).toBeGreaterThan(0) },
   git_log: { args: () => ({ limit: 3 }), check: (b) => expect(b.items).toHaveLength(3) },
-  ask_status: { args: () => ({}), check: (b) => expect(b).toMatchObject({ configured: false, missing: ['provider', 'model'] }) },
+  agents_presence: { args: () => ({ ref: 'mandate://specs/login-sso/sections/auth-flow' }), check: (b) => expect(b).toMatchObject({ agents: expect.any(Array), needsPicker: expect.any(Boolean) }) },
   instructions_get: { args: () => ({ name: 'core', stubVersion: 0 }), check: (b) => expect(b).toMatchObject({ name: 'core', text: SKILL_BODY, stubVersion: STUB_VERSION, update: expect.stringContaining('re-run the Mandate installer') }) },
   lifecycle_get: { args: () => ({ kind: 'request' }), check: (b) => expect(b.steps.map((s: any) => s.to)).toEqual(['closed']) },
   project_info: { args: () => ({}), check: (b) => expect(b.effective).toEqual({ flow: 'on', questions: 'mandate' }) },

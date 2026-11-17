@@ -75,33 +75,3 @@ export function useMcpIdLookup(id: string, enabled = true) {
     ...opts,
   });
 }
-
-export type AskMissing = 'provider' | 'model' | 'apiKey' | 'baseUrl';
-export interface AskModelStatus {
-  id: string;
-  label: string;
-  provider: 'anthropic' | 'openai' | 'google' | 'openai-compatible';
-  model?: string;
-  baseUrl?: string;
-  /** Name of the env var, never the key. */
-  apiKeyEnv?: string;
-  apiKeySet: boolean;
-  configured: boolean;
-  missing: AskMissing[];
-  /** Why it is not configured. */
-  reason?: string;
-}
-export interface AskStatus {
-  /** At least one model is configured. */
-  configured: boolean;
-  /** Model used when the question names none. */
-  default: string | null;
-  models: AskModelStatus[];
-  /** Without any model: what to configure. */
-  missing: AskMissing[];
-}
-
-/** The models configured for built-in answers (`ask_status`). */
-export function useAskStatus(enabled = true) {
-  return useMcpTool<AskStatus>('ask_status', {}, enabled);
-}

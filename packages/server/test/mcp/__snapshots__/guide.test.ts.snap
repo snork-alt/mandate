@@ -97,8 +97,9 @@ and audits carry repo + commit (uncommitted: \`dirty: true\`, base commit). Code
 
 ## Comments
 
-Reviewers \`comment_add\` on the work-order sections they review (\`blocking: true\` = must-fix); the implementer replies
-(\`parent\`), fixes, \`comment_resolve\` (\`comment_reopen\` if not fixed). Append-only.
+Anyone \`comment_add\`s on any object (sections, steps, requests, work orders; \`blocking: true\` = must-fix); the addressed or
+responsible agent replies (\`parent\`), fixes, \`comment_resolve\` (\`comment_reopen\` if not fixed). A change asked for in a
+comment becomes a request (\`request_create\` with source "comment"). Append-only.
 
 ## Audits (when asked; set \`review\`; preferably not the implementing agent)
 

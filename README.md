@@ -132,12 +132,16 @@ owned code and open work orders on the same files.
 
 ### Ask
 
-<img src="docs/media/ask.gif" alt="Asking which specs have drifted and why; the model calls Mandate's read tools and answers with clickable references" />
+<img src="docs/media/ask.gif" alt="Asking which specs have drifted and why in the Ask panel" />
 
-The **Ask** panel answers questions about the project with the model of your choice (Anthropic, OpenAI, Google or any
-OpenAI-compatible endpoint, including a local Ollama). It uses the same read-only MCP tools as agents, including the
-spec graph and a Cypher subset, shows each tool step, and answers with clickable references, tables and graphs. *(The
-recording above is a real answer from a configured model, with the wait sped up.)*
+The **Ask** panel is answered by **your own coding agent**: Mandate has no model, no provider and no API key for it.
+You type a question (optionally with context chips); it is stored as an ask thread and delivered as an event to the
+agent you pick (the only one online is chosen for you; *Any agent* queues it for whoever is free). The agent hands it to
+a read-only Claude Code subagent, `mandate-ask` (installed by `mandate connect` in `~/.claude/agents/`: Read, Grep, Glob,
+Mandate's read tools and `ask_answer`; model sonnet), in the background and keeps working; the subagent answers with
+`ask_answer`, in parts if it likes, and the panel shows the answer as it grows and who is answering. No agent online:
+the panel says *open Claude Code with `mandate claude`*, the question waits and is answered when an agent connects.
+`ask_pending` is the catch-up for a session that missed the event.
 
 ### Who did what
 
@@ -175,16 +179,16 @@ Useful flags: `--port N`, `--bind ADDR`, `--no-service`, `--no-open`, `--no-agen
 
 ### 2. Run the setup wizard
 
-<img src="docs/media/setup-wizard.gif" alt="The six-step setup wizard: GitHub App, Git, Ask models, Semantic search, Database, Sign in" />
+<img src="docs/media/setup-wizard.gif" alt="The five-step setup wizard: GitHub App, Git, Semantic search, Database, Sign in" />
 
 1. **GitHub App.** Mandate creates one in one click, on your account or an organization: you review it on GitHub and press
    *Create GitHub App*, and GitHub hands the credentials back. The client secret, webhook secret and private key go to
    `~/.mandate/secrets.env` and a 0600 key file, never `config.json`. An existing OAuth App also works.
 2. **Git.** System git or the built-in one, and whether to push to GitHub automatically.
-3. **Ask models** *(optional)*. Add as many as you like.
-4. **Semantic search** *(optional)*. Ollama, OpenAI, an OpenAI-compatible URL, or keyword search only.
-5. **Database** *(optional)*. SQLite (built in) or Postgres.
-6. **Sign in** with GitHub. You become the admin.
+3. **Semantic search** *(optional)*. Local embeddings need no key; or an OpenAI-compatible URL, or keyword search only. (No
+   language model is configured anywhere: Ask is answered by your coding agents.)
+4. **Database** *(optional)*. SQLite (built in) or Postgres.
+5. **Sign in** with GitHub. You become the admin.
 
 Everything can be changed later in Settings.
 
@@ -192,7 +196,7 @@ Everything can be changed later in Settings.
 
 A project is a GitHub repository (or a folder in one) that holds its specs. **New project** in the UI lists the
 repositories the GitHub App is installed on, personal or from an organization, with a link to install it on more. Each
-project has its own index, activity feed, Ask history and MCP endpoint (`<server>/p/<project>/mcp`).
+project has its own index, activity feed, Ask threads and MCP endpoint (`<server>/p/<project>/mcp`).
 
 ### 4. Connect your coding agents
 
@@ -378,7 +382,7 @@ Everything lives in `~/.mandate/`. Secrets are only ever referenced by environme
 
 | File | What it holds |
 |---|---|
-| `config.json` | Address (`server.publicUrl` / `bind`), GitHub sign-in, Ask models, embeddings, git backend, auto-push. Edited by the wizard / Settings or by hand |
+| `config.json` | Address (`server.publicUrl` / `bind`), GitHub sign-in, embeddings, git backend, auto-push. Edited by the wizard / Settings or by hand |
 | `secrets.env` | API keys and the GitHub client secret (`KEY=value`, mode 0600, never logged) |
 | `projects.json` | The project registry, managed by Mandate |
 | `keys.json` | Service-account keys for CI (mode 0600) |
@@ -389,20 +393,7 @@ Everything lives in `~/.mandate/`. Secrets are only ever referenced by environme
 Saved settings apply without a restart, including the git backend and the database; changing the address restarts the
 service.
 
-**Ask models.** Configure several and pick one per question:
-
-```json
-"ask": {
-  "default": "opus",
-  "models": [
-    { "id": "opus", "label": "Opus 5.5", "provider": "anthropic", "model": "claude-opus-5-5", "apiKeyEnv": "ANTHROPIC_API_KEY" },
-    { "id": "local", "label": "Llama (local)", "provider": "openai-compatible", "model": "llama3.1", "baseUrl": "http://localhost:11434/v1" }
-  ]
-}
-```
-
-Optional limits under `ask` (and per model): `maxToolCalls` (12), `tokenBudget` (150,000 tokens per question) and
-`maxToolResultTokens` (5,000, per tool via `toolResultTokens`).
+**Old `ask` block.** Earlier versions had a server-side Ask model (`"ask": { ... }`). It is gone: a config that still has the block starts normally with a warning, the block is ignored; delete it.
 
 **Postgres.** Server state lives in SQLite by default. To share it between several server instances, put the URL in
 `~/.mandate/secrets.env` and select it (Settings → Database, or by hand):
@@ -444,7 +435,7 @@ in memory only, so no SSH key is needed. `git.auth.method: "ssh"` uses `sshKeyPa
 |---|---|
 | `packages/doc` | The document format: sectioned Markdown with frontmatter, pluggable section types, byte-stable round trips |
 | `packages/shared` | Types, zod schemas and `mandate://` references shared by server and UI |
-| `packages/server` | Fastify + MCP server, git storage (embedded libgit2 or the git CLI), SQLite / Postgres index, Cypher compiler, Ask agent |
+| `packages/server` | Fastify + MCP server, git storage (embedded libgit2 or the git CLI), SQLite / Postgres index, Cypher compiler |
 | `packages/web` | React + Mantine UI, itself an MCP client |
 | `packages/cli` | The `getmandate` npm package: the `mandate` command (also installed as `getmandate`), service, agent wiring; bundles the server and the built UI |
 

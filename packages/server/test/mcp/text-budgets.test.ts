@@ -21,8 +21,8 @@ describe('working agreement budgets', () => {
   });
 
   it('server instructions (CORE_RULES mirror)', () => {
-    expect(tok(CORE_RULES)).toBeLessThanOrEqual(1500); // +197: comments on any object routed to agents; +111: driven flow, ask only when necessary; +16: plan steps; +30: requests, full plan, test proof; +55: tldr guidance; +46: CURRENT TEXT (instructions_get beats local copies); +15: TOOLS (tool sets)
-    expect(tok(INSTRUCTIONS)).toBeLessThanOrEqual(1760);
+    expect(tok(CORE_RULES)).toBeLessThanOrEqual(1620); // +80: Ask events go to the mandate-ask subagent; +197: comments on any object routed to agents; +111: driven flow, ask only when necessary; +16: plan steps; +30: requests, full plan, test proof; +55: tldr guidance; +46: CURRENT TEXT (instructions_get beats local copies); +15: TOOLS (tool sets)
+    expect(tok(INSTRUCTIONS)).toBeLessThanOrEqual(1880);
     expect(INSTRUCTIONS).toContain('lifecycle_get');
   });
 
@@ -53,7 +53,7 @@ describe('total tool descriptions', () => {
 
   it('the default list (core) stays small: descriptions and schemas', () => {
     const core = listedTools(new Set(DEFAULT_SETS));
-    expect(core.length).toBeLessThanOrEqual(50);
+    expect(core.length).toBeLessThanOrEqual(52); // +2: ask_pending, ask_answer (Ask is answered by agents)
     // 5,883 description and 16,137 schema tokens over the 47 core tools (the whole request flow: the former intake set moved into core;
     // before that 3,624 / 9,335 over 29 tools; every tool: ~11,221 / ~26,870).
     expect(core.reduce((n, t) => n + tok(t.description as string), 0)).toBeLessThanOrEqual(6900);

@@ -2,54 +2,16 @@
  * Setup sections, shared by the first-run wizard (`/setup`) and Settings (`/settings`). Each section edits a draft and
  * registers a saver; the wizard's Continue and Settings' Save run it (PUT /ui/setup/config with the configVersion).
  */
-import { Anchor, Button, Group, Loader, NumberInput, Select, Switch, TagsInput, Text, TextInput } from '@mantine/core';
-import {
-  IconAlertTriangle,
-  IconBrain,
-  IconBrandGithub,
-  IconCheck,
-  IconChevronRight,
-  IconCloud,
-  IconCopy,
-  IconPackage,
-  IconTerminal2,
-  IconDeviceLaptop,
-  IconExternalLink,
-  IconFolder,
-  IconRefresh,
-  IconServer,
-  IconUsers,
-  IconChevronDown,
-  IconLink,
-  IconUserCircle,
-  IconTrash,
-  IconX,
-} from '@tabler/icons-react';
+import { Anchor, Button, Group, Loader, NumberInput, Switch, TagsInput, Text, TextInput } from '@mantine/core';
+import { IconAlertTriangle, IconBrandGithub, IconCheck, IconCopy, IconPackage, IconTerminal2, IconExternalLink, IconRefresh, IconUsers, IconChevronDown, IconUserCircle, IconX } from '@tabler/icons-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { Field, Notice } from '../connect/parts';
 import { copyText } from '../lib/copy';
 import { useAuth } from '../auth';
 import { UiApiError } from '../lib/ui';
-import {
-  announceApplied,
-  ASK_LIMITS,
-  ASK_PRESETS,
-  PER_TOOL_FIELD,
-  modelConfigId,
-  SECRET_DEFAULTS,
-  serverStartedAt,
-  setupApi,
-  tildify,
-  waitForRestart,
-  type AskModelConfig,
-  type AskProvider,
-  type ConfigPatch,
-  type GithubAppSettings,
-  type SetupConfig,
-  type SetupState,
-} from './api';
-import { ChoiceCard, CommandLine, CopyField, FolderBrowser, NextNote, Recommended, SecretField, StepIntro, TestButton } from './widgets';
+import { announceApplied, SECRET_DEFAULTS, serverStartedAt, setupApi, waitForRestart, type ConfigPatch, type GithubAppSettings, type SetupConfig, type SetupState } from './api';
+import { ChoiceCard, CommandLine, CopyField, FolderBrowser, NextNote, SecretField, StepIntro, TestButton } from './widgets';
 
 export type Saver = () => Promise<void>;
 export interface SectionProps {
@@ -515,230 +477,6 @@ export function AccessSection({ state, register }: SectionProps) {
   );
 }
 
-/* ------------------------------------------------------------------ Ask models */
-
-const isEmbeddingModel = (m: string) => /embed|bge|minilm|e5-/i.test(m);
-/** The suggested model unless it is an embedding model (Ollama lists those too); else the first chat model. */
-export const pickChatModel = (models: string[], suggested: string | null) =>
-  (suggested && !isEmbeddingModel(suggested) ? suggested : models.find((m) => !isEmbeddingModel(m))) ?? suggested ?? models[0] ?? null;
-
-function AddModel({ onAdded, existing }: { onAdded: (m: AskModelConfig) => void; existing: AskModelConfig[] }) {
-  const [presetId, setPresetId] = useState('anthropic');
-  const preset = ASK_PRESETS.find((p) => p.id === presetId)!;
-  const [baseUrl, setBaseUrl] = useState(preset.baseUrl ?? '');
-  const [apiKeyEnv, setApiKeyEnv] = useState(preset.apiKeyEnv ?? '');
-  const [keySet, setKeySet] = useState(false);
-  const [model, setModel] = useState<string | null>(null);
-  const st = useQuery({ queryKey: ['setup', 'state'], queryFn: setupApi.state });
-  useEffect(() => {
-    setBaseUrl(preset.baseUrl ?? '');
-    setApiKeyEnv(preset.apiKeyEnv ?? '');
-    setModel(null);
-    // A key stored for another model with the same env var counts as set.
-    setKeySet(!!st.data?.config.ask.models.some((m) => m.apiKeyEnv && m.apiKeyEnv === preset.apiKeyEnv && m.apiKeySet));
-  }, [presetId]); // eslint-disable-line react-hooks/exhaustive-deps
-  const conn = { provider: preset.provider as AskProvider, ...(baseUrl ? { baseUrl } : {}), ...(apiKeyEnv ? { apiKeyEnv } : {}) };
-  const models = useMutation({
-    mutationFn: () => setupApi.askModels(conn),
-    onSuccess: (r) => setModel((m) => m ?? pickChatModel(r.models, r.suggested)),
-  });
-  const needsKey = !!preset.apiKeyEnv;
-  const ready = (!needsKey || keySet) && (preset.provider !== 'openai-compatible' || !!baseUrl);
-  useEffect(() => {
-    if (ready) models.mutate();
-  }, [ready, presetId, baseUrl]); // eslint-disable-line react-hooks/exhaustive-deps
-  const id = model ? modelConfigId(presetId, model) : '';
-  return (
-    <div className="su-add-model" data-testid="add-model">
-      <div className="su-presets" role="radiogroup">
-        {ASK_PRESETS.map((p) => (
-          <button key={p.id} type="button" role="radio" aria-checked={p.id === presetId} className="su-preset" onClick={() => setPresetId(p.id)} data-testid={`preset-${p.id}`}>
-            <span className="su-preset-title">
-              {p.label}
-              {p.id === 'anthropic' && <Recommended />}
-            </span>
-            <span className="su-preset-hint">{p.hint}</span>
-          </button>
-        ))}
-      </div>
-      <div className="np-stack" style={{ marginTop: 14 }}>
-        {preset.provider === 'openai-compatible' && (
-          <Field label="Base URL" hint={presetId === 'ollama' ? 'Ollama’s OpenAI-compatible endpoint. Install Ollama from ollama.com, then `ollama pull llama3.1`.' : 'The server’s /v1 endpoint.'}>
-            <TextInput size="sm" value={baseUrl} onChange={(e) => setBaseUrl(e.currentTarget.value)} placeholder="http://localhost:8000/v1" className="np-mono-input" />
-          </Field>
-        )}
-        {needsKey && (
-          <SecretField
-            name={apiKeyEnv}
-            isSet={keySet}
-            label="API key"
-            onSaved={setKeySet}
-            placeholder={preset.keyUrl ? `Paste a key from ${new URL(preset.keyUrl).host}` : 'Paste the API key'}
-          />
-        )}
-        {needsKey && preset.keyUrl && (
-          <Anchor size="xs" href={preset.keyUrl} target="_blank" rel="noreferrer" mt={-10}>
-            Get a key <IconExternalLink size={11} style={{ verticalAlign: -1 }} />
-          </Anchor>
-        )}
-        <Field
-          label="Model"
-          hint={models.data ? models.data.message : ready ? 'Loading the available models…' : 'Save the key to list the models.'}
-          error={models.data && !models.data.ok ? models.data.message : models.isError ? (models.error as Error).message : null}
-          right={
-            <Button type="button" size="compact-xs" variant="subtle" color="gray" leftSection={<IconRefresh size={12} />} disabled={!ready} loading={models.isPending} onClick={() => models.mutate()}>
-              Reload
-            </Button>
-          }
-        >
-          <Select size="sm" searchable data={models.data ? [...models.data.models].sort((x, y) => Number(isEmbeddingModel(x)) - Number(isEmbeddingModel(y))) : model ? [model] : []} value={model} onChange={setModel} placeholder={ready ? 'Choose a model' : '—'} disabled={!ready} comboboxProps={{ withinPortal: true }} />
-        </Field>
-        <Group gap={8} justify="space-between">
-          <TestButton disabled={!model} run={() => setupApi.askTest({ ...conn, model: model! })} label="Test model" testId="ask-test" />
-          <Button
-            type="button"
-            size="xs"
-            disabled={!model || existing.some((m) => m.id === id)}
-            onClick={() => onAdded({ id, provider: preset.provider, model: model!, baseUrl: baseUrl || null, apiKeyEnv: apiKeyEnv || null })}
-            data-testid="add-model-submit"
-          >
-            Add model
-          </Button>
-        </Group>
-      </div>
-    </div>
-  );
-}
-
-type LimitKey = 'maxToolCalls' | 'tokenBudget' | 'timeoutMs' | 'maxOutputTokens';
-const LIMIT_KEYS: LimitKey[] = ['maxToolCalls', 'tokenBudget', 'timeoutMs', 'maxOutputTokens'];
-
-interface LimitsDraft {
-  values: Record<LimitKey, number | null>;
-  maxToolResultTokens: number | null;
-  perTool: { tool: string; tokens: number | null }[];
-}
-
-const limitsOf = (ask: SetupState['config']['ask']): LimitsDraft => ({
-  values: Object.fromEntries(LIMIT_KEYS.map((k) => [k, ask[k] ?? null])) as Record<LimitKey, number | null>,
-  maxToolResultTokens: ask.limits?.maxToolResultTokens ?? null,
-  perTool: Object.entries(ask.limits?.[PER_TOOL_FIELD] ?? {}).map(([tool, tokens]) => ({ tool, tokens })),
-});
-
-/** Range error for a limit (null = ok or unset). */
-export function limitError(key: keyof typeof ASK_LIMITS, v: number | null): string | null {
-  if (v === null) return null;
-  const r = ASK_LIMITS[key];
-  if (!Number.isInteger(v) || v < r.min || v > r.max) return `Between ${r.min.toLocaleString('en')} and ${r.max.toLocaleString('en')}`;
-  return null;
-}
-
-function AskAdvanced({ draft, setDraft }: { draft: LimitsDraft; setDraft: (d: LimitsDraft) => void }) {
-  const [open, setOpen] = useState(false);
-  const num = (v: string | number) => (v === '' || v === null ? null : Number(v));
-  return (
-    <div className="su-advanced" data-open={open || undefined}>
-      <button type="button" className="su-advanced-toggle" onClick={() => setOpen(!open)} aria-expanded={open} data-testid="ask-advanced">
-        <IconChevronRight size={14} className="su-advanced-chevron" />
-        Advanced
-        <span className="np-faint">limits per question</span>
-      </button>
-      {open && (
-        <div className="su-advanced-body">
-          <div className="su-limits">
-            {LIMIT_KEYS.map((k) => {
-              const r = ASK_LIMITS[k];
-              return (
-                <Field key={k} label={r.label} hint={`${r.help} Default ${r.def.toLocaleString('en')}.`} error={limitError(k, draft.values[k])}>
-                  <NumberInput size="sm" min={r.min} max={r.max} step={k === 'maxToolCalls' ? 1 : 1000} thousandSeparator="," placeholder={r.def.toLocaleString('en')} value={draft.values[k] ?? ''} onChange={(v) => setDraft({ ...draft, values: { ...draft.values, [k]: num(v) } })} />
-                </Field>
-              );
-            })}
-            <Field label={ASK_LIMITS.maxToolResultTokens.label} hint={`${ASK_LIMITS.maxToolResultTokens.help} Default ${ASK_LIMITS.maxToolResultTokens.def.toLocaleString('en')}.`} error={limitError('maxToolResultTokens', draft.maxToolResultTokens)}>
-              <NumberInput size="sm" min={ASK_LIMITS.maxToolResultTokens.min} max={ASK_LIMITS.maxToolResultTokens.max} step={500} thousandSeparator="," placeholder={ASK_LIMITS.maxToolResultTokens.def.toLocaleString('en')} value={draft.maxToolResultTokens ?? ''} onChange={(v) => setDraft({ ...draft, maxToolResultTokens: num(v) })} />
-            </Field>
-          </div>
-          <Field label="Per-tool overrides" hint="A different result limit for specific tools, e.g. get 12,000, spec_section_get 8,000 or graph_query 3,000.">
-            <div className="np-stack" style={{ gap: 6 }}>
-              {draft.perTool.map((row, i) => (
-                <Group key={i} gap={6} wrap="nowrap">
-                  <TextInput size="sm" placeholder="tool name" value={row.tool} className="np-mono-input" style={{ flex: 1 }} onChange={(e) => setDraft({ ...draft, perTool: draft.perTool.map((r, j) => (j === i ? { ...r, tool: e.currentTarget.value } : r)) })} />
-                  <NumberInput size="sm" placeholder="tokens" min={ASK_LIMITS.maxToolResultTokens.min} max={ASK_LIMITS.maxToolResultTokens.max} thousandSeparator="," w={140} value={row.tokens ?? ''} error={limitError('maxToolResultTokens', row.tokens) ? true : undefined} onChange={(v) => setDraft({ ...draft, perTool: draft.perTool.map((r, j) => (j === i ? { ...r, tokens: num(v) } : r)) })} />
-                  <button type="button" className="su-icon-btn" aria-label="Remove override" onClick={() => setDraft({ ...draft, perTool: draft.perTool.filter((_, j) => j !== i) })}>
-                    <IconTrash size={14} />
-                  </button>
-                </Group>
-              ))}
-              <Button type="button" size="compact-xs" variant="subtle" style={{ alignSelf: 'flex-start' }} onClick={() => setDraft({ ...draft, perTool: [...draft.perTool, { tool: '', tokens: null }] })}>
-                Add override
-              </Button>
-            </div>
-          </Field>
-        </div>
-      )}
-    </div>
-  );
-}
-
-export function AskSection({ state, register, variant }: SectionProps) {
-  const [models, setModels] = useState<AskModelConfig[]>(state.config.ask.models);
-  const [def, setDef] = useState<string | null>(state.config.ask.default);
-  const [adding, setAdding] = useState(state.config.ask.models.length === 0);
-  const initialLimits = limitsOf(state.config.ask);
-  const [limits, setLimits] = useState<LimitsDraft>(initialLimits);
-  const patch = usePatchConfig();
-  const changed = JSON.stringify(models) !== JSON.stringify(state.config.ask.models) || def !== state.config.ask.default;
-  useSaver(register, async () => {
-    const bad =
-      LIMIT_KEYS.map((k) => limitError(k, limits.values[k]) && ASK_LIMITS[k].label).find(Boolean) ??
-      (limitError('maxToolResultTokens', limits.maxToolResultTokens) ? ASK_LIMITS.maxToolResultTokens.label : null) ??
-      (limits.perTool.some((r) => (r.tool.trim() && r.tokens === null) || limitError('maxToolResultTokens', r.tokens)) ? 'Per-tool overrides' : null);
-    if (bad) throw new UiApiError('invalid_input', `Check the advanced limit “${bad}”`, 'ask');
-    const limitsChanged = JSON.stringify(limits) !== JSON.stringify(initialLimits);
-    const p: NonNullable<ConfigPatch['ask']> = {};
-    if (changed) Object.assign(p, { models: models.map(({ apiKeySet: _s, ...m }) => m), default: def && models.some((m) => m.id === def) ? def : (models[0]?.id ?? null) });
-    if (limitsChanged) {
-      Object.assign(p, limits.values);
-      const perTool = Object.fromEntries(limits.perTool.filter((r) => r.tool.trim() && r.tokens !== null).map((r) => [r.tool.trim(), r.tokens!]));
-      p.limits = { ...(limits.maxToolResultTokens !== null ? { maxToolResultTokens: limits.maxToolResultTokens } : {}), ...(Object.keys(perTool).length ? { [PER_TOOL_FIELD]: perTool } : {}) };
-    }
-    if (Object.keys(p).length) await patch({ ask: p });
-  });
-  return (
-    <div className="su-section">
-      <StepIntro title="Ask model" optional>
-        The Ask panel answers questions about your specs with an AI model that reads them through Mandate&apos;s tools. Coding agents don&apos;t need this; it&apos;s only for asking in the web UI.
-        Keys stay on this server.
-      </StepIntro>
-      {models.length > 0 && (
-        <div className="su-model-list" data-testid="model-list">
-          {models.map((m) => (
-            <div key={m.id} className="su-model">
-              <input type="radio" name="ask-default" checked={(def ?? models[0]?.id) === m.id} onChange={() => setDef(m.id)} aria-label={`Use ${m.model} by default`} />
-              <IconBrain size={15} className="np-faint" />
-              <span className="su-model-name">{m.model}</span>
-              <span className="np-chip">{ASK_PRESETS.find((p) => p.provider === m.provider && (p.baseUrl ?? null) === (m.provider === 'openai-compatible' ? m.baseUrl : null))?.label ?? m.provider}</span>
-              {(def ?? models[0]?.id) === m.id && <span className="su-badge">Default</span>}
-              <button type="button" className="su-icon-btn" aria-label={`Remove ${m.model}`} onClick={() => setModels(models.filter((x) => x.id !== m.id))}>
-                <IconTrash size={14} />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-      {adding ? (
-        <AddModel existing={models} onAdded={(m) => (setModels([...models, m]), setDef(def ?? m.id), setAdding(false))} />
-      ) : (
-        <Button type="button" variant="default" size="xs" onClick={() => setAdding(true)} style={{ alignSelf: 'flex-start' }}>
-          Add a model
-        </Button>
-      )}
-      <AskAdvanced draft={limits} setDraft={setLimits} />
-      {variant === 'wizard' && <NextNote>{models.length ? 'The Ask panel uses the default model; people can pick another one per question.' : 'Skip this if you only use coding agents. Add a model later in Settings.'}</NextNote>}
-    </div>
-  );
-}
-
 /* ------------------------------------------------------------------ semantic search */
 
 export { SearchSection } from './SearchSection';
@@ -931,7 +669,7 @@ export function GitSection({ state, register, variant }: SectionProps) {
           </Group>
         )}
       </div>
-      {variant === 'wizard' && <NextNote>Optionally connect an AI model for the Ask panel and local semantic search.</NextNote>}
+      {variant === 'wizard' && <NextNote>Semantic search works with local embeddings and no key; change it later in Settings.</NextNote>}
     </div>
   );
 }

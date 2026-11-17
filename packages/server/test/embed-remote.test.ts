@@ -6,7 +6,7 @@ import { createSpecSchema } from '@mandate/shared';
 import { embeddingConfigSchema, resolveEmbeddingConfig, type ResolvedEmbeddingConfig } from '../src/config.js';
 import { FakeProvider, createProvider, modelIdFor, OpenAICompatibleProvider } from '../src/index/embed/index.js';
 import { liveEmbeddingConfig } from '../src/index/embed/live.js';
-import { askKeyCandidates, embeddingModelsOf, isEmbeddingEntry, modelPreset, QWEN3_QUERY_PREFIX, switchEstimate } from '../src/index/embed/presets.js';
+import { embeddingModelsOf, isEmbeddingEntry, modelPreset, QWEN3_QUERY_PREFIX, switchEstimate } from '../src/index/embed/presets.js';
 import { listEmbeddingModels, testEmbeddingModel } from '../src/index/embed/probe.js';
 import { IndexService } from '../src/index/service.js';
 import { createStorage } from '../src/storage/index.js';
@@ -129,21 +129,6 @@ describe('/models filtering and Test (mocked endpoint)', () => {
     const full = new OpenAICompatibleProvider({ baseUrl: 'https://x.example/v1', model: 'text-embedding-3-small', dimensions: 1536, apiKey: KEY, modelId: 'x', fetch: f });
     await full.embed(['hello']);
     expect(bodies.at(-1)).not.toHaveProperty('dimensions');
-  });
-});
-
-describe('use the same key as Ask', () => {
-  it('offers Ask models on the same endpoint (env var names only)', () => {
-    const ask = [
-      { id: 'luna', provider: 'openai-compatible', model: 'gpt-6-luna', baseUrl: 'https://api.cheaperinference.com/v1/', apiKeyEnv: 'CHEAPERINFERENCE_API_KEY' },
-      { id: 'haiku', provider: 'openai-compatible', model: 'claude-haiku-5.5', baseUrl: 'https://API.cheaperinference.com/v1', apiKeyEnv: 'CHEAPERINFERENCE_API_KEY' },
-      { id: 'gpt', label: 'GPT', provider: 'openai', model: 'gpt-6', baseUrl: null, apiKeyEnv: 'OPENAI_API_KEY' },
-      { id: 'claude', provider: 'anthropic', model: 'claude', baseUrl: null, apiKeyEnv: 'ANTHROPIC_API_KEY' },
-    ];
-    const set = (n: string) => n === 'CHEAPERINFERENCE_API_KEY';
-    expect(askKeyCandidates('https://api.cheaperinference.com/v1', ask, set)).toEqual([{ askModelId: 'luna', label: 'gpt-6-luna', apiKeyEnv: 'CHEAPERINFERENCE_API_KEY', apiKeySet: true }]);
-    expect(askKeyCandidates('https://api.openai.com/v1', ask, set)).toEqual([{ askModelId: 'gpt', label: 'GPT', apiKeyEnv: 'OPENAI_API_KEY', apiKeySet: false }]);
-    expect(askKeyCandidates('https://api.together.xyz/v1', ask, set)).toEqual([]);
   });
 });
 

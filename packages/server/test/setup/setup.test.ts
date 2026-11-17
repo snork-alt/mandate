@@ -226,14 +226,7 @@ describe('secrets and config', () => {
     expect(statSync(file).mode & 0o777).toBe(0o600);
     expect(readFileSync(file, 'utf8')).toContain(SECRET_VALUE);
     const st = await h.inject({ url: '/ui/setup/state', cookie });
-    const models = await h.inject({ method: 'POST', url: '/ui/setup/ask/models', cookie, body: { provider: 'anthropic', apiKeyEnv: 'ANTHROPIC_TEST_KEY' } });
-    expect(models.json()).toMatchObject({ ok: true, models: ['claude-haiku-4', 'claude-sonnet-5'], suggested: 'claude-sonnet-5' });
-    const test = await h.inject({ method: 'POST', url: '/ui/setup/ask/test', cookie, body: { provider: 'anthropic', apiKeyEnv: 'ANTHROPIC_TEST_KEY', model: 'claude-sonnet-5' } });
-    expect(test.json()).toMatchObject({ ok: true });
-    const badKey = await h.inject({ method: 'POST', url: '/ui/setup/ask/test', cookie, body: { provider: 'anthropic', apiKey: 'sk-wrong-key-123456789', model: 'claude-sonnet-5' } });
-    expect(badKey.json().ok).toBe(false);
-    expect(badKey.payload).not.toContain('sk-wrong-key-123456789');
-    for (const r of [set, st, models, test]) expect(r.payload).not.toContain(SECRET_VALUE);
+    for (const r of [set, st]) expect(r.payload).not.toContain(SECRET_VALUE);
     expect(h.logs.join('\n')).not.toContain(SECRET_VALUE);
     expect((await h.inject({ method: 'PUT', url: '/ui/setup/secret', cookie, body: { name: 'ANTHROPIC_TEST_KEY', value: null } })).json()).toEqual({ name: 'ANTHROPIC_TEST_KEY', set: false });
     expect(readFileSync(file, 'utf8')).not.toContain(SECRET_VALUE);
@@ -241,15 +234,15 @@ describe('secrets and config', () => {
     delete process.env.ANTHROPIC_TEST_KEY;
   });
 
-  it('remote embeddings: reuse the Ask key, list embedding models, test with a shortened size, save; key write-only', async () => {
-    const h = await harness('computer', {
-      ask: { default: 'luna', models: [{ id: 'luna', provider: 'openai-compatible', model: 'gpt-6-luna', baseUrl: 'https://api.cheaperinference.com/v1', apiKeyEnv: 'CI_EMBED_TEST_KEY' }] },
-    });
+  it('remote embeddings: key flag, list embedding models, test with a shortened size, save; key write-only', async () => {
+    const h = await harness('computer');
     const { cookie } = await setupCookie(h);
     const set = await h.inject({ method: 'PUT', url: '/ui/setup/secret', cookie, body: { name: 'CI_EMBED_TEST_KEY', value: SECRET_VALUE } });
     const baseUrl = 'https://api.cheaperinference.com/v1';
     const keys = await h.inject({ method: 'POST', url: '/ui/setup/embedding/keys', cookie, body: { baseUrl } });
-    expect(keys.json()).toEqual({ candidates: [{ askModelId: 'luna', label: 'gpt-6-luna', apiKeyEnv: 'CI_EMBED_TEST_KEY', apiKeySet: true }] });
+    expect(keys.json()).toEqual({});
+    const keysSet = await h.inject({ method: 'POST', url: '/ui/setup/embedding/keys', cookie, body: { baseUrl, apiKeyEnv: 'CI_EMBED_TEST_KEY' } });
+    expect(keysSet.json()).toEqual({ apiKeyEnvSet: true });
     const models = await h.inject({ method: 'POST', url: '/ui/setup/embedding/models', cookie, body: { baseUrl, preset: 'cheaperinference', apiKeyEnv: 'CI_EMBED_TEST_KEY' } });
     expect(models.json()).toMatchObject({ ok: true, suggested: 'text-embedding-3-small', models: [{ id: 'qwen3-embedding-8b' }, { id: 'text-embedding-3-small', pricePerMTok: 0.017 }] });
     const test = await h.inject({ method: 'POST', url: '/ui/setup/embedding/test', cookie, body: { baseUrl, apiKeyEnv: 'CI_EMBED_TEST_KEY', model: 'text-embedding-3-small', requestDimensions: 512 } });
@@ -284,10 +277,10 @@ describe('secrets and config', () => {
     const h = await harness('computer');
     const { cookie } = await setupCookie(h);
     const v1 = (await h.inject({ url: '/ui/setup/state', cookie })).json().configVersion;
-    const ok = await h.inject({ method: 'PUT', url: '/ui/setup/config', cookie, body: { configVersion: v1, patch: { git: { backend: 'cli', autoPush: { intervalSeconds: 600 } }, ask: { default: 'local', models: [{ id: 'local', provider: 'openai-compatible', model: 'llama3.1', baseUrl: 'http://localhost:11434/v1' }] } } } });
+    const ok = await h.inject({ method: 'PUT', url: '/ui/setup/config', cookie, body: { configVersion: v1, patch: { git: { backend: 'cli', autoPush: { intervalSeconds: 600 } } } } });
     expect(ok.statusCode).toBe(200);
     const file = JSON.parse(readFileSync(h.env.MANDATE_CONFIG!, 'utf8'));
-    expect(file).toMatchObject({ index: { chunkTargetTokens: 400 }, git: { backend: 'cli', autoPush: { intervalSeconds: 600 } }, ask: { default: 'local' } });
+    expect(file).toMatchObject({ index: { chunkTargetTokens: 400 }, git: { backend: 'cli', autoPush: { intervalSeconds: 600 } } });
     expect(statSync(h.env.MANDATE_CONFIG!).mode & 0o777).toBe(0o600);
     const stale = await h.inject({ method: 'PUT', url: '/ui/setup/config', cookie, body: { configVersion: v1, patch: { git: { cliPath: 'git2' } } } });
     expect(stale.statusCode).toBe(409);
@@ -314,8 +307,7 @@ describe('secrets and config', () => {
 });
 
 describe('probes (mocked HTTP)', () => {
-  it('lists Ollama models, detects nomic-embed-text and tests one embedding', async () => {
-    expect(await probes.listModels({ provider: 'openai-compatible', baseUrl: 'http://localhost:11434/v1' }, mockFetch)).toMatchObject({ ok: true, models: ['llama3.1', 'nomic-embed-text'], suggested: 'llama3.1' });
+  it('detects Ollama, nomic-embed-text and tests one embedding', async () => {
     expect(await probes.detectOllama(mockFetch)).toMatchObject({ ollama: true, hasNomic: true });
     expect(await probes.testEmbedding('http://localhost:11434/v1', 'nomic-embed-text', mockFetch)).toMatchObject({ ok: true, dimensions: 768 });
     const off = await probes.detectOllama(async () => {

@@ -1,7 +1,6 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { McpError } from '@modelcontextprotocol/sdk/types.js';
-import { ASK_NOTIFICATION } from '@mandate/shared';
 import { redirectToLogin } from '../auth';
 import { createPushLeader, type LeaderEnv, type PushLeader } from './pushLeader';
 
@@ -28,7 +27,7 @@ const connListeners = new Set<ConnectionHandler>();
 const emitConn = (c: boolean) => connListeners.forEach((l) => l(c));
 
 /** Request-scoped notifications (sent on a POST response stream to the tab that made the call): never relayed. */
-const LOCAL_METHODS = new Set([ASK_NOTIFICATION, 'notifications/progress', 'notifications/cancelled']);
+const LOCAL_METHODS = new Set(['notifications/progress', 'notifications/cancelled']);
 
 export interface StreamGate {
   /** The `fetch` for the transport: a GET (standalone SSE stream) is answered locally with 405 unless allowed. */
@@ -334,9 +333,9 @@ interface ToolResult {
 
 /** Call a tool and return its `structuredContent`; throws `McpToolError` for failures. */
 export interface CallOptions {
-  /** Request timeout (the SDK default is 60 s; `ask` runs longer). */
+  /** Request timeout (the SDK default is 60 s). */
   timeoutMs?: number;
-  /** Reconnect and retry once on a lost session (default true; off for non-idempotent calls like `ask`). */
+  /** Reconnect and retry once on a lost session (default true; off for non-idempotent calls like `ask_post`). */
   retry?: boolean;
 }
 

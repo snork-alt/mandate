@@ -11,7 +11,7 @@ import { can, commandChanges, envVarFor, makeServer, mcpRemove, mcpUpsert, OAUTH
 import { BIN, envFile, type Ctx } from './context.js';
 import { applyChanges, JsoncError, type Change } from './edits.js';
 import { disconnectChanges, pickAgents, type Runtime } from './install.js';
-import { claudeFlowWiring } from './claude-flow.js';
+import { askAgentChange, claudeFlowWiring } from './claude-flow.js';
 import { resolveToken } from './events.js';
 import { channelName, pushChanges, pushMode, type PushMode } from './push.js';
 import { publicUrlProblem, readSettings } from './settings.js';
@@ -154,6 +154,7 @@ async function connectRemote(rt: Runtime, a: Args, repo: string, url: string): P
     }
     if (wireRepo) changes.push(...disconnectChanges(ctx, repo, project));
     changes.push(...claudeFlowWiring(ctx, agents, { project, url: base, repo: wireRepo ? repo : undefined, remove: true }));
+    if (agents.some((a) => a.id === 'claude-code')) changes.push(askAgentChange(ctx, readManifest(ctx).repos.map((r) => r.project).filter((p) => p !== project)));
     applyChanges(changes, { dryRun: rt.dryRun, out, home: ctx.home });
     applyChanges(pushChanges(ctx, project, base, 'off', true), { dryRun: rt.dryRun, out, home: ctx.home }); // event channel + hooks (a second step: same files)
     if (!rt.dryRun) {
@@ -204,6 +205,7 @@ async function connectRemote(rt: Runtime, a: Args, repo: string, url: string): P
   }
   changes.push(...skillChanges(ctx, agents), ...commandChanges(ctx, agents));
   changes.push(...claudeFlowWiring(ctx, agents, { project, url: base, repo: wireRepo ? repo : undefined, strict: bool(a, 'strict-flow') }));
+  if (agents.some((x) => x.id === 'claude-code')) changes.push(askAgentChange(ctx, [...readManifest(ctx).repos.map((r) => r.project), project]));
   if (wireRepo) {
     const r = connectChanges(ctx, repo, project, base, agents.filter((ag) => !oauth || OAUTH_AGENTS.has(ag.id)), oauth);
     changes.push(...r.changes);

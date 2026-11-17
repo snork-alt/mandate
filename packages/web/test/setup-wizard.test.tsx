@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-/** The first-run wizard: GitHub App → Git → Ask models → Semantic search → Database → Sign in (the person who finishes is the first admin); Settings → Admins. */
+/** The first-run wizard: GitHub App → Git → Semantic search → Database → Sign in (the person who finishes is the first admin); Settings → Admins. */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -22,7 +22,6 @@ const CONFIG = (gh: Record<string, unknown>) => ({
   server: { publicUrl: null, bind: '127.0.0.1', port: 4000, trustProxy: false },
   github: github(gh),
   git: { backend: 'embedded', author: { name: 'Mandate', email: 'm@x' }, auth: { sshKeyPath: null, sshPassphraseEnv: null, passphraseSet: false, username: null, tokenEnv: null, tokenSet: false }, autoPush: { enabled: true, debounceSeconds: 10, intervalSeconds: 300 }, system: { version: '2.47.0', userName: null, userEmail: null }, agentAvailable: false, defaultKeys: ['/home/me/.ssh/id_ed25519'] },
-  ask: { default: null, models: [] },
   database: { driver: 'sqlite', urlEnv: 'MANDATE_DATABASE_URL', urlSet: false, pooler: 'none', schemaPerProject: true, ssl: null, prepare: null, extensionsSchema: null, pool: { max: 10, idleTimeoutMs: 30000, connectionTimeoutMs: 10000 }, active: 'sqlite' },
   embedding: { provider: 'none', baseUrl: 'http://localhost:11434/v1', model: 'nomic-embed-text', dimensions: 768, apiKeyEnv: null, apiKeySet: false, preset: null, requestDimensions: null, maxInputTokens: 2048, batchSize: 32, documentPrefix: '', queryPrefix: '', remote: false },
 });
@@ -34,8 +33,8 @@ function mount(gh: Record<string, unknown>, o: { calls?: Call[]; config?: (c: Re
   const calls = o.calls ?? [];
   const cfg = CONFIG(gh) as any;
   o.config?.(cfg);
-  const secrets = new Set<string>(cfg.ask.models.filter((m: any) => m.apiKeySet).map((m: any) => m.apiKeyEnv));
-  const view = () => ({ ...cfg, ask: { ...cfg.ask, models: cfg.ask.models.map((m: any) => ({ ...m, apiKeySet: !!m.apiKeyEnv && secrets.has(m.apiKeyEnv) })) } });
+  const secrets = new Set<string>();
+  const view = () => cfg;
   vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
     const body = init?.body ? JSON.parse(String(init.body)) : null;
     calls.push({ url, method: init?.method ?? 'GET', body });
@@ -68,8 +67,8 @@ const patches = (calls: Call[]) => calls.filter((c) => c.url === '/ui/setup/conf
 const next = () => fireEvent.click(screen.getByTestId('wz-next'));
 const toStep = async (id: string, n: number) => {
   await screen.findByTestId('wz-github-created');
-  for (const s of ['wz-git', 'wz-ask', 'wz-search', 'wz-database', 'wz-ready'].slice(0, n)) {
-    if (s !== 'wz-git') fireEvent.click(screen.getByTestId(s === 'wz-search' || s === 'wz-database' || s === 'wz-ready' ? 'wz-skip' : 'wz-next'));
+  for (const s of ['wz-git', 'wz-search', 'wz-database', 'wz-ready'].slice(0, n)) {
+    if (s !== 'wz-git') fireEvent.click(screen.getByTestId(s === 'wz-database' || s === 'wz-ready' ? 'wz-skip' : 'wz-next'));
     else next();
     await screen.findByTestId(s);
   }
@@ -77,18 +76,18 @@ const toStep = async (id: string, n: number) => {
 };
 
 describe('setup wizard', () => {
-  it('six steps in a rail (required / optional / become the admin), progress, phone segments; Continue waits for the app', async () => {
-    expect(wizardSteps().map((s) => s.id)).toEqual(['github', 'git', 'ask', 'search', 'database', 'ready']);
+  it('five steps in a rail (required / optional / become the admin), progress, phone segments; Continue waits for the app', async () => {
+    expect(wizardSteps().map((s) => s.id)).toEqual(['github', 'git', 'search', 'database', 'ready']);
     mount({});
     await screen.findByTestId('wz-github');
     const steps = [...document.querySelectorAll('.wz-step')];
-    expect(steps.map((s) => s.querySelector('.wz-step-label')!.textContent)).toEqual(['GitHub App', 'Git', 'Ask models', 'Semantic search', 'Database', 'Sign in']);
-    expect(steps.map((s) => s.querySelector('.wz-step-meta')!.textContent)).toEqual(['Required', 'Required', 'Optional', 'Optional', 'Optional', 'Become the admin']);
+    expect(steps.map((s) => s.querySelector('.wz-step-label')!.textContent)).toEqual(['GitHub App', 'Git', 'Semantic search', 'Database', 'Sign in']);
+    expect(steps.map((s) => s.querySelector('.wz-step-meta')!.textContent)).toEqual(['Required', 'Required', 'Optional', 'Optional', 'Become the admin']);
     expect(steps[0]!.getAttribute('data-state')).toBe('current');
-    expect(screen.getByTestId('wz-progress').textContent).toBe('0 of 6');
-    expect(screen.getByTestId('wz-phone-progress').querySelectorAll('i')).toHaveLength(6);
+    expect(screen.getByTestId('wz-progress').textContent).toBe('0 of 5');
+    expect(screen.getByTestId('wz-phone-progress').querySelectorAll('i')).toHaveLength(5);
     expect(screen.getByTestId('wz-phone-progress').querySelector('i[data-state=current]')).toBeTruthy();
-    expect(screen.getAllByText('Step 1 of 6')).toHaveLength(2); // eyebrow + phone header
+    expect(screen.getAllByText('Step 1 of 5')).toHaveLength(2); // eyebrow + phone header
     expect(document.body.textContent).not.toMatch(/callback|https?:\/\/localhost|\bmode\b|Just me|this computer|Claude/i);
     expect(screen.getByTestId('wz-next').hasAttribute('disabled')).toBe(true);
     expect(screen.queryByTestId('wz-back')).toBeNull();
@@ -114,7 +113,7 @@ describe('setup wizard', () => {
     expect(screen.getByTestId('gh-test')).toBeTruthy();
   });
 
-  it('created app → Git (no author fields; built-in pushes with the app) → skip Ask + search → SQLite → summary with "Skipped"', async () => {
+  it('created app → Git (no author fields; built-in pushes with the app) → skip search → SQLite → summary with "Skipped"', async () => {
     const calls = mount(APP);
     expect((await screen.findByTestId('wz-github-created')).textContent).toMatch(/mandate-acme · owned by matteo/);
     expect(document.querySelector('.wz-step')!.querySelector('.wz-step-meta')!.textContent).toBe('mandate-acme · matteo');
@@ -125,7 +124,7 @@ describe('setup wizard', () => {
     expect(document.body.textContent).not.toMatch(/Commit author|Proposal/i);
     // Rail: GitHub done with its summary; progress 1 of 6.
     expect(document.querySelector('.wz-step')!.getAttribute('data-state')).toBe('done');
-    expect(screen.getByTestId('wz-progress').textContent).toBe('1 of 6');
+    expect(screen.getByTestId('wz-progress').textContent).toBe('1 of 5');
     fireEvent.click(screen.getByText('Built-in git'));
     expect(screen.getByText('Pushes with the GitHub App')).toBeTruthy();
     expect(screen.getByText('No key needed.')).toBeTruthy();
@@ -136,14 +135,8 @@ describe('setup wizard', () => {
     fireEvent.click(screen.getByText('System git'));
     fireEvent.click(screen.getByTestId('wz-autopush'));
     next();
-    await screen.findByTestId('wz-ask');
-    expect(patches(calls)[0]).toEqual({ git: { backend: 'cli', autoPush: { enabled: false } } });
-    // Ask models: empty state, Skip for now.
-    expect(screen.getByTestId('ask-empty').textContent).toMatch(/No models yet/);
-    fireEvent.click(screen.getByTestId('wz-skip'));
     await screen.findByTestId('wz-search');
-    expect(document.querySelectorAll('.wz-step')[2]!.getAttribute('data-state')).toBe('skipped');
-    expect(document.querySelectorAll('.wz-step')[2]!.querySelector('.wz-step-meta')!.textContent).toBe('Skipped');
+    expect(patches(calls)[0]).toEqual({ git: { backend: 'cli', autoPush: { enabled: false } } });
     fireEvent.click(screen.getByTestId('wz-skip'));
     // Database: SQLite by default; Postgres needs the URL and a passing test.
     await screen.findByTestId('wz-database');
@@ -162,10 +155,10 @@ describe('setup wizard', () => {
     expect(sum).toContain('System git 2.47.0 · auto-push off');
     expect(sum).toContain('SQLite (built in)');
     expect(sum).toContain('Keyword search only');
-    expect(sum.match(/Skipped/g)).toHaveLength(2);
+    expect(sum.match(/Skipped/g)).toHaveLength(1);
     expect(screen.getByTestId('wz-admin-note').textContent).toBe("You'll be the admin. Add more admins later in Settings.");
     expect(screen.getByTestId('setup-signin').textContent).toContain('Sign in with GitHub');
-    expect(screen.getByTestId('wz-progress').textContent).toBe('5 of 6');
+    expect(screen.getByTestId('wz-progress').textContent).toBe('4 of 5');
   });
 
   it('built-in git: auth.method "app" by default, "ssh" with a key (when the server reports auth.method)', async () => {
@@ -178,71 +171,14 @@ describe('setup wizard', () => {
     expect((screen.getByTestId('wz-ssh-key') as HTMLInputElement).value).toBe('/k');
     fireEvent.click(screen.getByTestId('wz-push-app'));
     next();
-    await screen.findByTestId('wz-ask');
+    await screen.findByTestId('wz-search');
     expect(patches(calls)[0]).toEqual({ git: { auth: { method: 'app' } } });
   });
 
-  it('Ask models: add many (key write-only), make default, edit, remove; Continue saves nothing else', async () => {
+  it('Semantic search: a saved key shows "Saved"; Test detects the size; saved with the env var name only', async () => {
     const calls = mount(APP, {
       routes: {
-        '/ui/setup/ask/models': () => ({ ok: true, models: ['claude-sonnet-5-5', 'claude-haiku-5-5'], suggested: 'claude-sonnet-5-5', message: '2 models' }),
-        '/ui/setup/ask/test': () => ({ ok: true, message: 'ok', ms: 900 }),
-      },
-    });
-    await toStep('wz-ask', 2);
-    fireEvent.click(screen.getByTestId('add-model-open'));
-    // Anthropic preselected; key variable suggested; the key is write-only.
-    expect((screen.getByTestId('wz-ask-keyenv') as HTMLInputElement).value).toBe('ANTHROPIC_API_KEY');
-    expect(screen.getByText('Suggested')).toBeTruthy();
-    fireEvent.change(screen.getByTestId('wz-ask-key'), { target: { value: 'sk-ant-secret' } });
-    fireEvent.click(screen.getByTestId('wz-ask-model-load'));
-    expect(await screen.findByText('2 models loaded')).toBeTruthy();
-    await waitFor(() => expect((screen.getByTestId('wz-ask-model') as HTMLInputElement).value).toBe('claude-sonnet-5-5'));
-    fireEvent.click(screen.getByTestId('wz-ask-test'));
-    expect((await screen.findByTestId('wz-result')).textContent).toMatch(/It works.*replied in 0\.9 s/);
-    fireEvent.click(screen.getByTestId('add-model-submit'));
-    await screen.findByTestId('model-anthropic-claude-sonnet-5-5');
-    expect(calls.find((c) => c.url === '/ui/setup/secret')!.body).toEqual({ name: 'ANTHROPIC_API_KEY', value: 'sk-ant-secret' });
-    expect(screen.getByTestId('model-anthropic-claude-sonnet-5-5').textContent).toMatch(/Key saved.*Default/);
-    // A second model: an OpenAI-compatible URL, typed model name, no key.
-    fireEvent.click(screen.getByTestId('add-model-open'));
-    fireEvent.click(screen.getByTestId('wz-ask-compatible'));
-    fireEvent.change(screen.getByTestId('wz-ask-base'), { target: { value: 'http://localhost:11434/v1' } });
-    expect((screen.getByTestId('wz-ask-keyenv') as HTMLInputElement).value).toBe('');
-    fireEvent.change(screen.getByTestId('wz-ask-model'), { target: { value: 'llama3.1' } });
-    fireEvent.click(screen.getByTestId('add-model-submit'));
-    await screen.findByTestId('model-compatible-llama3-1');
-    expect(screen.getByTestId('ask-count').textContent).toBe('2 models');
-    expect(screen.getByTestId('model-compatible-llama3-1').textContent).toMatch(/localhost:11434.*No key/);
-    // Make default, then remove the old default.
-    fireEvent.click(screen.getByTestId('make-default-compatible-llama3-1'));
-    await waitFor(() => expect(screen.getByTestId('model-compatible-llama3-1').textContent).toContain('Default'));
-    fireEvent.click(screen.getByTestId('remove-anthropic-claude-sonnet-5-5'));
-    await waitFor(() => expect(screen.queryByTestId('model-anthropic-claude-sonnet-5-5')).toBeNull());
-    expect(screen.getByTestId('ask-count').textContent).toBe('1 model');
-    const last = patches(calls).filter((p) => p.ask).at(-1)!;
-    expect(last).toEqual({ ask: { models: [{ id: 'compatible-llama3-1', provider: 'openai-compatible', model: 'llama3.1', baseUrl: 'http://localhost:11434/v1', apiKeyEnv: null }], default: 'compatible-llama3-1' } });
-    // Edit opens the panel with the model.
-    fireEvent.click(screen.getByTestId('edit-compatible-llama3-1'));
-    expect((screen.getByTestId('wz-ask-model') as HTMLInputElement).value).toBe('llama3.1');
-    // Continue with the panel open asks to add or close first.
-    next();
-    expect(screen.getByText(/Press “Add model” to keep this model/)).toBeTruthy();
-    fireEvent.click(screen.getByTestId('add-model-close'));
-    next();
-    await screen.findByTestId('wz-search');
-    expect(document.querySelectorAll('.wz-step')[2]!.querySelector('.wz-step-meta')!.textContent).toBe('1 model');
-    // Keys never travel in config patches.
-    expect(JSON.stringify(patches(calls))).not.toMatch(/sk-ant|apiKey"/);
-  });
-
-  it('Semantic search: a key shared with an Ask model shows "Saved"; Test detects the size; saved with the env var name only', async () => {
-    const calls = mount(APP, {
-      config: (c) => {
-        c.ask = { default: 'openai-gpt-6-luna', models: [{ id: 'openai-gpt-6-luna', provider: 'openai', model: 'gpt-6-luna', baseUrl: null, apiKeyEnv: 'OPENAI_API_KEY', apiKeySet: true }] } as never;
-      },
-      routes: {
-        '/ui/setup/embedding/keys': () => ({ candidates: [{ askModelId: 'openai-gpt-6-luna', label: 'gpt-6-luna', apiKeyEnv: 'OPENAI_API_KEY', apiKeySet: true }], apiKeyEnvSet: true }),
+        '/ui/setup/embedding/keys': () => ({ apiKeyEnvSet: true }),
         '/ui/setup/embedding/models': () => ({ ok: true, models: [{ id: 'text-embedding-3-small', pricePerMTok: 0.02, known: true }], suggested: 'text-embedding-3-small', total: 1, message: '' }),
         '/ui/setup/embedding/test': () => ({ ok: true, dimensions: 1536, ms: 120, message: 'ok', preset: {} }),
         '/ui/setup/embedding/estimate': () => ({ chunks: 10, tokens: 1000, avgTokens: 100, costUsd: 0.02, pricePerMTok: 0.02, projects: [] }),
@@ -254,14 +190,9 @@ describe('setup wizard', () => {
     next();
     await screen.findByTestId('wz-git');
     next();
-    await screen.findByTestId('wz-ask');
-    expect(screen.getByTestId('model-list').textContent).toContain('gpt-6-luna');
-    next();
     await screen.findByTestId('wz-search');
-    // OpenAI preselected because its key is already saved for gpt-6-luna.
-    expect(screen.getByTestId('wz-emb-openai').getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(screen.getByTestId('wz-emb-openai'));
     expect(await screen.findByTestId('wz-embed-saved')).toBeTruthy();
-    expect(screen.getByText(/Already saved for gpt-6-luna/)).toBeTruthy();
     expect(screen.queryByTestId('wz-embed-key')).toBeNull();
     expect((await screen.findByTestId('wz-cost')).textContent).toMatch(/about \$0\.02 once/);
     fireEvent.click(screen.getByTestId('wz-embed-test'));
@@ -276,7 +207,7 @@ describe('setup wizard', () => {
 
   it('Semantic search: Ollama with nomic-embed-text needs no key or test (768 dimensions)', async () => {
     const calls = mount(APP, { routes: { '/ui/setup/embedding/detect': () => ({ ollama: true, baseUrl: 'http://localhost:11434/v1', models: ['nomic-embed-text'], hasNomic: true, install: [] }), '/ui/setup/embedding/preset': () => { throw new Error('x'); } } });
-    await toStep('wz-search', 3);
+    await toStep('wz-search', 2);
     expect(screen.getByTestId('wz-emb-ollama').getAttribute('aria-checked')).toBe('true');
     expect((await screen.findByTestId('wz-ollama-status')).textContent).toMatch(/nomic-embed-text is installed/);
     next();

@@ -23,7 +23,7 @@ import { graphTools } from './tools/graph.js';
 import { opsTools } from './tools/ops.js';
 import { viewTools } from './tools/views.js';
 import { activityTools } from './tools/activity.js';
-import { askTools, setAskRegistry } from './tools/ask.js';
+import { askTools } from './tools/ask.js';
 import { searchTools } from './tools/search.js';
 import { ruleTools } from './tools/rules.js';
 import { writeTools } from './tools/write.js';
@@ -64,7 +64,6 @@ Writes are git commits. Every write tool also takes agent (default: MCP client n
 const BASE_TOOLS: AnyToolDef[] = [...projectTools, toolsEnableTool, ...lifecycleTools, ...searchTools, ...matchTools, ...graphTools, ...lineageTools, ...docTools, ...legacyRequestReadTools, ...componentTools, ...writeTools, uploadUrlTool, ...workOrderDocTools, ...auditTools, ...activityTools, ...askTools, ...ruleTools, ...viewTools, ...decisionTools, ...questionTools, ...flowTools, ...agentTools, ...newsTools, ...opsTools];
 /** Every tool (merged tools first after the project tools, in tools/list order). */
 export const TOOLS: AnyToolDef[] = [...BASE_TOOLS.slice(0, projectTools.length + 1), ...mergedTools(new Map(BASE_TOOLS.map((t) => [t.name, t]))), ...BASE_TOOLS.slice(projectTools.length + 1)];
-setAskRegistry(() => TOOLS);
 
 /**
  * Tools for the web UI and operations only: not served in tools/list to agent sessions (agents have better

@@ -42,13 +42,25 @@ export interface AgentView {
 
 export class AgentPresence {
   private readonly agents = new Map<string, AgentInfo>();
+  private readonly connectListeners = new Set<(client: string) => void>();
+
+  /** Called when an agent (re)connects: a stream opens, or a tool call after being idle / unknown. */
+  onConnect(fn: (client: string) => void): () => void {
+    this.connectListeners.add(fn);
+    return () => void this.connectListeners.delete(fn);
+  }
+  private connected(id: string) {
+    for (const fn of this.connectListeners) fn(id);
+  }
 
   note(c: { id: string; label: string; client: string; user?: string }, agentName?: string, repo?: string): AgentInfo {
     let a = this.agents.get(c.id);
+    const wasOnline = !!a && this.isOnline(c.id);
     if (!a) this.agents.set(c.id, (a = { id: c.id, label: c.label, client: c.client, ...(c.user ? { user: c.user } : {}), names: new Set(), repos: new Set(), streams: 0, lastSeen: 0 }));
     if (agentName) a.names.add(agentName);
     if (repo) a.repos.add(repo);
     a.lastSeen = Date.now();
+    if (!wasOnline) this.connected(c.id);
     return a;
   }
 

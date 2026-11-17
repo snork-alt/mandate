@@ -51,7 +51,7 @@ vi.mock('../src/mcp/client', () => ({
       return { ok: true };
     }
     if (name === 'activity_list') return { events: [] };
-    if (name === 'ask_status') return { configured: false, default: null, models: [], missing: [] };
+    if (name === 'agents_presence') return { agents: [] };
     throw new Error(`${name}: not mocked`);
   }),
   callRootTool: vi.fn(async () => ({ items: [] })),
@@ -265,7 +265,7 @@ function Probe() {
 
 function mountAsk(node: React.ReactNode, path = '/questions') {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  qc.setQueryData(['mcp', 'ask_status', {}], { configured: true, default: 'm', models: [{ id: 'm', label: 'M', provider: 'openai-compatible', model: 'x', apiKeySet: true, configured: true, missing: [] }], missing: [] });
+  qc.setQueryData(['agents-presence', ''], { agents: [] });
   return render(
     <MantineProvider>
       <QueryClientProvider client={qc}>

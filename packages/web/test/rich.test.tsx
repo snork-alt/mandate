@@ -4,14 +4,12 @@ import { MemoryRouter, useLocation } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MantineProvider } from '@mantine/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ASK_NOTIFICATION, buildNodeUri, buildRef, type AskResult, type AskToolCall } from '@mandate/shared';
+import { buildNodeUri, buildRef } from '@mandate/shared';
 import { installDom } from './dom';
 import { RefChip } from '../src/components/refs/RefChip';
 import { RefTable } from '../src/components/refs/TableEmbed';
 import { RefEmbed } from '../src/components/refs/RefEmbed';
 import { GraphEmbed } from '../src/components/refs/GraphEmbed';
-import { AnswerView, stepTitle, ToolStep, hideOpenFence } from '../src/components/ask/AskThread';
-import { emptyAnswer, reduceAskEvent, runAsk } from '../src/components/ask/stream';
 import { ActivityPanel, groupHeartbeats } from '../src/components/activity/ActivityPanel';
 import { activityRenderers } from '../src/components/activity/renderers';
 import type { ActivityEvent } from '../src/components/activity/types';
@@ -155,88 +153,6 @@ describe('embeds', () => {
     const seed = document.querySelector<HTMLElement>('.graph-node[data-seed]')!;
     expect(seed.style.background).toContain('--mantine-primary-color-light');
     expect(document.querySelector('marker path')?.getAttribute('style')).toContain('fill');
-  });
-});
-
-const call = (over: Partial<AskToolCall> = {}): AskToolCall => ({ id: 'c1', name: 'search', args: { q: 'refresh token' }, ok: true, summary: '6 hits', ms: 12, ...over });
-const result = (over: Partial<AskResult> = {}): AskResult => ({ conversationId: 'conv-0001', answer: 'x', embeds: [], references: [], toolCalls: [], usage: { inputTokens: 1, outputTokens: 2 }, stopReason: 'done', provider: 'fake', model: 'm', ...over });
-
-describe('ask tool steps and answer', () => {
-  it('describes steps', () => {
-    expect(stepTitle('search', { q: 'refresh token' }, '6 hits')).toBe('Searched “refresh token” · 6 hits');
-    expect(stepTitle('graph_query', {}, '12 rows')).toBe('Cypher · 12 rows');
-  });
-  it('step with search hits renders <mark> snippets safely', () => {
-    const c = call({ result: { total: 1, groups: [{ docUri: URIS.spec, docTitle: 'Login', hits: [{ uri: URIS.section, sectionTitle: 'Auth', snippet: 'a &lt;b&gt; <mark>refresh</mark>' }] }] } });
-    render(<R><ToolStep call={c} open /></R>);
-    expect(document.querySelector('mark')?.textContent).toBe('refresh');
-    expect(screen.getByText(/a <b>/)).toBeTruthy();
-  });
-  it('step with a Cypher result renders a table with ref chips; errors show the message', async () => {
-    const c = call({ name: 'graph_query', args: {}, summary: '1 rows', result: { columns: ['spec'], rows: [[URIS.spec]] } });
-    render(<R><ToolStep call={c} open /><ToolStep call={call({ id: 'c2', ok: false, summary: 'bad', error: { code: 'invalid', message: 'nope' } })} open /></R>);
-    expect(await screen.findByText('Login with SSO')).toBeTruthy();
-    expect(screen.getByText(/invalid: nope/)).toBeTruthy();
-  });
-  it('final answer: links become chips, unresolved are listed, invalid embeds are flagged, copy works', async () => {
-    const ghost = ref('specs', 'ghost');
-    const answer = `See [Login](${URIS.spec}) and [Ghost](${ghost}).\n\n\`\`\`mandate-embed\nnope\n\`\`\`\n`;
-    const writeText = vi.fn(async () => undefined);
-    Object.assign(navigator, { clipboard: { writeText } });
-    render(<R><AnswerView result={result({ answer, embeds: [{ kind: 'invalid', block: 'mandate-embed', error: 'bad ref', index: 0 }], references: [{ ref: URIS.spec, resolved: true }, { ref: ghost, resolved: false, error: 'no such spec' }] })} /></R>);
-    expect(await screen.findByText('Login')).toBeTruthy();
-    expect(screen.getAllByLabelText(`Unresolved reference ${ghost}`).length).toBeGreaterThan(0);
-    expect(screen.getByText(/Unresolved references \(1\)/)).toBeTruthy();
-    expect(screen.getByRole('alert').textContent).toContain('bad ref');
-    fireEvent.click(screen.getByText('Copy answer'));
-    expect(writeText).toHaveBeenCalledWith(answer);
-  });
-  it('hides a still-open embed fence while streaming', () => {
-    expect(hideOpenFence('Hello\n```mandate-embed\nref: x')).toBe('Hello\n');
-    expect(hideOpenFence('A\n```mandate-embed\nref: x\n```\nB')).toContain('B');
-  });
-});
-
-describe('ask streaming', () => {
-  it('accumulates text, tool calls and the final result from events', () => {
-    let s = emptyAnswer();
-    const id = 'a1';
-    s = reduceAskEvent(s, { askId: id, type: 'text', delta: 'Let me look.' });
-    s = reduceAskEvent(s, { askId: id, type: 'tool_start', id: 'c1', name: 'search', args: { q: 'x' } });
-    expect(s).toMatchObject({ text: '', running: [{ id: 'c1' }] });
-    s = reduceAskEvent(s, { askId: id, type: 'tool_end', call: call() });
-    expect(s).toMatchObject({ running: [], toolCalls: [{ id: 'c1' }] });
-    s = reduceAskEvent(s, { askId: id, type: 'text', delta: 'Hel' });
-    s = reduceAskEvent(s, { askId: id, type: 'text', delta: 'lo' });
-    expect(s.text).toBe('Hello');
-    s = reduceAskEvent(s, { askId: id, type: 'done', result: result({ answer: 'Hello world', toolCalls: [call()] }) });
-    expect(s).toMatchObject({ text: 'Hello world', result: { conversationId: 'conv-0001' } });
-    expect(reduceAskEvent(emptyAnswer(), { askId: id, type: 'error', error: { code: 'not_configured', message: 'no model' } }).error?.code).toBe('not_configured');
-  });
-  it('runAsk streams notifications of its own request, then returns the result; ignores other asks', async () => {
-    let emit: (n: { method: string; params?: Record<string, unknown> }) => void = () => undefined;
-    const states: string[] = [];
-    const deps = {
-      onNotification: (h: typeof emit) => ((emit = h), () => undefined),
-      callTool: vi.fn(async () => {
-        emit({ method: ASK_NOTIFICATION, params: { askId: 'A', type: 'text', delta: 'Hi' } });
-        emit({ method: ASK_NOTIFICATION, params: { askId: 'B', type: 'text', delta: 'other' } });
-        return result({ answer: 'Hi there' });
-      }),
-    };
-    const final = await runAsk(deps as never, { question: 'q', context: [] }, (s) => states.push(s.text), new AbortController().signal);
-    expect(states).toEqual(['Hi', 'Hi there']);
-    expect(final.result?.answer).toBe('Hi there');
-    expect(deps.callTool).toHaveBeenCalledWith('ask', { question: 'q', context: [] }, expect.anything(), { timeoutMs: 600_000, retry: false });
-  });
-  it('stop cancels and marks the turn stopped; errors keep code and message', async () => {
-    const ctl = new AbortController();
-    const deps = { onNotification: () => () => undefined, callTool: vi.fn((_n: string, _a: unknown, s: AbortSignal) => new Promise((_, rej) => s.addEventListener('abort', () => rej(new Error('aborted'))))) };
-    const p = runAsk(deps as never, { question: 'q', context: [] }, () => undefined, ctl.signal);
-    ctl.abort();
-    expect((await p).stopped).toBe(true);
-    const failing = { onNotification: () => () => undefined, callTool: vi.fn(async () => { throw Object.assign(new Error('configure a model'), { code: 'not_configured' }); }) };
-    expect((await runAsk(failing as never, { question: 'q', context: [] }, () => undefined, new AbortController().signal)).error).toEqual({ code: 'not_configured', message: 'configure a model' });
   });
 });
 

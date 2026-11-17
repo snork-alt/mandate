@@ -16,7 +16,6 @@ import { ProjectRegistry, type ProjectRuntime } from '../../src/projects/registr
 import type { ProjectConfig } from '../../src/config.js';
 import { randomBytes } from 'node:crypto';
 import { ActivityBus } from '../../src/events/index.js';
-import { simpleModel } from './mock-model.js';
 import { createStorage, migrateWorkOrders, type Storage } from '../../src/storage/index.js';
 import { DocReadService } from '../../src/storage/read.js';
 import { DocViewService } from '../../src/storage/views.js';
@@ -120,7 +119,7 @@ export async function mcpFixture(extra: Partial<ToolContext> = {}): Promise<McpF
   await index.idle();
   const activity = new ActivityBus(git, { pollMs: 0 });
   await activity.start();
-  const served = await serveProjects({ test: { storage, index, activity, reads: new DocReadService(storage), views: new DocViewService(storage), askModel: simpleModel(), ...extra } });
+  const served = await serveProjects({ test: { storage, index, activity, reads: new DocReadService(storage), views: new DocViewService(storage), ...extra } });
   const { app, hub } = served;
   const url = served.url('test');
   const client = await connect(url);

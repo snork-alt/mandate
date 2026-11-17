@@ -1,9 +1,6 @@
 /** Ops tools: index status, git status and pull. */
 import { gitPullInputSchema, gitStatusInputSchema, indexStatusInputSchema, type GitSyncResult } from '@mandate/shared';
 import { z } from 'zod';
-import { DEFAULT_ASK_CONFIG } from '../../config.js';
-import { askStatus } from '../../ask/status.js';
-import { liveAskConfig } from '../../ask/live.js';
 import { defineTool, needIndex } from '../define.js';
 
 const embeddingJobsInputSchema = z
@@ -88,14 +85,5 @@ Example: {}`,
       if (r.pulled) await ctx.storage.integrity.run();
       return r;
     },
-  }),
-  defineTool({
-    name: 'ask_status',
-    title: 'Ask model status',
-    kind: 'read',
-    description: `Configured Ask models (\`ask\` block of ~/.mandate/config.json) and the default: per model id, label, provider, baseUrl, key env var and whether set (never the key), configured, missing fields and why. Config changes apply without restart.
-Example: {}`,
-    input: z.object({}).strict(),
-    run: async (_a, ctx) => askStatus(liveAskConfig(ctx.ask ?? DEFAULT_ASK_CONFIG)),
   }),
 ];

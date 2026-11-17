@@ -160,37 +160,3 @@ export function switchEstimate(chunks: number, avgTokens: number, pricePerMTok: 
   const tokens = Math.round(chunks * avgTokens);
   return { chunks, tokens, costUsd: pricePerMTok === null ? null : Math.round(((tokens / 1e6) * pricePerMTok) * 10_000) / 10_000 };
 }
-
-/** Base URL of an Ask model's provider when its config has none (OpenAI-shaped APIs only). */
-const ASK_DEFAULT_BASE: Record<string, string> = { openai: 'https://api.openai.com/v1' };
-
-export interface AskKeyCandidate {
-  /** Ask model id (config) and display name. */
-  askModelId: string;
-  label: string;
-  apiKeyEnv: string;
-  apiKeySet: boolean;
-}
-
-/**
- * Ask models that call the same endpoint as `baseUrl` with a key: the embedding settings can reuse that key's env var
- * ("use the same key as Ask model X"). Only env var names and whether they are set; never the key.
- */
-export function askKeyCandidates(
-  baseUrl: string,
-  askModels: { id: string; label?: string; provider: string; model: string | null; baseUrl?: string | null; apiKeyEnv?: string | null }[],
-  isSet: (env: string) => boolean,
-): AskKeyCandidate[] {
-  const want = normalizeBaseUrl(baseUrl);
-  const seen = new Set<string>();
-  const out: AskKeyCandidate[] = [];
-  for (const m of askModels) {
-    if (!m.apiKeyEnv) continue;
-    const b = m.baseUrl || ASK_DEFAULT_BASE[m.provider];
-    if (!b || normalizeBaseUrl(b) !== want) continue;
-    if (seen.has(m.apiKeyEnv)) continue;
-    seen.add(m.apiKeyEnv);
-    out.push({ askModelId: m.id, label: m.label ?? m.model ?? m.id, apiKeyEnv: m.apiKeyEnv, apiKeySet: isSet(m.apiKeyEnv) });
-  }
-  return out;
-}

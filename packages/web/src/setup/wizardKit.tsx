@@ -7,7 +7,7 @@ import { Button, Combobox, TextInput, useCombobox } from '@mantine/core';
 import { IconAlertTriangle, IconArrowLeft, IconArrowRight, IconCheck, IconChevronDown, IconLink, IconLock, IconPlayerPlay, IconPlus, IconRefresh, IconSearch, IconX } from '@tabler/icons-react';
 import { useMemo, useState, type ReactNode } from 'react';
 
-export const TOTAL_STEPS = 6;
+export const TOTAL_STEPS = 5;
 
 export function StepHead({ n, title, optional, children }: { n: number; title: string; optional?: boolean; children: ReactNode }) {
   return (

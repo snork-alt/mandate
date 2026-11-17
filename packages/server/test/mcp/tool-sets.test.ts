@@ -22,9 +22,9 @@ const strip = ({ news: _n, ...b }: Record<string, any>) => b;
 const names = async (c: Awaited<ReturnType<typeof connect>>) => (await c.listTools()).tools.map((t) => t.name);
 
 describe('sets', () => {
-  it('the default list is core (the whole request flow) and has at most 50 tools', async () => {
+  it('the default list is core (the whole request flow) and has at most 52 tools', async () => {
     const listed = await names(fx.client);
-    expect(listed.length).toBeLessThanOrEqual(50);
+    expect(listed.length).toBeLessThanOrEqual(52);
     expect(listed.sort()).toEqual([...TOOL_SETS.core].sort());
     expect(DEFAULT_SETS).toEqual(['core']);
   });

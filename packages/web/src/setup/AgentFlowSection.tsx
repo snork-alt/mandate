@@ -7,7 +7,7 @@ import { IconLock } from '@tabler/icons-react';
 import { relativeTime } from '../lib/time';
 import { StepIntro } from './widgets';
 import type { SectionProps } from './sections';
-import { AgentIcon, POLICY_TEXT, useFlowMutations, useFlowState, type FlowClient, type FlowProject, type FlowState, type Policy } from './flowApi';
+import { AgentIcon, POLICY_TEXT, useFlowMutations, useFlowState, type FlowClient, type FlowProject, type Policy } from './flowApi';
 
 function Locked({ children }: { children: React.ReactNode }) {
   return (

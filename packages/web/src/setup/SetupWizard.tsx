@@ -8,14 +8,14 @@ import { UiApiError } from '../lib/ui';
 import { APPLIED_EVENT, serverStartedAt, setupApi, useSetupState, waitForRestart, type AppliedSetting, type SetupState } from './api';
 import { GITHUB_RESULT, OAuthAppFields, submitManifest, usePatchConfig } from './sections';
 import { CommandLine, StepIntro } from './widgets';
-import { AskStep, SearchStep } from './WizardAi';
+import { SearchStep } from './WizardSearch';
 import { DatabaseStep, GitStep } from './WizardSteps';
 import { Chip, ContinueButton, Field, StepHead, WizardFooter, WzTabs } from './wizardKit';
 import './wizard.css';
 
 /**
  * The first-run wizard: a split card with the step rail on the left (a segmented bar on phones) and one task per step:
- * GitHub App → Git → Ask models → Semantic search → Database → Sign in (the last three before it are optional, "Skip
+ * GitHub App → Git → Semantic search → Database → Sign in (the last three before it are optional, "Skip
  * for now"). The address it is opened on becomes the public URL (saved with the GitHub App). Whoever finishes here and
  * signs in becomes the first admin (a single-use claim; the login comes from GitHub). Everything is also in Settings.
  */
@@ -88,7 +88,6 @@ export function AppliedBanner() {
 export const WIZARD_STEPS = [
   { id: 'github', label: 'GitHub App', optional: false, todo: 'Required' },
   { id: 'git', label: 'Git', optional: false, todo: 'Required' },
-  { id: 'ask', label: 'Ask models', optional: true, todo: 'Optional' },
   { id: 'search', label: 'Semantic search', optional: true, todo: 'Optional' },
   { id: 'database', label: 'Database', optional: true, todo: 'Optional' },
   { id: 'ready', label: 'Sign in', optional: false, todo: 'Become the admin' },
@@ -109,8 +108,6 @@ export function stepSummary(id: WizardStepId, st: SetupState): string | null {
       return c.github?.app ? `${c.github.app.slug}${c.github.app.owner ? ` · ${c.github.app.owner}` : ''}` : c.github?.kind === 'oauth' && c.github.clientSecretSet ? `OAuth App ${c.github.clientId ?? ''}`.trim() : null;
     case 'git':
       return c.git.backend === 'cli' ? `System git${c.git.system.version ? ` ${c.git.system.version}` : ''}` : 'Built-in git';
-    case 'ask':
-      return c.ask.models.length ? `${c.ask.models.length} model${c.ask.models.length === 1 ? '' : 's'}` : null;
     case 'search':
       return c.embedding.provider !== 'none' ? c.embedding.model : null;
     case 'database':
@@ -167,7 +164,7 @@ export function WizardRail({ step, onStep, skipped, st }: { step: number; onStep
   );
 }
 
-/** Phones: logo, "Step n of 6" and a segmented progress bar instead of the rail. */
+/** Phones: logo, "Step n of 5" and a segmented progress bar instead of the rail. */
 function PhoneTop({ step }: { step: number }) {
   return (
     <div className="wz-ph-top">
@@ -308,7 +305,6 @@ function ReadyStep({ state, onBack }: { state: SetupState; onBack: () => void })
   });
   const c = state.config;
   const g = c.github;
-  const def = c.ask.models.find((m) => m.id === c.ask.default) ?? c.ask.models[0];
   const items: { label: string; ok: boolean; detail: React.ReactNode }[] = [
     {
       label: g?.kind === 'oauth' ? 'GitHub OAuth App' : 'GitHub App',
@@ -323,24 +319,13 @@ function ReadyStep({ state, onBack }: { state: SetupState; onBack: () => void })
       ),
     },
     { label: 'Git', ok: true, detail: `${stepSummary('git', state)}${c.git.autoPush.enabled ? ' · auto-push on' : ' · auto-push off'}` },
-    {
-      label: 'Ask models',
-      ok: c.ask.models.length > 0,
-      detail: def ? (
-        <>
-          {stepSummary('ask', state)} · default <span className="wz-mono">{def.model}</span>
-        </>
-      ) : (
-        'No Ask panel model'
-      ),
-    },
     { label: 'Semantic search', ok: c.embedding.provider !== 'none', detail: c.embedding.provider !== 'none' ? <span className="wz-mono">{c.embedding.model}</span> : 'Keyword search only' },
     { label: 'Database', ok: true, detail: stepSummary('database', state) },
   ];
   return (
     <section className="wz-main" data-testid="wz-ready">
       <div className="wz-body">
-        <StepHead n={6} title="Ready to go">
+        <StepHead n={5} title="Ready to go">
           Here is what you set up. Sign in to finish.
         </StepHead>
         <div className="wz-sum" data-testid="setup-summary">
@@ -427,13 +412,11 @@ export function SetupWizard({ status: _status }: { status: AuthStatus }) {
           ) : step === 1 ? (
             <GitStep state={st} onBack={() => go(0)} onNext={() => next(1)} />
           ) : step === 2 ? (
-            <AskStep state={st} onBack={() => go(1)} onNext={(skip) => next(2, skip)} />
+            <SearchStep state={st} onBack={() => go(1)} onNext={(skip) => next(2, skip)} />
           ) : step === 3 ? (
-            <SearchStep state={st} onBack={() => go(2)} onNext={(skip) => next(3, skip)} />
-          ) : step === 4 ? (
-            <DatabaseStep state={st} onBack={() => go(3)} onNext={(skip) => next(4, skip)} />
+            <DatabaseStep state={st} onBack={() => go(2)} onNext={(skip) => next(3, skip)} />
           ) : (
-            <ReadyStep state={st} onBack={() => go(4)} />
+            <ReadyStep state={st} onBack={() => go(3)} />
           )}
         </div>
       </main>

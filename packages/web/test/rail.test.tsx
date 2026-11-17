@@ -8,16 +8,14 @@ import { Rail } from '../src/components/rail/Rail';
 import { RailProvider } from '../src/components/rail/RailProvider';
 import { RAIL_DEFAULT, RAIL_MAX, RAIL_MIN, clampWidth, loadCollapsed, loadTabs, loadWidth, pageTypeOf, saveCollapsed, saveWidth } from '../src/components/rail/persistence';
 import type { ActivityEvent } from '../src/components/activity/types';
-import type { AskStatus } from '../src/mcp/queries';
 import { MantineProvider } from '@mantine/core';
 import { installDom } from './dom';
 
 installDom();
 
-let status: AskStatus = { configured: true, default: 'm', models: [{ id: 'm', label: 'M', provider: 'anthropic', model: 'm', apiKeySet: true, configured: true, missing: [] }], missing: [] };
 function mount(path: string, subscribe: (h: (e: ActivityEvent) => void) => () => void = () => () => undefined, activity: Partial<import('../src/components/rail/RailProvider').ActivityDeps> = {}) {
   const qc = new QueryClient();
-  qc.setQueryData(['mcp', 'ask_status', {}], status);
+  qc.setQueryData(['agents-presence', ''], { agents: [] });
   let go: (p: string) => void = () => undefined;
   const Nav = () => {
     const n = useNavigate();
@@ -47,7 +45,6 @@ const setWidth = (w: number) => Object.defineProperty(window, 'innerWidth', { co
 beforeEach(() => {
   setWidth(1440);
   localStorage.clear();
-  status = { configured: true, default: 'm', models: [{ id: 'm', label: 'M', provider: 'anthropic', model: 'm', apiKeySet: true, configured: true, missing: [] }], missing: [] };
 });
 afterEach(cleanup);
 
@@ -142,15 +139,11 @@ describe('width persistence', () => {
   });
 });
 
-describe('ask without a configured model', () => {
-  it('shows only the configuration message and disables the question box', () => {
-    status = { configured: false, default: null, models: [], missing: ['provider', 'model'] };
+describe('ask without an agent online', () => {
+  it('says how to connect one; the question box stays usable (it waits for an agent)', () => {
     mount('/specs/a');
     fireEvent.click(screen.getByRole('tab', { name: 'Ask' }));
-    expect(screen.getByText(/configure a model in/)).toBeTruthy();
-    expect((screen.getByLabelText('Question') as HTMLTextAreaElement).disabled).toBe(true);
-    expect(screen.queryByText(/coding agent/)).toBeNull();
-    expect(screen.queryByText('Copy prompt')).toBeNull();
+    expect((screen.getByLabelText('Question') as HTMLTextAreaElement).disabled).toBe(false);
   });
 });
 

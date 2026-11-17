@@ -47,7 +47,7 @@ vi.mock('../src/mcp/client', () => ({
       return { ok: true };
     }
     if (name === 'activity_list') return { events: [] };
-    if (name === 'ask_status') return { configured: false, default: null, models: [], missing: [] };
+    if (name === 'agents_presence') return { agents: [] };
     throw new Error(`${name}: not mocked`);
   }),
   callRootTool: vi.fn(async () => ({ items: [] })),

@@ -10,6 +10,8 @@ import { guardChange, guardCommand, permissionChange, permissionRule } from '../
 import { guardDecision, type GuardDeps } from '../src/guard.js';
 import type { Args } from '../src/args.js';
 import { parseArgs } from '../src/args.js';
+import { applyChanges } from '../src/edits.js';
+import { uninstallChanges } from '../src/install.js';
 import { capture, tempCtx, write } from './helpers.js';
 
 const envOf = (ctx: ReturnType<typeof tempCtx>) => ({ ...ctx.env, MANDATE_PORT: '4391' });
@@ -117,5 +119,42 @@ describe('mandate guard decision', () => {
     expect(await guardDecision(withKey, args(), deps({ call: async () => null }))).toMatchObject({ code: 0, message: expect.stringMatching(/unreachable/) });
     expect((await guardDecision(withKey, args(), deps({ stdin: 'not json' }))).code).toBe(0);
     expect((await guardDecision(withKey, parseArgs(['guard']) as Args, deps())).code).toBe(0);
+  });
+});
+
+describe('Ask subagent', () => {
+  const file = (ctx: ReturnType<typeof tempCtx>) => path.join(ctx.home, '.claude', 'agents', 'mandate-ask.md');
+  const args = ['connect', '--yes', '--no-repo', '--url', URL, '--project', 'web', '--agents', 'claude-code'];
+
+  it('connect writes a read-only subagent (Read / Grep / Glob, the Mandate read tools, ask_answer); --remove deletes it', async () => {
+    const ctx = tempCtx();
+    expect(await run(args, envOf(ctx), capture(), ctx.dir)).toBe(0);
+    const md = readFileSync(file(ctx), 'utf8');
+    const tools = /^tools: (.*)$/m.exec(md)![1]!.split(', ');
+    expect(tools.slice(0, 3)).toEqual(['Read', 'Grep', 'Glob']);
+    expect(tools).toContain('mcp__mandate-web__ask_answer');
+    expect(tools).toContain('mcp__mandate-web__search');
+    expect(tools.join()).not.toMatch(/Edit|Write|Bash|request_create|comment_add|work_order/);
+    expect(md).toMatch(/^model: sonnet$/m);
+    expect(await run(args, envOf(ctx), capture(), ctx.dir)).toBe(0); // idempotent
+    expect(await run([...args, '--remove'], envOf(ctx), capture(), ctx.dir)).toBe(0);
+    expect(existsSync(file(ctx))).toBe(false);
+  });
+
+  it('uninstall removes it', async () => {
+    const ctx = tempCtx();
+    expect(await run(args, envOf(ctx), capture(), ctx.dir)).toBe(0);
+    expect(existsSync(file(ctx))).toBe(true);
+    applyChanges(uninstallChanges(ctx), { dryRun: false, out: capture() });
+    expect(existsSync(file(ctx))).toBe(false);
+  });
+
+  it('not written for other agents; a user-owned agent file of that name is left alone', async () => {
+    const ctx = tempCtx();
+    expect(await run(['connect', '--yes', '--no-repo', '--url', URL, '--project', 'web', '--agents', 'codex'], envOf(ctx), capture(), ctx.dir)).toBe(0);
+    expect(existsSync(file(ctx))).toBe(false);
+    write(file(ctx), '---\nname: mandate-ask\n---\nmine\n');
+    expect(await run(args, envOf(ctx), capture(), ctx.dir)).toBe(0);
+    expect(readFileSync(file(ctx), 'utf8')).toContain('mine');
   });
 });

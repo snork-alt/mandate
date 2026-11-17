@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-/** Settings → Semantic search, remote endpoint: Ask key reuse, model list, Test (dimension autodetect), privacy note, switch estimate, saved patch. */
+/** Settings → Semantic search, remote endpoint: model list, Test (dimension autodetect), privacy note, switch estimate, saved patch. */
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { SetupState } from '../src/setup/api';
@@ -17,7 +17,6 @@ const state: SetupState = {
   config: {
     local: { baseDir: '/home/me/mandate' },
     server: { mode: 'local', publicUrl: null, bind: '127.0.0.1', port: 4000, trustProxy: false },
-    ask: { default: 'luna', models: [{ id: 'luna', provider: 'openai-compatible', model: 'gpt-6-luna', baseUrl: CI, apiKeyEnv: 'CHEAPERINFERENCE_API_KEY', apiKeySet: true }] },
     embedding: { provider: 'openai-compatible', baseUrl: 'http://localhost:11434/v1', model: 'nomic-embed-text', dimensions: 768, apiKeyEnv: null, apiKeySet: false, preset: 'ollama', requestDimensions: null, maxInputTokens: 2048, batchSize: 32, documentPrefix: 'search_document: ', queryPrefix: 'search_query: ', remote: false },
     git: {} as never,
   },
@@ -35,7 +34,7 @@ function server() {
       case '/ui/setup/embedding/detect':
         return json({ ollama: true, baseUrl: 'http://localhost:11434/v1', models: ['nomic-embed-text:latest'], hasNomic: true, install: [] });
       case '/ui/setup/embedding/keys':
-        return json({ candidates: body?.baseUrl === CI ? [{ askModelId: 'luna', label: 'gpt-6-luna', apiKeyEnv: 'CHEAPERINFERENCE_API_KEY', apiKeySet: true }] : [], apiKeyEnvSet: false });
+        return json({ apiKeyEnvSet: body?.baseUrl === CI });
       case '/ui/setup/embedding/models':
         return json({ ok: true, models: [{ id: 'qwen3-embedding-8b', pricePerMTok: 0.01, known: true }, { id: 'text-embedding-3-small', pricePerMTok: 0.017, known: true }], suggested: 'text-embedding-3-small', total: 3, message: '2 embedding models available.' });
       case '/ui/setup/embedding/preset':
@@ -54,7 +53,7 @@ function server() {
 }
 
 describe('SearchSection (remote)', () => {
-  it('reuses the Ask key, picks the recommended model, detects dimensions and saves a strict patch', async () => {
+  it('uses the saved key, picks the recommended model, detects dimensions and saves a strict patch', async () => {
     const calls = server();
     let saver: Saver | null = null;
     render(
@@ -64,8 +63,6 @@ describe('SearchSection (remote)', () => {
     );
     fireEvent.click(screen.getByTestId('search-remote').querySelector('button')!);
     fireEvent.click(screen.getByTestId('embed-preset-cheaperinference'));
-    await screen.findByText(/Use the same key as Ask model/);
-    expect(screen.getByTestId('embed-reuse-key')).toBeTruthy();
     await waitFor(() => expect((screen.getByTestId('embed-model') as HTMLInputElement).value).toBe('text-embedding-3-small'));
     expect(screen.getByTestId('embed-privacy').textContent).toContain('api.cheaperinference.com');
     await screen.findByTestId('embed-facts');

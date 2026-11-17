@@ -4,8 +4,7 @@
  */
 import type { ProjectSettings } from './settings.js';
 import { mandateHome, type AppConfig, type GitBackendConfig, type ProjectConfig, type RemoteConfig } from '../config.js';
-import { ConversationStore } from '../ask/agent.js';
-import type { AskModelOverride } from '../ask/model.js';
+import { AskService, DbAskStore, MemoryAskStore } from '../agent-ask/service.js';
 import { ActivityBus } from '../events/index.js';
 import { DbNewsStore, MemoryNewsStore, NewsService } from '../news/index.js';
 import { createGitStore, SubdirGitStore, type GitStore } from '../git/index.js';
@@ -240,7 +239,6 @@ export function redactUrl(url: string): string {
 
 export interface OpenerOptions {
   log?: Log;
-  askModel?: AskModelOverride;
   /** Override the embedding provider (tests: FakeProvider). */
   provider?: EmbeddingProvider | null;
   /** Activity HEAD poll interval (default 3 s; 0 disables). */
@@ -269,7 +267,7 @@ export interface OpenerOptions {
 }
 
 /** The standard opener: git store, storage, index, activity feed and tool context from the app config. */
-export function projectOpener(app: Pick<AppConfig, 'embedding' | 'ask'> & { publicUrl?: string }, o: OpenerOptions = {}): ProjectOpener {
+export function projectOpener(app: Pick<AppConfig, 'embedding'> & { publicUrl?: string }, o: OpenerOptions = {}): ProjectOpener {
   return async (p) => {
     const remote = p.remote ?? (p.github ? o.githubRemote?.(p) : undefined);
     // Behind a switch so the backend can change at runtime (prepareGit).
@@ -344,20 +342,20 @@ export function projectOpener(app: Pick<AppConfig, 'embedding' | 'ask'> & { publ
     const envMs = Number(process.env.MANDATE_INTEGRITY_INTERVAL_MS);
     integrity.start(o.integrityIntervalMs ?? (Number.isFinite(envMs) && process.env.MANDATE_INTEGRITY_INTERVAL_MS ? envMs : 10 * 60_000));
     const idempotency: IdempotencyStore | undefined = !p.idempotencyFile ? undefined : o.serverState ? new DbIdempotencyStore(o.serverState, p.id, p.idempotencyFile) : new FileIdempotencyStore(p.idempotencyFile);
+    const news = new NewsService(p.id, o.serverState ? new DbNewsStore(o.serverState.db) : new MemoryNewsStore(), activity);
     const ctx: ToolContext = {
       project: { id: p.id, name: p.name },
       storage,
       index,
       reads: new DocReadService(storage),
       views: new DocViewService(storage),
-      ask: app.ask,
       activity,
       // Per-client news (server-state database), fed by this project's activity events.
-      news: new NewsService(p.id, o.serverState ? new DbNewsStore(o.serverState.db) : new MemoryNewsStore(), activity),
-      conversations: new ConversationStore(),
+      news,
+      // Ask threads: answered by the user's coding agents (no model on the server).
+      asks: new AskService(p.id, o.serverState ? new DbAskStore(o.serverState.db) : new MemoryAskStore(), news),
       autoPush,
       ...(idempotency ? { idempotency } : {}),
-      ...(o.askModel ? { askModel: o.askModel } : {}),
       ...(o.settings ? { settings: o.settings(p) } : {}),
       // Mandate on this computer only (a loopback URL): code repos wired with `mandate connect` (work_order_touch_from_commits).
       ...(/^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(app.publicUrl ?? 'http://localhost') ? { codeRepos: wiringResolver(mandateHome(), p.id) } : {}),

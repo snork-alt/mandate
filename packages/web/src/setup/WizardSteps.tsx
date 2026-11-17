@@ -243,7 +243,7 @@ export function DatabaseStep({ state, onBack, onNext }: { state: SetupState; onB
   return (
     <section className="wz-main" data-testid="wz-database">
       <div className="wz-body">
-        <StepHead n={5} title="Database" optional>
+        <StepHead n={4} title="Database" optional>
           Where Mandate keeps its own data, like users and the search index. Specs stay in git.
         </StepHead>
         <WzTabs

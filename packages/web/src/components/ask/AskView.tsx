@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { Menu, Tooltip } from '@mantine/core';
-import { IconArrowUp, IconCheck, IconChevronDown, IconHash, IconPlayerStopFilled, IconPlus, IconX } from '@tabler/icons-react';
+import { Tooltip } from '@mantine/core';
+import { IconArrowUp, IconHash, IconPlus, IconX } from '@tabler/icons-react';
 import { KIND_ICON, refKind } from '../refs';
 import { SearchField } from '../SearchField';
-import { useRailOptional } from '../rail/RailProvider';
+import { useRailOptional } from '../rail/railContext';
 import { suggestionsFor } from './suggestions';
-import { useAskStatus, useMcpSearch, type AskStatus } from '../../mcp/queries';
-import { AskStatusNotice } from './AskStatusNotice';
+import { useMcpSearch } from '../../mcp/queries';
+import { AgentPicker } from '../comments/CommentsPanel';
+import { useAgentsPresence } from '../../lib/comments';
 import { AskTurnView } from './AskThread';
 import { useAsk } from './AskProvider';
 import type { AskChip } from './types';
@@ -89,79 +90,33 @@ function ChipPicker({ onPick, onClose }: { onPick: (c: AskChip) => void; onClose
   );
 }
 
-/** The model to ask with: the browser's choice when it is configured, else the server default, else the first configured one. */
-export function effectiveModel(status: AskStatus | undefined, choice: string | null): string | undefined {
-  const ok = (id: string | null | undefined) => (id ? status?.models?.find((m) => m.id === id && m.configured)?.id : undefined);
-  return ok(choice) ?? ok(status?.default) ?? status?.models?.find((m) => m.configured)?.id;
-}
-
-/** Compact model menu next to the send button; models that are not configured are disabled with the reason as a tooltip. */
-function ModelPicker({ status, value, onPick }: { status: AskStatus; value: string | undefined; onPick: (id: string) => void }) {
-  const current = status.models.find((m) => m.id === value);
-  return (
-    <Menu position="top-end" withinPortal shadow="sm">
-      <Menu.Target>
-        <Tooltip label="Model for the next question" openDelay={300}>
-          <button type="button" className="ask-model" aria-label={`Model: ${current?.label ?? 'none'}`}>
-            <span>{current?.label ?? 'Model'}</span>
-            <IconChevronDown size={11} />
-          </button>
-        </Tooltip>
-      </Menu.Target>
-      <Menu.Dropdown>
-        {status.models.map((m) => {
-          const item = (
-            <Menu.Item
-              key={m.id}
-              disabled={!m.configured}
-              onClick={() => onPick(m.id)}
-              rightSection={m.id === value ? <IconCheck size={12} /> : undefined}
-              data-model={m.id}
-            >
-              {m.label}
-              <span className="rail-faint"> {m.provider === 'openai-compatible' ? '' : `${m.provider} · `}{m.model}</span>
-            </Menu.Item>
-          );
-          return m.configured ? (
-            item
-          ) : (
-            <Tooltip key={m.id} label={`Not configured: ${m.reason ?? m.missing.join(', ')}`} position="left" withinPortal>
-              <div>{item}</div>
-            </Tooltip>
-          );
-        })}
-      </Menu.Dropdown>
-    </Menu>
-  );
-}
-
 /**
- * "Ask" tab: answers scroll above a composer pinned to the bottom. The composer is the shared SearchField,
- * with the context chips (the `context` references of the built-in ask) in a row above it.
- * Without a configured model only the configuration note shows and the field is disabled.
- * Enter sends the question with the chips as context to the `ask` MCP tool; the thread shows streamed steps and the final answer.
+ * "Ask" tab: answers scroll above a composer pinned to the bottom. A question is answered by one of YOUR coding agents
+ * (no model on the server): with one agent online it goes there, with several you pick (or "Any agent"), with none it
+ * waits and is answered when an agent connects. The context chips are sent with the question.
  */
 export function AskView() {
-  const { draft, setDraft, chips, removeChip, addChip, turns, send: onSend, stop: onStop, running: streaming, reset, modelChoice, setModelChoice } = useAsk();
+  const { draft, setDraft, chips, removeChip, addChip, turns, send: onSend, stop: onStop, running: streaming, reset, agentChoice, setAgentChoice } = useAsk();
   const [picking, setPicking] = useState(false);
-  const status = useAskStatus(true);
-  const configured = status.data?.configured === true;
-  const model = effectiveModel(status.data, modelChoice);
+  const presence = useAgentsPresence(undefined);
+  const agents = (presence.data?.agents ?? []).filter((a) => a.state !== 'offline');
   const field = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
   const rail = useRailOptional();
   const visible = rail ? !rail.collapsed && rail.activeTab === 'ask' : true;
   useEffect(() => {
-    if (visible && configured) field.current?.focus();
-  }, [visible, configured]);
+    if (visible) field.current?.focus();
+  }, [visible]);
 
   const scroller = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight;
   }, [turns]);
   const text = draft.trim();
-  const canSend = configured && !!text && !streaming;
+  const needsPick = agents.length > 1;
+  const to = needsPick ? (agentChoice && (agentChoice === 'any' || agents.some((a) => a.handle === agentChoice)) ? agentChoice : agents.find((a) => a.id === presence.data?.suggested)?.handle ?? 'any') : agents.length === 1 ? agents[0]!.handle : undefined;
+  const canSend = !!text;
   const send = () => {
-    if (canSend) onSend(text, model);
+    if (canSend) onSend(text, to);
   };
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -173,17 +128,10 @@ export function AskView() {
   return (
     <div className="ask">
       <div className="ask-scroll" ref={scroller}>
-        {!configured && <AskStatusNotice status={status.data} error={status.error?.message} />}
-        {configured && turns.length > 0 && (
+        {turns.length > 0 && (
           <>
             {turns.map((t) => (
-              <AskTurnView
-                key={t.id}
-                turn={t}
-                stepsOpen={t.id === turns[turns.length - 1]!.id}
-                otherModels={(status.data?.models ?? []).filter((m) => m.configured)}
-                onRetry={t.id === turns[turns.length - 1]!.id && !streaming ? (m) => onSend(t.question, m) : undefined}
-              />
+              <AskTurnView key={t.id} turn={t} onCancel={t.running ? onStop : undefined} />
             ))}
             {!streaming && (
               <button type="button" className="ask-add" style={{ alignSelf: 'flex-start' }} onClick={reset}>
@@ -192,28 +140,36 @@ export function AskView() {
             )}
           </>
         )}
-        {configured && turns.length === 0 && (
-          <>
-            <div className="ask-suggest">
-              {suggestionsFor(chips).map((p) => (
-                <button
-                  key={p}
-                  type="button"
-                  onClick={() => {
-                    // Send right away (the suggestion is a full question); while busy, just fill the composer.
-                    if (!streaming) onSend(p, model);
-                    else setDraft(p);
-                    field.current?.focus();
-                  }}
-                >
-                  {p}
-                </button>
-              ))}
-            </div>
-          </>
+        {turns.length === 0 && (
+          <div className="ask-suggest">
+            {suggestionsFor(chips).map((p) => (
+              <button
+                key={p}
+                type="button"
+                onClick={() => {
+                  onSend(p, to);
+                  field.current?.focus();
+                }}
+              >
+                {p}
+              </button>
+            ))}
+          </div>
         )}
       </div>
       <div className="ask-composer">
+        {presence.isSuccess && agents.length === 0 && (
+          <div className="ask-noagent rail-faint" role="status" data-testid="ask-no-agent">
+            No agent online. Open Claude Code with <code>mandate claude</code>: your question waits and is answered when it connects.
+          </div>
+        )}
+        {agents.length === 1 && (
+          <div className="rail-faint" data-testid="ask-agent-auto">
+            Answered by {agents[0]!.label}
+            {agents[0]!.state === 'busy' ? ' (busy: it answers in the background)' : ''}
+          </div>
+        )}
+        {needsPick && <AgentPicker presence={presence.data} value={to ?? 'any'} onChange={setAgentChoice} />}
         <div className="ask-chips" aria-label="Context">
           {chips.map((c) => (
             <Tooltip key={c.uri} label={c.quote ? `${c.uri}\n“${c.quote.slice(0, 200)}”` : c.uri} multiline maw={320} style={{ whiteSpace: 'pre-line', overflowWrap: 'anywhere' }} openDelay={300}>
@@ -240,25 +196,14 @@ export function AskView() {
           onChange={setDraft}
           inputRef={field}
           ariaLabel="Question"
-          disabled={!configured}
-          placeholder={configured ? 'Ask about specs, standards, work orders…' : 'Configure a model to ask questions'}
+          placeholder="Ask about specs, standards, work orders…"
           onKeyDown={onKeyDown}
           right={
-            <>
-            {configured && status.data && status.data.models.length > 0 && <ModelPicker status={status.data} value={model} onPick={setModelChoice} />}
-            <Tooltip label={streaming ? 'Stop' : 'Send (Enter)'} openDelay={300}>
-              <button
-                type="button"
-                className="ask-send"
-                data-active={streaming || canSend || undefined}
-                disabled={!streaming && !canSend}
-                aria-label={streaming ? 'Stop' : 'Send'}
-                onClick={streaming ? onStop : send}
-              >
-                {streaming ? <IconPlayerStopFilled size={12} /> : <IconArrowUp size={13} stroke={2} />}
+            <Tooltip label="Send (Enter)" openDelay={300}>
+              <button type="button" className="ask-send" data-active={canSend || undefined} disabled={!canSend} aria-label="Send" onClick={send}>
+                <IconArrowUp size={13} stroke={2} />
               </button>
             </Tooltip>
-            </>
           }
         />
       </div>

@@ -11,6 +11,7 @@ import { caddySnippet, nginxSnippet } from './proxy.js';
 import { platformService, serviceSpec } from './service.js';
 import { health, waitHealthy } from './serverlink.js';
 import { pushRemoveAll } from './push.js';
+import { askAgentChange } from './claude-flow.js';
 import { publicUrlProblem, readSettings, writeSettings, type ServerSettings } from './settings.js';
 import { c, fail, info, ok, Prompter, spinner, step, warn, type Out } from './ui.js';
 import { envChange, instructionFiles, KNOWN_INSTRUCTION_FILES, listProjects, projectKeys, rcChanges, readManifest, sectionChange, writeManifest } from './wiring.js';
@@ -283,6 +284,7 @@ export function uninstallChanges(ctx: Ctx, agents: AgentDef[] = AGENTS): (Change
     const push = ag.id === 'claude-code' ? pushRemoveAll(ctx) : { names: [], changes: [] };
     if (t) changes.push(safe(() => mcpRemove(ag, t, ...mandateServersIn(ag, t), ...push.names)));
     changes.push(...push.changes);
+    if (ag.id === 'claude-code') changes.push(askAgentChange(ctx, []));
   }
   const others = AGENTS.filter((a) => !agents.includes(a) && a.detect(ctx));
   const keepRoots = [...new Set(others.flatMap((a) => a.skillDirs(ctx)).map((d) => path.dirname(d)))];

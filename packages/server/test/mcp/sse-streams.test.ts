@@ -35,7 +35,7 @@ beforeAll(async () => {
   keys.ensureProjectKeys(['alpha']);
   key = keys.list().find((k) => k.project === 'alpha')!.key;
   const embedding = { ...embeddingConfigSchema.parse({}), dimensions: 64 };
-  registry = new ProjectRegistry([project(root, 'alpha')], projectOpener({ embedding, ask: { default: null, models: [] } }, { provider: new FakeProvider(64, 'fake:64'), activityPollMs: 0 }));
+  registry = new ProjectRegistry([project(root, 'alpha')], projectOpener({ embedding }, { provider: new FakeProvider(64, 'fake:64'), activityPollMs: 0 }));
   app = Fastify({ logger: false });
   registerMcp(app, { projects: registry, auth: { keys, store: new AuthStore(root, randomBytes(32), 3600_000) }, sseKeepAliveMs: 100 });
   await app.listen({ port: 0, host: '127.0.0.1' });

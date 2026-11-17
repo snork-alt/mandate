@@ -1,101 +1,124 @@
-/** `ask`: built-in answering with the configured model over Mandate's read tools (streams notifications/mandate/ask). */
-import { ALIASES } from '../tool-sets.js';
-import { ASK_NOTIFICATION, askInputSchema, type AskEvent } from '@mandate/shared';
-import { DEFAULT_ASK_CONFIG } from '../../config.js';
-import { askLimits, askModelStatus, cachedAskModel, ConversationStore, liveAskConfig, runAsk, type AskModel } from '../../ask/index.js';
-import { defineTool, type AnyToolDef, type ToolContext } from '../define.js';
+/**
+ * Ask is answered by the user's coding agents (agent-ask/service.ts): the web UI posts (`ask_post`) and polls
+ * (`ask_get`); the agent catches up with `ask_pending` and answers with `ask_answer` (chunks appended, `done`
+ * ends it). The question arrives as an event of kind `ask_question`; the guide tells the agent to hand it to the
+ * read-only `mandate-ask` Claude Code subagent in the background.
+ */
+import { z } from 'zod';
+import { AskService, MemoryAskStore, askRef, type AskThread } from '../../agent-ask/service.js';
+import { newsOfProject } from '../../comments/route.js';
+import { clientIdentity } from '../../projects/settings.js';
+import { defineTool, principalUser, type ToolContext } from '../define.js';
 import { ToolError } from '../errors.js';
 
-/**
- * Read tools the Ask agent cannot use, and why. Everything else with `kind: 'read'` is offered automatically
- * (write and ops tools never are).
- */
-export const ASK_EXCLUDED_TOOLS: Readonly<Record<string, string>> = {
-  // Recursion: an Ask answer would start another agent loop (and another model bill) inside a tool call.
-  ask: 'recursion',
-  // A per-session streaming subscription (it only changes which notifications this MCP session receives): no result for a model.
-  activity_subscribe: 'streaming subscription',
-  // The calling agent client's own news feed (the Ask agent is in-process: no client).
-  news_list: 'agent client state',
-  news_ack: 'agent client state',
-  // Answer no user question about the project (settings, operations, raw files, self-batching): tokens on every request.
-  ...Object.fromEntries(['project_info', 'flow_clients_list', 'users_resolve', 'decision_access', 'ask_status', 'embedding_jobs', 'index_status', 'doc_list', 'doc_raw', 'section_types', 'graph_batch'].map((n) => [n, 'not a project question'])),
-};
-/** Tools the model may call: every read tool except ASK_EXCLUDED_TOOLS. */
-export function askToolset(all: AnyToolDef[]): AnyToolDef[] {
-  // Each tool once: the merged tools (get, list), not their hidden per-type aliases.
-  return all.filter((t) => t.kind === 'read' && t.annotations?.readOnlyHint !== false && !Object.hasOwn(ASK_EXCLUDED_TOOLS, t.name) && !ALIASES[t.name]);
+const fallback = new WeakMap<object, AskService>();
+/** The project's ask service (a memory one per news service when the context has none: tests, in-process). */
+export function asksOf(ctx: ToolContext): AskService {
+  if (ctx.asks) return ctx.asks;
+  const news = newsOfProject(ctx);
+  if (!news) throw new ToolError('not_available', 'Ask needs a project endpoint', 'call it on /p/<project>/mcp');
+  let s = fallback.get(news);
+  if (!s) fallback.set(news, (s = new AskService(news.project, new MemoryAskStore(), news)));
+  return s;
 }
 
-/** Fallback when the context has no per-project store (tests building a bare ToolContext). */
-const sharedConversations = new ConversationStore();
+const askId = z
+  .string()
+  .trim()
+  .min(1)
+  .max(200)
+  .transform((v) => v.replace(/^mandate:\/\/ask\//, ''));
 
-/** Registry injected by server.ts (avoids an import cycle). */
-let registry: () => AnyToolDef[] = () => [];
-export function setAskRegistry(fn: () => AnyToolDef[]): void {
-  registry = fn;
+/** A thread as tools return it: the agent's label instead of its client id, a short state line. */
+function view(ctx: ToolContext, t: AskThread) {
+  const news = newsOfProject(ctx);
+  const label = (id: string | null) => (id && news?.presence.get(id)?.label) || id;
+  const agent = t.answeredBy ?? (t.to && t.to !== 'any' ? t.to : null);
+  return {
+    id: t.id,
+    ref: askRef(t.id),
+    conversationId: t.conversationId,
+    question: t.question,
+    context: t.context,
+    status: t.status,
+    answer: t.answer,
+    agent: label(agent),
+    to: t.to === 'any' ? 'any' : label(t.to),
+    asker: t.asker,
+    createdAt: t.createdAt,
+    updatedAt: t.updatedAt,
+  };
 }
 
 export const askTools = [
   defineTool({
-    name: 'ask',
-    title: 'Ask (built-in answering)',
-    kind: 'read',
-    // Reads Mandate only, but calls the configured model's API.
-    annotations: { openWorldHint: true },
-    description: `Answer a question with the configured Ask model (see ask_status), which uses Mandate's read tools and cites mandate:// refs.
-Streams \`${ASK_NOTIFICATION}\` notifications; cancel the request to stop. Returns the markdown answer, parsed embeds, checked references, tool steps, usage and stop reason. conversationId continues a conversation; model picks a configured model id (default: the configured default). Unknown model -> invalid_input; unconfigured -> not_configured with the missing fields.
+    name: 'ask_post',
+    title: 'Ask a question (answered by an agent)',
+    kind: 'ops',
+    description: `Post a question about the project (web UI: the Ask panel). A coding agent answers it: to = an agent handle (agents_presence), "any" (every online agent; the first answer wins) or omitted (the only agent online; none online: it waits and the first agent that connects gets it). Poll ask_get { id } for the answer.
 Example: {"question":"What blocks login-sso?","context":["mandate://specs/login-sso"]}`,
-    input: askInputSchema,
-    run: async (a, ctx: ToolContext) => {
-      const cfg = liveAskConfig(ctx.ask ?? DEFAULT_ASK_CONFIG);
-      const ids = cfg.models.map((m) => m.id);
-      if (a.model !== undefined && !ids.includes(a.model)) {
-        throw new ToolError('invalid_input', `unknown model '${a.model}'`, ids.length ? `use one of: ${ids.join(', ')} (ask_status lists them)` : 'no models are configured (ask_status)', 'model');
-      }
-      const id = a.model ?? cfg.default ?? cfg.models[0]?.id;
-      const entry = cfg.models.find((m) => m.id === id);
-      let model: AskModel;
-      let choice: { id: string; label: string };
-      if (ctx.askModel && typeof ctx.askModel !== 'function') {
-        // Test override: one model for every choice.
-        model = ctx.askModel;
-        choice = { id: entry?.id ?? 'default', label: entry?.label ?? entry?.id ?? model.model };
-      } else {
-        const status = entry ? askModelStatus(entry) : undefined;
-        if (!entry || !status?.configured) {
-          const missing = status?.missing ?? ['provider', 'model'];
-          throw new ToolError(
-            'not_configured',
-            entry ? `Ask model '${entry.id}' is not configured (missing: ${missing.join(', ')}${status?.reason ? `: ${status.reason}` : ''})` : `no model configured for Ask (missing: ${missing.join(', ')})`,
-            'configure the ask block in ~/.mandate/config.json (keys via the env var named by apiKeyEnv, or ~/.mandate/secrets.env); ask_status shows what is missing',
-            '',
-            { kind: 'ask', ...(entry ? { model: entry.id } : {}), missing },
-          );
-        }
-        model = typeof ctx.askModel === 'function' ? ctx.askModel(entry) : cachedAskModel(entry);
-        choice = { id: entry.id, label: entry.label ?? entry.id };
-      }
-      const index = ctx.index;
-      return runAsk({
-        question: a.question,
-        context: a.context,
-        conversationId: a.conversationId,
-        model,
-        choice,
-        tools: askToolset(registry()),
-        ctx,
-        limits: askLimits(cfg, entry),
-        conversations: ctx.conversations ?? sharedConversations,
-        signal: ctx.signal,
-        emit: (e: AskEvent) => void ctx.notify?.(ASK_NOTIFICATION, e as unknown as Record<string, unknown>),
-        resolve: index
-          ? async (ref) => {
-              const r = await index.resolveRef({ ref });
-              return { kind: r.node.kind, label: r.node.label };
-            }
-          : null,
-      });
+    input: z.object({ question: z.string().trim().min(1).max(8000), context: z.array(z.string().trim().min(1).max(400)).max(20).default([]), to: z.string().trim().min(1).max(120).optional(), conversationId: z.string().trim().min(1).max(100).optional() }).strict(),
+    run: async (a, ctx) => {
+      const agentAsker = ctx.principal && ctx.principal.kind !== 'ui' ? clientIdentity(ctx).id : undefined;
+      // An agent that asks is already connected: it must not be handed its own waiting question as a "new agent".
+      if (agentAsker) newsOfProject(ctx)?.presence.note(clientIdentity(ctx), ctx.clientName);
+      const t = await asksOf(ctx).post({ ...a, ...(principalUser(ctx) ? { asker: principalUser(ctx)! } : {}), ...(agentAsker ? { exclude: agentAsker } : {}) });
+      return { ...view(ctx, t), delivered: t.delivered.length, waiting: t.delivered.length === 0 };
+    },
+  }),
+  defineTool({
+    name: 'ask_get',
+    title: 'Read an Ask thread',
+    kind: 'read',
+    description: `One Ask question with its answer so far: status waiting | answering | done | cancelled, answer (markdown), agent (who answers). With conversationId: every question of that conversation, oldest first.
+Example: {"id":"ask-01jc..."}`,
+    input: z.object({ id: askId.optional(), conversationId: z.string().trim().min(1).max(100).optional() }).strict().refine((v) => !!v.id !== !!v.conversationId, 'give id or conversationId'),
+    run: async (a, ctx) => {
+      const s = asksOf(ctx);
+      if (a.conversationId) return { items: (await s.conversation(a.conversationId)).map((t) => view(ctx, t)) };
+      const t = await s.get(a.id!);
+      if (!t) throw new ToolError('not_found', `ask '${a.id}' not found`, 'ask_pending lists the questions waiting for you', 'id', { kind: 'document' });
+      return view(ctx, t);
+    },
+  }),
+  defineTool({
+    name: 'ask_cancel',
+    title: 'Cancel an Ask question',
+    kind: 'ops',
+    description: `Withdraw an Ask question that is not answered yet (the agent is told it no longer matters).
+Example: {"id":"ask-01jc..."}`,
+    input: z.object({ id: askId }).strict(),
+    run: async (a, ctx) => view(ctx, await asksOf(ctx).cancel(a.id).catch(askError)),
+  }),
+  defineTool({
+    name: 'ask_pending',
+    title: 'Ask questions waiting for you',
+    kind: 'read',
+    agentOnly: true,
+    description: `Ask questions (from the web UI) waiting for you: addressed to you, to any agent, or unassigned. Catch-up for a session that missed the event. Each: { id, question, context }. Hand each to the mandate-ask subagent (background) and answer with ask_answer.
+Example: {}`,
+    input: z.object({}).strict(),
+    run: async (_a, ctx) => ({ items: (await asksOf(ctx).pending(clientIdentity(ctx).id)).map((t) => view(ctx, t)) }),
+  }),
+  defineTool({
+    name: 'ask_answer',
+    title: 'Answer an Ask question',
+    kind: 'ops',
+    agentOnly: true,
+    description: `Answer an Ask question (markdown; cite mandate:// refs): text is appended to the answer so far, done (default true) ends it. For a long answer send parts with done: false and the last with done: true; the user sees the progress. Only the first agent to answer owns the question.
+Example: {"id":"ask-01jc...","text":"login-sso is blocked by ...","done":true}`,
+    input: z.object({ id: askId, text: z.string().min(1).max(60_000), done: z.boolean().default(true) }).strict(),
+    run: async (a, ctx) => {
+      const me = clientIdentity(ctx);
+      const t = await asksOf(ctx).answer(a.id, { text: a.text, done: a.done, client: me.id, label: me.label }).catch(askError);
+      return { ...view(ctx, t), agent: me.label };
     },
   }),
 ];
+
+function askError(e: unknown): never {
+  const err = e as { code?: string; message?: string };
+  if (err.code === 'not_found') throw new ToolError('not_found', err.message ?? 'not found', 'ask_pending lists the questions waiting for you', 'id', { kind: 'document' });
+  if (err.code === 'ask_closed' || err.code === 'ask_taken') throw new ToolError(err.code, err.message ?? 'closed', 'nothing more to do for this question', 'id');
+  throw e;
+}

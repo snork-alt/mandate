@@ -101,90 +101,6 @@ export function resolveEmbeddingConfig(e: EmbeddingConfig, env: NodeJS.ProcessEn
   return embedding;
 }
 
-/**
- * Models for answering questions in the web UI's Ask panel. Keys are read only from the env var `apiKeyEnv` names
- * (environment or ~/.mandate/secrets.env). Shape: `{ default, models: [{ id, label, provider, model, baseUrl, apiKeyEnv }], <limits> }`.
- * The legacy single-model shape (`provider` / `model` / `baseUrl` / `apiKeyEnv` directly under `ask`) is read as one
- * model with id `default` (nothing configured when `provider` is null).
- */
-export const ASK_PROVIDERS = ['anthropic', 'openai', 'google', 'openai-compatible'] as const;
-/** Limits per question (optional; defaults in ASK_LIMITS). Set on `ask` and optionally overridden per model. */
-const askLimitFields = {
-  maxToolCalls: z.number().int().min(1).max(50).optional(),
-  timeoutMs: z.number().int().min(5_000).max(600_000).optional(),
-  /** Input + output tokens across the whole agent loop of one question. */
-  tokenBudget: z.number().int().min(2_000).max(2_000_000).optional(),
-  maxOutputTokens: z.number().int().min(256).max(64_000).optional(),
-  /** Hard cap (estimated tokens) of every tool result the model reads; bigger results are compacted and cut. */
-  maxToolResultTokens: z.number().int().min(200).max(50_000).optional(),
-};
-/** Per-tool overrides of maxToolResultTokens (tools that legitimately need more, e.g. spec_section_get). */
-const toolResultTokensSchema = z.record(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/, 'a tool name'), z.number().int().min(200).max(50_000)).optional();
-export const ASK_MODEL_ID = /^[A-Za-z0-9_-]{1,64}$/;
-export const askModelConfigSchema = z
-  .object({
-    id: z.string().regex(ASK_MODEL_ID, 'letters, digits, _ or - (max 64)'),
-    /** Shown in the model picker (default: the id). */
-    label: z.string().trim().min(1).max(80).optional(),
-    provider: z.enum(ASK_PROVIDERS),
-    /** Required except for anthropic (default claude-opus-5-5). */
-    model: z.string().min(1).nullable().default(null),
-    /** Required for `openai-compatible` (e.g. http://localhost:11434/v1 for Ollama); optional override for the others. */
-    baseUrl: z.string().url().nullable().default(null),
-    apiKeyEnv: envName,
-    ...askLimitFields,
-  })
-  .strict();
-export type AskModelConfig = z.infer<typeof askModelConfigSchema>;
-
-/** Legacy `ask` block (one model, fields at the top) -> the multi-model shape, before validation. */
-function legacyAskToModels(v: unknown): unknown {
-  if (!v || typeof v !== 'object' || Array.isArray(v) || 'models' in v || 'default' in v) return v;
-  const { provider = null, model = null, baseUrl = null, apiKeyEnv = null, ...rest } = v as Record<string, unknown>;
-  // Old files carry `provider: null` (nothing configured): no model, no error.
-  return { ...rest, models: provider === null ? [] : [{ id: 'default', provider, model, baseUrl, apiKeyEnv }] };
-}
-
-export const askConfigSchema = z.preprocess(
-  legacyAskToModels,
-  z
-    .object({
-      /** Model id used when the question names none (default: the first model). */
-      default: z.string().regex(ASK_MODEL_ID).nullable().optional(),
-      models: z.array(askModelConfigSchema).max(20).default([]),
-      ...askLimitFields,
-      toolResultTokens: toolResultTokensSchema,
-    })
-    .strict()
-    .superRefine((c, ctx) => {
-      const seen = new Set<string>();
-      c.models.forEach((m, i) => {
-        if (seen.has(m.id)) ctx.addIssue({ code: 'custom', path: ['models', i, 'id'], message: `duplicate model id '${m.id}'` });
-        seen.add(m.id);
-      });
-      if (c.default != null && !seen.has(c.default)) ctx.addIssue({ code: 'custom', path: ['default'], message: `no model with id '${c.default}'` });
-    })
-    .transform((c) => ({ ...c, default: c.default ?? c.models[0]?.id ?? null })),
-);
-export type AskConfig = z.output<typeof askConfigSchema>;
-/** In memory: each model's key (from its env var) and the config file for hot reload; never written or returned. */
-export type ResolvedAskConfig = Omit<AskConfig, 'models'> & { models: (AskModelConfig & { apiKey?: string })[]; source?: string };
-export const ASK_LIMITS = { maxToolCalls: 12, timeoutMs: 120_000, tokenBudget: 150_000, maxOutputTokens: 16_000, maxToolResultTokens: 5_000 } as const;
-/** Default per-tool result caps: a section's full text may exceed the general cap. */
-export const ASK_TOOL_RESULT_TOKENS: Readonly<Record<string, number>> = { spec_section_get: 8_000, standard_section_get: 8_000, component_section_get: 8_000 };
-/** Written into config files that have no `ask` block. */
-export const DEFAULT_ASK_BLOCK = { models: [] } as const;
-export const DEFAULT_ASK_CONFIG: AskConfig = { default: null, models: [] };
-
-/** Resolve each model's key from its env var (in memory only). */
-export function resolveAskConfig(ask: AskConfig, env: NodeJS.ProcessEnv, source?: string): ResolvedAskConfig {
-  return {
-    ...ask,
-    models: ask.models.map((m) => ({ ...m, ...(m.apiKeyEnv && env[m.apiKeyEnv] ? { apiKey: env[m.apiKeyEnv] } : {}) })),
-    ...(source ? { source } : {}),
-  };
-}
-
 /** `{dataDirHash}` in `index.path` is replaced by a short hash of the resolved data dir. */
 export const DEFAULT_INDEX_PATH = '~/.mandate/index/{dataDirHash}.sqlite';
 
@@ -399,7 +315,8 @@ export const fileConfigSchema = z
       }),
     embedding: embeddingConfigSchema.default(embeddingConfigSchema.parse({})),
     index: indexConfigSchema.default(indexConfigSchema.parse({})),
-    ask: askConfigSchema.default(DEFAULT_ASK_CONFIG),
+    /** Removed: Ask is answered by coding agents (no server-side model). A leftover block is ignored with a warning, never an error. */
+    ask: z.unknown().optional(),
     auth: authConfigSchema.default({ sessionTtlHours: 168 }),
     /** Server state (and, later, the index) backend: SQLite (default) or Postgres (`urlEnv` names the URL's env var). */
     database: databaseConfigSchema.default(DEFAULT_DATABASE_CONFIG),
@@ -477,7 +394,6 @@ export interface AppConfig {
   embedding: ResolvedEmbeddingConfig;
   index: IndexConfig;
   /** Keys are held in memory only (from the env var each model's `apiKeyEnv` names), never written or returned. */
-  ask: ResolvedAskConfig;
 }
 
 export class ConfigError extends Error {
@@ -812,14 +728,13 @@ export function loadConfig(rawEnv: NodeJS.ProcessEnv = process.env): AppConfig {
     database: resolveDatabaseOrThrow(file.database, env, configPath),
     auth: file.auth,
     projectsPath,
-    warnings: [...registry.notices, ...(file.auth.required !== undefined ? ['auth.required is deprecated and ignored: sign-in is always on (GitHub)'] : []), ...(file.server.users || file.server.mode ? ['server.users / server.mode are ignored: Mandate always signs in with GitHub (the setup wizard creates the GitHub App)'] : [])],
+    warnings: [...registry.notices, ...(file.auth.required !== undefined ? ['auth.required is deprecated and ignored: sign-in is always on (GitHub)'] : []), ...(file.ask !== undefined ? ['the `ask` block in config.json is ignored: Ask is answered by your coding agents now (no model or API key on the server); delete the block'] : []), ...(file.server.users || file.server.mode ? ['server.users / server.mode are ignored: Mandate always signs in with GitHub (the setup wizard creates the GitHub App)'] : [])],
     dataDir: def.dataDir,
     branch: def.branch,
     remote: def.remote,
     author,
     git: gitBackend,
     embedding,
-    ask: resolveAskConfig(file.ask, env, rawEnv === process.env ? configPath : undefined),
     index: def.index,
   };
 }

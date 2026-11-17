@@ -21,7 +21,7 @@ const EMBEDDED: GitBackendConfig = { backend: 'embedded', cliPath: 'git', cliEnv
 async function openRegistry(): Promise<{ registry: ProjectRegistry; cfg: ProjectConfig }> {
   const root = await tempDir();
   const cfg = testProject(root, 'alpha');
-  const registry = new ProjectRegistry([cfg], projectOpener({ embedding, ask: { default: null, models: [] } }, { provider: null, activityPollMs: 0, startIndex: false, integrityIntervalMs: 0 }));
+  const registry = new ProjectRegistry([cfg], projectOpener({ embedding }, { provider: null, activityPollMs: 0, startIndex: false, integrityIntervalMs: 0 }));
   return { registry, cfg };
 }
 

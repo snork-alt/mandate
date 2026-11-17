@@ -27,7 +27,7 @@ import { ConfigConflictError, setSecret, SECRET_NAME_RE, SetupAdminClaim, writeP
 import { FsError, type FolderBrowser } from './fs.js';
 import type { ProjectRegistry } from '../projects/registry.js';
 import * as probes from './probes.js';
-import { askKeyCandidates, ENDPOINT_PRESETS, endpointOf, isLocalEndpoint, modelPreset, switchEstimate } from '../index/embed/presets.js';
+import { ENDPOINT_PRESETS, endpointOf, isLocalEndpoint, modelPreset, switchEstimate } from '../index/embed/presets.js';
 import { listEmbeddingModels, testEmbeddingModel } from '../index/embed/probe.js';
 import { poolerOf, resolveDatabase } from '../db/config.js';
 import { probePostgres } from '../db/probe.js';
@@ -222,14 +222,6 @@ export function registerSetupRoutes(app: FastifyInstance, d: SetupDeps): void {
             app: g?.app ? { id: g.app.id, slug: g.app.slug, owner: g.app.owner ?? null, ownerType: g.app.ownerType ?? null, htmlUrl: g.app.htmlUrl ?? null, installUrl: `${gh.webBase}/apps/${g.app.slug}/installations/new`, privateKeySet: !!g.app.privateKeyPath && existsSync(g.app.privateKeyPath) } : null,
             suggested: { name: 'Mandate', homepageUrl: d.publicUrl, callbackUrl: `${d.publicUrl}/auth/github/callback` },
           },
-          ask: {
-            maxToolCalls: (f.ask as Record<string, unknown>).maxToolCalls ?? null,
-            tokenBudget: (f.ask as Record<string, unknown>).tokenBudget ?? null,
-            timeoutMs: (f.ask as Record<string, unknown>).timeoutMs ?? null,
-            maxOutputTokens: (f.ask as Record<string, unknown>).maxOutputTokens ?? null,
-            limits: (f.ask as Record<string, unknown>).limits ?? null,
-            default: f.ask.default,
-            models: f.ask.models.map((m) => ({ id: m.id, ...(m.label ? { label: m.label } : {}), provider: m.provider, model: m.model, baseUrl: m.baseUrl, apiKeyEnv: m.apiKeyEnv, apiKeySet: setFlag(m.apiKeyEnv) })) },
           embedding: {
             provider: f.embedding.provider,
             baseUrl: f.embedding.baseUrl,
@@ -306,19 +298,6 @@ export function registerSetupRoutes(app: FastifyInstance, d: SetupDeps): void {
       patch: z
         .object({
           github: githubPatch.nullable().optional(),
-          ask: z
-            .object({
-              default: z.string().nullable().optional(),
-              models: z.array(z.record(z.string(), z.unknown())).optional(),
-              maxToolCalls: z.number().optional(),
-              tokenBudget: z.number().optional(),
-              timeoutMs: z.number().optional(),
-              maxOutputTokens: z.number().optional(),
-              /** `ask.limits` (e.g. maxToolResultTokens + per-tool overrides); validated by the config schema. */
-              limits: z.record(z.string(), z.unknown()).optional(),
-            })
-            .strict()
-            .optional(),
           embedding: z.record(z.string(), z.unknown()).optional(),
           /** `database` block (validated strictly by the config schema; null removes an optional key). */
           database: z.record(z.string(), z.unknown()).optional(),
@@ -356,14 +335,6 @@ export function registerSetupRoutes(app: FastifyInstance, d: SetupDeps): void {
             auth.github = g;
           }
           json.auth = auth;
-        }
-        if (patch.ask) {
-          // Legacy single-model blocks become { models } (the schema's preprocess reads both); other keys are kept.
-          const cur = obj('ask');
-          const legacy = 'provider' in cur && patch.ask.models !== undefined; // replacing the models of a legacy block
-          const base = legacy ? Object.fromEntries(Object.entries(cur).filter(([k]) => ['maxToolCalls', 'timeoutMs', 'tokenBudget', 'maxOutputTokens', 'limits'].includes(k))) : cur;
-          const { limits, ...rest } = patch.ask;
-          json.ask = { ...base, ...Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined)), ...(limits ? { limits: { ...((base.limits as object) ?? {}), ...limits } } : {}) };
         }
         if (patch.embedding) {
           // null clears an optional field (requestDimensions, preset) instead of storing null.
@@ -598,23 +569,6 @@ export function registerSetupRoutes(app: FastifyInstance, d: SetupDeps): void {
     );
   }
 
-  const providerSchema = z
-    .object({ provider: z.enum(['anthropic', 'openai', 'google', 'openai-compatible']), baseUrl: z.string().url().nullable().optional(), apiKeyEnv: z.string().nullable().optional(), apiKey: z.string().max(400).optional(), model: z.string().max(200).optional() })
-    .strict();
-  app.post(
-    '/ui/setup/ask/models',
-    wrap(async (req) => {
-      const b = providerSchema.parse(req.body);
-      return probes.listModels({ provider: b.provider, baseUrl: b.baseUrl ?? null, apiKey: keyOf(b.apiKey, b.apiKeyEnv) }, d.fetch);
-    }),
-  );
-  app.post(
-    '/ui/setup/ask/test',
-    wrap(async (req) => {
-      const b = providerSchema.parse(req.body);
-      return probes.testModel({ provider: b.provider, baseUrl: b.baseUrl ?? null, apiKey: keyOf(b.apiKey, b.apiKeyEnv), ...(b.model ? { model: b.model } : {}) }, d.fetch);
-    }),
-  );
   /** Test connection: version, pgvector / pg_trgm (and their schema), privileges, pooler, TLS. The URL comes from the env var. */
   app.post(
     '/ui/setup/database/test',
@@ -661,13 +615,13 @@ export function registerSetupRoutes(app: FastifyInstance, d: SetupDeps): void {
       return testEmbeddingModel({ baseUrl: b.baseUrl, model: b.model, apiKey: keyOf(b.apiKey, b.apiKeyEnv), requestDimensions: b.requestDimensions ?? null, ...(b.documentPrefix !== undefined ? { documentPrefix: b.documentPrefix } : {}) }, d.fetch);
     }),
   );
-  /** Ask models on the same endpoint with a key: offer "use the same key as Ask model X" (env var names only). */
+  /** Whether the key env var of an embedding endpoint is set (names only, never the key). */
   app.post(
     '/ui/setup/embedding/keys',
     wrap(async (req) => {
       const b = z.object({ baseUrl: z.string().url(), apiKeyEnv: z.string().regex(SECRET_NAME_RE).optional() }).strict().parse(req.body);
       refreshSecrets();
-      return { candidates: askKeyCandidates(b.baseUrl, d.config.parsed().ask.models, (n) => setFlag(n)), ...(b.apiKeyEnv ? { apiKeyEnvSet: setFlag(b.apiKeyEnv) } : {}) };
+      return b.apiKeyEnv ? { apiKeyEnvSet: setFlag(b.apiKeyEnv) } : {};
     }),
   );
   /** Model presets (prefixes, limits, sizes) for a model id. */
