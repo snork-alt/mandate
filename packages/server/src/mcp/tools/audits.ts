@@ -27,6 +27,7 @@ import {
 import { slugSchema } from '@mandate/doc';
 import { z } from 'zod';
 import type { CommitMeta } from '../../storage/index.js';
+import { ToolError } from '../errors.js';
 import { defineTool, type AnyToolDef, type ToolContext } from '../define.js';
 import { clientIdentity } from '../../projects/settings.js';
 import { newsOfProject, seedKnownClients } from '../../comments/route.js';
@@ -87,6 +88,7 @@ Example: {"target":"mandate://specs/login-sso","code":{"repo":"app","commit":"3f
     input: auditStartInputSchema,
     run: async (a, ctx) => {
       const commits: string[] = [];
+      if (!a.request && !a.target) throw new ToolError('validation', 'give target (a spec or standard) or request (the audit you were asked to do)', 'e.g. {"target":"mandate://specs/login-sso"}', 'target');
       if (a.request) {
         // The agent that was asked to do it (audit-request event) starts THAT audit.
         const news = newsOfProject(ctx);

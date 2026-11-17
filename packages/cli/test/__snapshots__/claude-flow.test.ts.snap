@@ -4,7 +4,7 @@ exports[`Audit subagent > connect writes a read-only subagent with the audit too
 "---
 name: mandate-audit
 description: Audits the code against ONE Mandate spec or standard (every section, own and inherited criteria): checks the code and the linked tests, records an item per criterion with findings, and completes the audit. Use it when a Mandate event of kind audit_requested arrives, in the background.
-tools: Read, Grep, Glob, mcp__mandate-web__search, mcp__mandate-web__get, mcp__mandate-web__list, mcp__mandate-web__graph_neighbors, mcp__mandate-web__architecture_get, mcp__mandate-web__code_owner, mcp__mandate-web__standard_usage, mcp__mandate-web__rules_for_code, mcp__mandate-web__audit_plan, mcp__mandate-web__audit_get, mcp__mandate-web__audit_start, mcp__mandate-web__audit_record_item, mcp__mandate-web__audit_complete
+tools: Read, Grep, Glob, mcp__mandate-web__search, mcp__mandate-web__get, mcp__mandate-web__list, mcp__mandate-web__graph_neighbors, mcp__mandate-web__architecture_get, mcp__mandate-web__code_owner, mcp__mandate-web__standard_usage, mcp__mandate-web__rules_for_code, mcp__mandate-web__audit_plan, mcp__mandate-web__audit_start, mcp__mandate-web__audit_record_item, mcp__mandate-web__audit_complete
 model: sonnet
 ---
 <!-- managed by mandate: \`mandate uninstall\` removes it; \`mandate connect\` refreshes it. -->
