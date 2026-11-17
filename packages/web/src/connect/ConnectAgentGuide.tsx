@@ -3,7 +3,7 @@ import { IconAlertTriangle, IconShieldCheck } from '@tabler/icons-react';
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { redirectToLogin, useAuth } from '../auth';
-import { AdvancedSetup, AgentTabs, InstallBox, originOf, ShellToggle, SignInStep, type AgentChoice, type SignInContext } from './AgentSetup';
+import { AdvancedSetup, AgentTabs, InstallBox, originOf, ShellToggle, SignInStep, StartClaudeStep, type AgentChoice, type SignInContext } from './AgentSetup';
 import { agentDef } from './agentCatalog';
 import { repoLabel } from './github';
 import { useProjects } from './projects';
@@ -116,6 +116,11 @@ export function ConnectAgentGuide({ projectId, compact, initialAgent = 'claude-c
         <Step n={base ? 2 : 1} title={stepTwo}>
           <SignInStep choice={choice} ctx={ctx} />
         </Step>
+        {choice === 'claude-code' && ctx.oauthServer && (
+          <Step n={base ? 3 : 2} title="Start Claude Code with mandate claude">
+            <StartClaudeStep />
+          </Step>
+        )}
       </div>
       <AdvancedSetup key={choice} choice={choice} projectId={projectId} url={url} info={d} shell={shell} compact={compact} />
     </div>

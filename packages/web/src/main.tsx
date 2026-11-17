@@ -19,6 +19,7 @@ import { AuthContext, fetchAuthStatus, loginPath, safeReturnTo, type AuthStatus 
 import { LoginPage, SetupPage } from './pages/AuthPages';
 import { FinishSetupPage, SetupWizard } from './setup/SetupWizard';
 import { SettingsPage } from './setup/SettingsPage';
+import { CliLoginPage } from './pages/CliLoginPage';
 import { goTo, lastProject, legacyTarget, NAVIGATE_EVENT, parseProjectPath, projectBase, setCurrentProject } from './project';
 
 const newQueryClient = () =>
@@ -110,6 +111,12 @@ function App({ status }: { status: AuthStatus }) {
   const project = parseProjectPath(pathname);
   if (project) return <ProjectApp key={project.id} projectId={project.id} />;
   if (pathname === '/' || pathname === '') return <HomeApp />;
+  if (pathname === '/cli-login')
+    return (
+      <Shared>
+        <CliLoginPage />
+      </Shared>
+    );
   if (pathname === '/settings')
     return (
       <Shared>

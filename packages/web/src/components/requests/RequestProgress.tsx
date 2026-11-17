@@ -6,15 +6,16 @@
  */
 import { useState } from 'react';
 import { Button, Popover } from '@mantine/core';
-import { IconCheck, IconUserCog } from '@tabler/icons-react';
+import { IconAlertTriangle, IconCheck, IconUserCog } from '@tabler/icons-react';
 import { Link } from 'react-router';
 import type { Feedback } from '@mandate/shared';
 import { refLabel } from '@mandate/shared/refs';
 import { AgentPicker } from '../comments/CommentsPanel';
 import { TimeAgo } from '../TimeAgo';
+import { Ticks } from '../Ticks';
 import { refHref } from '../refs/kinds';
 import { useAgentsPresence, type PresenceReply } from '../../lib/comments';
-import { assigneeLabel, assigneeState, isQueued, requestStages, useApprovePlan, useAssignRequest, useRequestFlow } from '../../lib/requests';
+import { assigneeLabel, assigneeState, deliveryProblem, isQueued, requestStages, useApprovePlan, useAssignRequest, useRequestFlow } from '../../lib/requests';
 import '../comments/comments.css';
 import './requests.css';
 
@@ -114,6 +115,11 @@ export function RequestProgress({ f, workOrderIds }: { f: Feedback; workOrderIds
         {f.priority && f.priority !== 'normal' && <span>{f.priority} priority</span>}
         {f.planOnly && <span>plan only</span>}
       </div>
+      {open && isQueued(f) && deliveryProblem(f, p) && (
+        <div className="rq-warn" role="status" data-testid="rq-delivery-warning">
+          <IconAlertTriangle size={14} aria-hidden /> <Ticks text={deliveryProblem(f, p)!} />
+        </div>
+      )}
       {planReady && <PlanReady id={f.id} />}
       <div className="rq-flow" role="list" aria-label="Progress" data-testid="rq-flow">
         {stages.map((s) => (

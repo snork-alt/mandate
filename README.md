@@ -211,6 +211,10 @@ curl -fsSL https://mandate.example.com/p/<project>/install.sh | sh
 # remove the wiring AND the CLI:     curl -fsSL https://mandate.example.com/uninstall.sh | sh   (--dry-run, --purge)
 ```
 
+At the end of the install, with a terminal attached, the browser opens once to approve this computer for the event channel
+(`mandate channel login`, see [Event delivery](#event-delivery-to-claude-code)); then sign in to the MCP server from your
+agent (Claude Code: `/mcp` → Authenticate) and start Claude Code with `mandate claude`.
+
 On Windows PowerShell: `irm https://mandate.example.com/p/<project>/install.ps1 | iex` (uninstall:
 `irm https://mandate.example.com/uninstall.ps1 | iex`). On the machine running Mandate, `mandate connect` in a code
 repository does the same.
@@ -338,12 +342,28 @@ Mandate pushes through the two mechanisms Claude Code documents for this, over a
 `mandate connect … --push channels|rewake|off` (default `channels`: channel entry + hooks; `rewake`: hooks only; `off`:
 neither, and removes an earlier setup); `--remove` and `uninstall` take the channel entry and the hooks out again.
 
-**Credentials.** Claude Code keeps its MCP sign-in (OAuth) token to itself, so the channel and the hooks use a **personal
-token** (web UI → Connect agent → Personal tokens): `mandate channel login --project <id>` stores it in
-`~/.mandate/channel/<id>.token` (0600), or it is read from `MANDATE_CHANNEL_TOKEN`, `MANDATE_KEY_<PROJECT>` or
-`~/.mandate/env.sh`. It is sent only to the server URL in the channel entry, as a Bearer header; it is never written to
-`~/.claude.json` or a repo. The channel stays idle (and consumes nothing) when Claude Code was not started with channels
-enabled, so plain `claude` sessions are served by the hooks.
+**Credentials: approve once in the browser.** Claude Code keeps its MCP sign-in (OAuth) token to itself, so the channel and
+the hooks use a **personal token** of their own. `mandate channel login [--project <id>] [--url <server>]` gets it by
+browser approval (device-authorization style): the CLI asks the server to start a login, prints a short code and opens
+`<server>/cli-login?code=ABCD-2345`; you are signed in there with GitHub, check that the code matches your terminal and
+press **Approve** ("Authorize Mandate CLI on *<host>* for project *X*"); the CLI, polling, receives one token scoped to you
+and the project and stores it in `~/.mandate/channel/<id>.token` (0600). Codes live 10 minutes and work once; start / poll /
+approve are rate limited and approval needs the same-origin UI session (CSRF check). The token is labelled `channel @ <host>`
+and is listed (and revocable) under Connect agent → Personal tokens. The installer runs this by itself at the end of
+`connect` when a terminal is attached and no token exists yet (`--no-login` skips it); otherwise it prints
+`mandate channel login --project <id> --url <server>` for you to run. Fallbacks: `--paste` (paste a token made in the web
+UI), `--token`, or the env vars `MANDATE_CHANNEL_TOKEN`, `MANDATE_KEY_<PROJECT>` / `~/.mandate/env.sh`. The token is sent
+only to the server URL in the channel entry, as a Bearer header; it is never written to `~/.claude.json` or a repo. The
+channel stays idle (and consumes nothing) when Claude Code was not started with channels enabled, so plain `claude`
+sessions are served by the hooks.
+
+**Who counts as online.** An agent is *online* when an event stream is connected **or** it made an MCP request in the last
+5 minutes. It is *wakeable* only with a stream (`mandate claude` + the token above). Requests assigned to it (or to "any
+agent"), comments and Ask questions reach an online agent that is not wakeable as `news` on its next tool reply (and in
+`flow_next {}`), but an idle session is not woken; for a wakeable one they also go through the stream. States: online
+(wakeable), online (MCP only), busy, offline. The web UI says so: the agent picker marks MCP-only agents "connected, can't be
+woken: run `mandate channel login` and start with `mandate claude`", a queued request assigned to such (or an offline) agent
+shows the same fix in a banner, and the Connect dialog shows whether your event channel is connected.
 
 ### Comments on anything, answered by your agents
 
@@ -374,7 +394,7 @@ active one expanded, replies as they arrive, a reply box that says who it goes t
 |---|---|
 | `mandate open` | Open Mandate: the setup wizard while setup is pending, else the UI |
 | `mandate connect [--project id] [--url server] [--agents a,b] [--push channels\|rewake\|off] [--remove]` | Link the current repo to a project for your coding agents |
-| `mandate claude [args]` · `channel login --project id` | Claude Code with the Mandate event channel; store the personal token the event stream uses ([Event delivery](#event-delivery-to-claude-code)) |
+| `mandate claude [args]` · `channel login [--project id] [--url server] [--paste]` | Claude Code with the Mandate event channel; approve this computer in the browser for the personal token the event stream uses ([Event delivery](#event-delivery-to-claude-code)) |
 | `mandate status` · `doctor` | State, URL, version, projects and setup; diagnostics with fixes |
 | `mandate start` · `stop` · `restart` · `logs -f` | Control the background service (`start --foreground` runs it in the terminal) |
 | `mandate update` | Install the latest version and restart |

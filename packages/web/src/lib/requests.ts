@@ -105,6 +105,26 @@ export function assigneeState(assignee: string | undefined, presence?: PresenceR
   return presence?.agents.find((a) => a.id === assignee || a.handle === assignee)?.state ?? 'offline';
 }
 
+/** The fix for an agent that cannot be woken (shown in the agent picker, request banners and the Connect dialog). */
+export const WAKE_FIX = 'run `mandate channel login` and start with `mandate claude`';
+export const CANT_WAKE = `connected, can't be woken: ${WAKE_FIX}`;
+
+/** Why a queued request will not be picked up soon (null: an agent that can be woken has it, or it is not queued). */
+export function deliveryProblem(f: Pick<Feedback, 'status' | 'assignee' | 'startedBy'>, presence?: PresenceReply): string | null {
+  if (!presence || !Array.isArray(presence.agents) || f.status === 'closed' || !f.assignee || f.startedBy) return null;
+  const agents = presence.agents;
+  if (f.assignee === 'any') {
+    if (agents.some((a) => a.state !== 'offline' && a.wakeable)) return null;
+    return agents.some((a) => a.state !== 'offline')
+      ? `Waiting for any agent. The connected agents can't be woken: they see this request on their next tool call. To wake them, ${WAKE_FIX}.`
+      : `Waiting for any agent. None is connected. Start Claude Code with \`mandate claude\` (first run \`mandate channel login\`); it picks the request up when it connects.`;
+  }
+  const a = agents.find((x) => x.id === f.assignee || x.handle === f.assignee);
+  if (!a || a.state === 'offline') return `${assigneeLabel(f.assignee, presence)} is offline: the request waits until it connects. To wake an idle agent, ${WAKE_FIX}.`;
+  if (a.wakeable === false) return `${a.label} is connected but can't be woken: it sees this request on its next tool call. To wake it, ${WAKE_FIX}.`;
+  return null;
+}
+
 /** Queued: assigned to an agent that has not started it. Plan ready: plan-only and its work order exists. */
 export const isQueued = (f: Pick<Feedback, 'status' | 'assignee' | 'startedBy'>) => f.status !== 'closed' && !!f.assignee && !f.startedBy;
 export const isPlanReady = (f: Pick<Feedback, 'status' | 'planOnly'>, hasWorkOrder: boolean) => f.status !== 'closed' && !!f.planOnly && hasWorkOrder;

@@ -12,6 +12,7 @@ import { REF_SCHEME } from '@mandate/shared/refs';
 import { AnswerMarkdown } from '../ask/AskThread';
 import { RefMentionBox } from '../mentions/RefMentionBox';
 import { TimeAgo } from '../TimeAgo';
+import { Ticks } from '../Ticks';
 import {
   clearCommentFocus,
   setCommentFocus,
@@ -25,6 +26,7 @@ import {
   type AgentPresenceView,
   type PresenceReply,
 } from '../../lib/comments';
+import { CANT_WAKE } from '../../lib/requests';
 import './comments.css';
 
 const HUMAN = 'mandate-ui';
@@ -57,6 +59,11 @@ export function AgentPicker({ presence, value, onChange, showOffline, anyHint, n
             {a.state === 'offline' && showOffline ? 'offline: queued until it connects' : STATE_LABEL[a.state]}
             {a.busyWith[0] ? `: ${a.busyWith[0].summary}` : ''}
           </span>
+          {a.state !== 'offline' && a.wakeable === false && (
+            <span className="cmt-pick-warn" data-testid="cant-wake">
+              <Ticks text={CANT_WAKE} />
+            </span>
+          )}
           {sug === a.id && <span className="cmt-suggest">suggested{a.state === 'online' ? ' (idle)' : ' (least busy)'}</span>}
         </label>
       ))}

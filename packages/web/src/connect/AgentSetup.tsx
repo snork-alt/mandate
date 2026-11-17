@@ -27,6 +27,10 @@ import {
 } from '@tabler/icons-react';
 import { Fragment, useState, type ReactNode } from 'react';
 import { copyText } from '../lib/copy';
+import { useAuth } from '../auth';
+import { useAgentsPresence } from '../lib/comments';
+import { WAKE_FIX } from '../lib/requests';
+import { Ticks } from '../components/Ticks';
 import { AgentMark } from './AgentMark';
 import { AGENT_DEFS, agentDef, installFlags, MAIN_AGENTS, MORE_AGENTS, oauthRegistration, tokenEntry, type AgentDef, type AgentTabId } from './agentCatalog';
 import type { ConnectInfo } from './ConnectAgentGuide';
@@ -251,10 +255,20 @@ export function SignInStep({ choice, ctx }: { choice: AgentChoice; ctx: SignInCo
     );
   }
   if (a.id === 'claude-code') {
+    const channel = `mandate channel login --project ${ctx.projectId}`;
     return (
       <>
+        <div className="cg2-desc" data-testid="signin-channel">
+          <b>Event channel.</b> The installer opened your browser to approve this computer (confirm the code it printed, then <b>Approve</b>). That is what lets Mandate wake Claude Code. Missed it, or installed without a terminal? Run it again:
+        </div>
+        <div className="cg2-mini">
+          <span className="cg2-prompt">$</span>
+          <span className="cg2-mini-v">{channel}</span>
+          <CopyBtn value={channel} label="channel login" tone="default" />
+        </div>
+        <ChannelStatus />
         <div className="cg2-desc">
-          In Claude Code, sign in with GitHub. Your agent gets your access to {target}: {accessWords(ctx.access)}.
+          <b>Agent sign-in.</b> In Claude Code, sign in with GitHub. Your agent gets your access to {target}: {accessWords(ctx.access)}.
         </div>
         <div className="cg2-flow" data-testid="signin-flow">
           <K>
@@ -318,6 +332,44 @@ export function SignInStep({ choice, ctx }: { choice: AgentChoice; ctx: SignInCo
       )}
       {ask}
     </>
+  );
+}
+
+/** Step 3 for Claude Code: start it with `mandate claude` so Mandate can wake it. */
+export function StartClaudeStep() {
+  const cmd = 'mandate claude';
+  return (
+    <>
+      <div className="cg2-desc">
+        Start Claude Code this way instead of plain <code>claude</code>. It loads the Mandate event channel, so an idle session is woken for requests you create in the web UI, answers to its questions, and comments addressed to it. Plain <code>claude</code> still works over MCP, but only sees these when it makes its next tool call.
+      </div>
+      <div className="cg2-mini" data-testid="start-claude">
+        <span className="cg2-prompt">$</span>
+        <span className="cg2-mini-v">{cmd}</span>
+        <CopyBtn value={cmd} label="mandate claude" tone="default" />
+      </div>
+    </>
+  );
+}
+
+/** Is this user's Claude Code connected to the event channel? (agents_presence: a stream = wakeable.) */
+export function ChannelStatus() {
+  const login = useAuth()?.user?.login?.toLowerCase();
+  const presence = useAgentsPresence(undefined);
+  const me = presence.data?.agents?.find((a) => a.id.toLowerCase() === `${login}/claude-code`);
+  const yes = !!me && me.state !== 'offline' && me.wakeable;
+  const text = yes
+    ? 'Event channel connected: yes. Claude Code can be woken.'
+    : me && me.state !== 'offline'
+      ? `Event channel connected: no. Claude Code is connected over MCP only and can't be woken: ${WAKE_FIX}.`
+      : 'Event channel connected: no (Claude Code has not connected yet, or is idle).';
+  return (
+    <div className="cg2-check" data-testid="channel-status" data-connected={yes ? 'yes' : 'no'}>
+      <IconShieldCheck size={14} />
+      <span>
+        <Ticks text={text} />
+      </span>
+    </div>
   );
 }
 
