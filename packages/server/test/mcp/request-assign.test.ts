@@ -137,7 +137,9 @@ describe('plan only', () => {
     expect((await run('flow_next', { request: id }, agent('ada'))).body.state).toBe('work_order');
     const wo = await ok('work_order_create', { spec, kind: 'implement', sections: ['design', 'ac-works'], reason: [ref], plan: { steps: ['a'], files: ['src/a.ts'], tests: [{ name: 't', ref: 'app:t.test.ts#L1-L2', proves: ['ac-works'] }], risks: ['none'] } });
     const n = await run('flow_next', { request: id }, agent('ada'));
-    expect(n.body).toMatchObject({ state: 'plan_ready', next: null, done: true });
+    expect(n.body).toMatchObject({ state: 'plan_ready', next: null, done: true, progress: { workOrder: wo.ref.split('/').pop(), steps: [{ id: 's1', status: 'pending' }], sections: { total: 2, done: 0 }, criteria: { total: 1, proved: 0 } } });
+    // The UI reads the same state without taking the request.
+    expect((await run('flow_next', { request: id }, ui())).body.state).toBe('plan_ready');
     const claim = await fx.call('work_order_claim', { agent: AGENT, ref: wo.ref });
     expect(claim.isError).toBe(true);
     expect(claim.body.error.code).toBe('plan_not_approved');

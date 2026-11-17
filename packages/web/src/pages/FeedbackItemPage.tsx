@@ -31,6 +31,7 @@ import { questionTitle, questionsByRequest, workOrdersByRequest } from '../lib/r
 import { sectionTarget } from '../lib/refs';
 import { refHref } from '../components/refs/kinds';
 import { useNow, shortSubject } from '../lib/specs';
+import { ActivityFeed, RequestProgress } from '../components/requests/RequestProgress';
 
 /** A target section rendered inline (current content; the quote is highlighted by DocPage). */
 function TargetBlock({ t, standardTitles }: { t: ResolvedFeedbackTarget; standardTitles: Map<string, string> }) {
@@ -185,6 +186,7 @@ export function FeedbackItemPage() {
           {w}
         </Alert>
       ))}
+      <RequestProgress f={f} workOrderIds={myWorkOrders.map((w) => w.id)} />
       {f.quote && <blockquote className="fb-quote">{f.quote}</blockquote>}
       <Markdown>{f.body}</Markdown>
       {f.status === 'closed' && (
@@ -272,6 +274,7 @@ export function FeedbackItemPage() {
           </div>
         </>
       )}
+      <ActivityFeed f={f} />
       <h2 className="fb-h2">Targets</h2>
       {r.targets.map((t) => (
         <TargetBlock key={t.ref} t={t} standardTitles={standardTitles} />

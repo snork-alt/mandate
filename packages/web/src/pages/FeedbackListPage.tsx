@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Button, Text } from '@mantine/core';
-import { IconChevronRight, IconMessageReport, IconSearch, IconX } from '@tabler/icons-react';
+import { IconPlus, IconChevronRight, IconMessageReport, IconSearch, IconX } from '@tabler/icons-react';
 import type { Feedback, FeedbackKind, FeedbackStatus, Question } from '@mandate/shared';
 import { Menu } from '@mantine/core';
 import { IconArrowsSort, IconCheck, IconLayoutList } from '@tabler/icons-react';
@@ -23,6 +23,11 @@ import { feedbackTarget } from '../lib/refs';
 import { matches } from '../lib/useSearchQuery';
 import { RowPeople } from '../components/people/People';
 import { bareRef } from '../lib/lineage';
+import { NewRequestModal } from '../components/requests/NewRequestModal';
+import { useAgentsPresence, type PresenceReply } from '../lib/comments';
+import { assigneeLabel, assigneeState, isPlanReady, isQueued } from '../lib/requests';
+import '../components/comments/comments.css';
+import '../components/requests/requests.css';
 
 const KEYS = ['kind', 'status', 'resolution', 'target'] as const;
 
@@ -30,6 +35,7 @@ const FEEDBACK_CHIPS_W = 300;
 const FEEDBACK_COLS: ColDef[] = [
   { key: 'issues', width: 72, hide: 'xl', label: 'Issues', tip: 'Validation issues in the stored request' },
   { key: 'outcome', width: 104, hide: 'sm', label: 'Outcome', tip: 'Outcome: how it was resolved, or the work order handling it' },
+  { key: 'agent', width: 150, hide: 'lg', label: 'Agent', tip: 'The agent it is assigned to; Queued = not started yet, Plan ready = review the plan' },
 ];
 
 function FeedbackListHeader() {
@@ -50,7 +56,7 @@ function FeedbackListHeader() {
   );
 }
 
-function FeedbackRow({ f, titles, workOrder, workOrders = [], questions = [] }: { f: Feedback; titles: Map<string, string>; workOrder?: OpenWorkOrderRef; workOrders?: { id: string; status: string; title?: string }[]; questions?: Question[] }) {
+function FeedbackRow({ f, titles, workOrder, workOrders = [], questions = [], presence }: { presence?: PresenceReply; f: Feedback; titles: Map<string, string>; workOrder?: OpenWorkOrderRef; workOrders?: { id: string; status: string; title?: string }[]; questions?: Question[] }) {
   const target = feedbackTarget(f);
   const legacy = f.targets.some((t) => !parseRef(t)?.sectionId);
   const chips: ChipItem[] = [
@@ -91,6 +97,13 @@ function FeedbackRow({ f, titles, workOrder, workOrders = [], questions = [] }: 
       cols={withNodes(FEEDBACK_COLS, {
         issues: f.validationIssues ? <IssuesBadge issues={f.validationIssues} /> : null,
         outcome: <FeedbackOutcome f={f} workOrder={workOrder} />,
+        agent: f.assignee || f.startedBy ? (
+          <span className="rq-assignee" data-testid="fb-agent">
+            {assigneeState(f.startedBy ?? f.assignee, presence) && <span className="cmt-dot" data-state={assigneeState(f.startedBy ?? f.assignee, presence)} aria-hidden />}
+            <span className="small">{assigneeLabel(f.startedBy ?? f.assignee, presence)}</span>
+            {isPlanReady(f, workOrders.length > 0) ? <span className="rq-queued" data-tone="plan" data-testid="fb-plan-ready">Plan ready</span> : isQueued(f) ? <span className="rq-queued" data-testid="fb-queued">Queued</span> : null}
+          </span>
+        ) : null,
       })}
       people={<RowPeople refUri={bareRef(target.ref)} first fallback={{ user: f.createdByUser, agent: f.createdBy, at: f.createdAt, verb: 'Filed' }} />}
       time={
@@ -111,6 +124,8 @@ export function FeedbackListPage() {
   const openQuestions = useOpenQuestions();
   const specs = useSpecs();
   const standards = useStandards();
+  const presence = useAgentsPresence(undefined);
+  const [newOpen, setNewOpen] = useState(false);
   const [params, setParams] = useSearchParams();
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const q = params.get('q') ?? '';
@@ -172,7 +187,11 @@ export function FeedbackListPage() {
             {count((x) => x.status === 'open')} open · {all.length} total
           </Text>
         )}
+        <Button size="compact-sm" leftSection={<IconPlus size={14} />} onClick={() => setNewOpen(true)} data-testid="new-request-button">
+          New request
+        </Button>
       </TopBar>
+      <NewRequestModal opened={newOpen} onClose={() => setNewOpen(false)} />
       <div className="toolbar">
         <FilterButton
           label="Kind"
@@ -254,7 +273,7 @@ export function FeedbackListPage() {
         <EmptyView icon={<IconSearch size={22} stroke={1.5} />} title="No matching requests" description="Try another filter or search term." />
       )}
       {visible.length > 0 && <FeedbackListHeader />}
-      {groupNone && sorted.map((x) => <FeedbackRow key={x.id} f={x} titles={titles} workOrder={openWorkOrders.get(x.id)} workOrders={woByRequest.get(x.id)} questions={qByRequest.get(x.id)} />)}
+      {groupNone && sorted.map((x) => <FeedbackRow key={x.id} f={x} titles={titles} workOrder={openWorkOrders.get(x.id)} workOrders={woByRequest.get(x.id)} questions={qByRequest.get(x.id)} presence={presence.data} />)}
       {!groupNone && FEEDBACK_STATUS_ORDER.map((status: FeedbackStatus) => {
         const items = sorted.filter((x) => x.status === status);
         if (!items.length) return null;
@@ -269,7 +288,7 @@ export function FeedbackListPage() {
                 {items.length}
               </Text>
             </button>
-            {!isCollapsed && items.map((x) => <FeedbackRow key={x.id} f={x} titles={titles} workOrder={openWorkOrders.get(x.id)} workOrders={woByRequest.get(x.id)} questions={qByRequest.get(x.id)} />)}
+            {!isCollapsed && items.map((x) => <FeedbackRow key={x.id} f={x} titles={titles} workOrder={openWorkOrders.get(x.id)} workOrders={woByRequest.get(x.id)} questions={qByRequest.get(x.id)} presence={presence.data} />)}
           </section>
         );
       })}

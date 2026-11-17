@@ -56,3 +56,8 @@
 /* selection: a small Comment button next to the selected text */
 .cmt-selbtn { position: fixed; z-index: 120; display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: 12px; border: 0; cursor: pointer; background: var(--mantine-primary-color-filled); color: var(--mantine-primary-color-contrast); font-size: 12px; box-shadow: 0 4px 14px rgb(0 0 0 / 0.25); }
 .cmt-badge-wrap { margin-left: auto; display: inline-flex; margin-right: 6px; }
+.cmt-mention-list button[data-active] { background: var(--app-hover); }
+.cmt-refchips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.cmt-refchip { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 1px 4px 1px 6px; border-radius: 10px; font-size: 11px; font-family: var(--mantine-font-family-monospace); background: var(--mantine-primary-color-light); color: var(--mantine-primary-color-light-color); }
+.cmt-refchip button { all: unset; cursor: pointer; display: inline-flex; opacity: 0.7; }
+.cmt-refchip button:hover { opacity: 1; }

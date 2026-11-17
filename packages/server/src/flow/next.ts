@@ -46,6 +46,8 @@ export interface FlowItem {
   request: { id: string; ref: string; kind: string; status: string; summary: string; createdBy?: string; source?: string; assignee?: string; startedBy?: string; priority?: string; planOnly?: boolean };
   /** Assigned to an agent that has not started it yet. */
   queued?: boolean;
+  /** The request's (latest) work order: plan steps, sections and proved criteria (the request page's flow bar). */
+  progress?: FlowProgress;
   state: FlowState;
   next: FlowStep | null;
   /** Unanswered question ids that block this request (or its work orders / steps / sections). */
@@ -53,6 +55,15 @@ export interface FlowItem {
   /** Work orders (of other requests) this one waits for, with the request that holds each. */
   waitingOnWorkOrders?: { workOrder: string; request?: string; claimedBy?: string; why: string }[];
   done: boolean;
+}
+
+export interface FlowProgress {
+  workOrder: string;
+  kind: string;
+  status: string;
+  steps: { id: string; text: string; status: string }[];
+  sections: { total: number; done: number };
+  criteria: { total: number; proved: number };
 }
 
 export interface FlowSnapshot {
@@ -98,9 +109,30 @@ const hasCriterion = (spec: Pick<StoredSpec, 'sections'>, sid: string): boolean 
   return (s.verifiedBy ?? []).some((v) => live.some((x) => x.id === v && x.type === 'acceptance'));
 };
 
+/** Steps, sections and proved criteria of the request's newest work order that is not cancelled. */
+export function progressOf(f: Feedback, snap: FlowSnapshot): FlowProgress | undefined {
+  const w = snap.workOrders.filter((x) => x.reason.includes(f.id) && x.status !== 'cancelled').sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+  if (!w) return undefined;
+  const live = w.sections.filter((x) => x.status !== 'obsolete');
+  const criteria = coveredCriteria(snap.specs.get(w.spec) ?? null, live.map((x) => x.id));
+  const specUri = specRef(w.spec);
+  const recs = snap.verifications.filter((r) => r.appliedTo === specUri && r.at >= w.createdAt && r.result === 'pass');
+  const proved = criteria.filter((c) => recs.some((r) => r.criterion === secRef(w.spec, c.id) && (r.evidence?.test?.trim() || r.codeRefs?.length))).length;
+  return {
+    workOrder: w.id,
+    kind: w.kind,
+    status: w.status,
+    steps: ((w.planSteps ?? []) as PlanStep[]).map((s) => ({ id: s.id, text: s.text, status: s.status })),
+    sections: { total: live.length, done: live.filter((x) => x.status === 'done').length },
+    criteria: { total: criteria.length, proved },
+  };
+}
+
 export function flowFor(f: Feedback, snap: FlowSnapshot): FlowItem {
   const now = snap.now ?? Date.now();
+  const progress = progressOf(f, snap);
   const item = (state: FlowState, next: FlowStep | null, extra: Partial<FlowItem> = {}): FlowItem => ({
+    ...(progress ? { progress } : {}),
     request: { id: f.id, ref: reqRef(f.id), kind: f.kind, status: f.status, summary: summaryOf(f), ...(f.createdBy ? { createdBy: f.createdBy } : {}), ...(f.source ? { source: f.source } : {}), ...(f.assignee ? { assignee: f.assignee } : {}), ...(f.startedBy ? { startedBy: f.startedBy } : {}), ...(f.priority ? { priority: f.priority } : {}), ...(f.planOnly ? { planOnly: true } : {}) },
     ...(f.assignee && !f.startedBy && f.status !== 'closed' ? { queued: true } : {}),
     state,

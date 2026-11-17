@@ -10,6 +10,7 @@ import { IconCheck, IconChevronRight, IconMessage, IconRobot, IconX } from '@tab
 import type { CommentThread, CommentView } from '@mandate/shared';
 import { REF_SCHEME } from '@mandate/shared/refs';
 import { AnswerMarkdown } from '../ask/AskThread';
+import { RefMentionBox } from '../mentions/RefMentionBox';
 import { TimeAgo } from '../TimeAgo';
 import {
   clearCommentFocus,
@@ -42,76 +43,36 @@ const targetLabel = (t: string, doc: string) => {
 const STATE_LABEL: Record<AgentPresenceView['state'], string> = { online: 'online', busy: 'busy', offline: 'offline' };
 
 /** The agent picker of a new thread: online agents with their state and the suggestion; "Any agent" queues it. */
-export function AgentPicker({ presence, value, onChange }: { presence: PresenceReply | undefined; value: string; onChange: (v: string) => void }) {
-  const agents = (presence?.agents ?? []).filter((a) => a.state !== 'offline' || a.id === presence?.suggested);
+export function AgentPicker({ presence, value, onChange, showOffline, anyHint, name = 'cmt-agent' }: { presence: PresenceReply | undefined; value: string; onChange: (v: string) => void; /** List offline agents too (their work is queued until they connect). */ showOffline?: boolean; anyHint?: string; name?: string }) {
+  const agents = (presence?.agents ?? []).filter((a) => showOffline || a.state !== 'offline' || a.id === presence?.suggested);
   const sug = presence?.suggested;
   return (
     <div className="cmt-picker" role="radiogroup" aria-label="Who should handle this">
       {agents.map((a) => (
         <label key={a.id} className="cmt-pick" data-on={value === a.handle || undefined}>
-          <input type="radio" name="cmt-agent" checked={value === a.handle} onChange={() => onChange(a.handle)} />
+          <input type="radio" name={name} checked={value === a.handle} onChange={() => onChange(a.handle)} />
           <span className="cmt-dot" data-state={a.state} aria-hidden />
           <span className="cmt-pick-name">{a.label}</span>
           <span className="cmt-pick-state">
-            {STATE_LABEL[a.state]}
+            {a.state === 'offline' && showOffline ? 'offline: queued until it connects' : STATE_LABEL[a.state]}
             {a.busyWith[0] ? `: ${a.busyWith[0].summary}` : ''}
           </span>
           {sug === a.id && <span className="cmt-suggest">suggested{a.state === 'online' ? ' (idle)' : ' (least busy)'}</span>}
         </label>
       ))}
       <label className="cmt-pick" data-on={value === 'any' || undefined}>
-        <input type="radio" name="cmt-agent" checked={value === 'any'} onChange={() => onChange('any')} />
+        <input type="radio" name={name} checked={value === 'any'} onChange={() => onChange('any')} />
         <IconRobot size={13} aria-hidden />
         <span className="cmt-pick-name">Any agent</span>
-        <span className="cmt-pick-state">queued: the next agent to check in picks it up</span>
+        <span className="cmt-pick-state">{anyHint ?? 'queued: the next agent to check in picks it up'}</span>
       </label>
       {!agents.length && <div className="cmt-faint">No agent is online. Open Claude Code with <code>mandate claude</code>; it answers when it connects.</div>}
     </div>
   );
 }
 
-/** A textarea with @mention suggestions (agent handles and logins). */
-function MentionBox({ value, onChange, presence, placeholder, onSubmit, autoFocus }: { value: string; onChange: (v: string) => void; presence: PresenceReply | undefined; placeholder: string; onSubmit: () => void; autoFocus?: boolean }) {
-  const m = /(^|\s)@([\w.-]*)$/.exec(value);
-  const opts = useMemo(() => {
-    if (!m) return [];
-    const q = m[2]!.toLowerCase();
-    const set = new Map<string, string>();
-    for (const a of presence?.agents ?? []) {
-      set.set(a.handle, `${a.label} · ${a.state}`);
-      if (a.user) set.set(a.user.toLowerCase(), `${a.user} (all their agents)`);
-    }
-    return [...set].filter(([h]) => h.toLowerCase().startsWith(q)).slice(0, 5);
-  }, [m, presence]);
-  return (
-    <div className="cmt-mention">
-      <Textarea
-        autosize
-        minRows={2}
-        maxRows={8}
-        value={value}
-        placeholder={placeholder}
-        autoFocus={autoFocus}
-        onChange={(e) => onChange(e.currentTarget.value)}
-        onKeyDown={(e) => {
-          if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') onSubmit();
-        }}
-        aria-label="Comment"
-      />
-      {opts.length > 0 && (
-        <ul className="cmt-mention-list" role="listbox" aria-label="Mention suggestions">
-          {opts.map(([h, label]) => (
-            <li key={h}>
-              <button type="button" role="option" aria-selected={false} onMouseDown={(e) => e.preventDefault()} onClick={() => onChange(value.replace(/@[\w.-]*$/, `@${h} `))}>
-                <b>@{h}</b> <span className="cmt-faint">{label}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
+/** The comment box: @agent / @person and @object references (specs, sections, standards, requests, work orders). */
+const MentionBox = RefMentionBox;
 
 function Message({ m }: { m: CommentView }) {
   const human = isHuman(m);

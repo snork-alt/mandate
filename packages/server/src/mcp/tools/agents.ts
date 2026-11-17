@@ -37,7 +37,7 @@ Example: {"ref":"mandate://specs/login/sections/auth-flow"}`,
       if (!news) throw new ToolError('not_available', 'presence is kept per project endpoint', 'call it on a project endpoint');
       const st = await routeState(ctx, news.presence);
       const agents = news.presence.list(st.workOrders);
-      if (!a.ref) return { agents };
+      if (!a.ref) return { agents, suggested: suggestAgent(agents) };
       const resp = responsibleFor(a.ref, st);
       const responsible = [...new Set(resp.flatMap((r) => news.presence.clientsOfAgent(r.agent, r.user)))];
       const suggested = suggestAgent(agents, await reposOf(ctx, a.ref));

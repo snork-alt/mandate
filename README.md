@@ -285,6 +285,16 @@ MCP server's instructions carry the same rules for agents without it) runs the f
   blocked and carries on elsewhere. Questions wait in **Waiting for you** (sidebar badge), grouped by request, answered inline.
   The installer pre-approves the project's Mandate tools in Claude Code (`mcp__mandate-<project>__*`) so the loop is not
   interrupted by prompts.
+- **New request from the web UI** (Requests page, *+ New request*) is `/mandate <text>` without a terminal: *What do you want?*
+  (type **@** to reference a spec, section, standard, component, request, work order or an agent; the references are stored on
+  the request), who handles it (the same agent picker as comments: idle, busy with what, offline = **queued** until it
+  connects, or *Any agent* = the next free one), priority and **Plan only** (stop after the spec update and the work-order
+  plan; the request page then shows *Plan ready: review* and an *Approve plan & implement* button, the only user-side action).
+  The assignee gets a `request_assigned` event (an offline agent is caught up when it connects) and runs
+  `/mandate resume <id>`; assignment is exclusive: the first agent that starts it (`flow_next { request }`) takes it, the
+  others get `already_taken`. Until it is started you can reassign it. The request page shows the source, the assignee with
+  presence, a six-stage flow bar (recorded, matched, spec updated, work order + plan, implementing, proved & done), the plan
+  steps, decisions, questions waiting for you (answered inline), spec changes and an activity feed, live.
 - **Strict flow** (opt-in, Settings → Agent flow, admins): the project installer then adds a Claude Code `PreToolUse` hook
   (`mandate guard`, in the repo's `.claude/settings.local.json`) that refuses Edit, Write, MultiEdit and NotebookEdit unless
   the agent holds a claimed work order with a step in progress (`flow_edit_allowed`). It needs a personal token and fails
