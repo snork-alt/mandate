@@ -4,7 +4,7 @@ import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markd
 import remarkGfm from 'remark-gfm';
 import { CodeBlock } from './CodeBlock';
 import { withBase } from '../project';
-import { MCP_SERVER_NAME, parseNodeUri } from '@mandate/shared/refs';
+import { MCP_SERVER_NAME, normalizeMentions, parseNodeUri } from '@mandate/shared/refs';
 import { RefChip } from './refs/RefChip';
 import { KindIcon } from './refs/KindIcon';
 import { looksLikeFilePath } from '../lib/filePath';
@@ -16,7 +16,8 @@ const BARE = new RegExp(`(^|[\\s(,;])(${MCP_SERVER_NAME}:\\/\\/[A-Za-z0-9._~/@:-
 const keepRefs = (url: string) => (url.startsWith(SCHEME) ? url : defaultUrlTransform(url));
 
 /** Bare references in prose (`… see mandate-URI f1`) become autolinks, rendered as reference chips; code is left alone. */
-export function linkBareRefs(md: string): string {
+export function linkBareRefs(raw: string): string {
+  const md = normalizeMentions(raw);
   if (!md.includes(SCHEME)) return md;
   return md
     .split(/(^```[\s\S]*?^```)/m)

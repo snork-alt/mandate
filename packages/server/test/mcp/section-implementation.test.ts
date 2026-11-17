@@ -88,3 +88,25 @@ describe('editorial edits and re-verification', () => {
     expect(after.body.items.map((x: any) => x.ref)).not.toContain(sec);
   });
 });
+
+describe('comments carry the UI context', () => {
+  it('stores the displayed state (Outdated, implemented commit, badges) and the selected text; pasted mentions become bare refs', async () => {
+    const { spec, sec } = await implemented();
+    await ok('section_update', { ref: sec, body: 'Changed outside any task.' });
+    const added = await ok('comment_add', { target: sec, body: `why is it outdated? @mandate:${sec}`, selectedText: 'The design.' });
+    expect(added.comment.body).toBe(`why is it outdated? ${sec}`);
+    expect(added.comment.view).toMatchObject({ object: expect.stringContaining('section'), implementation: { state: 'outdated', implementedBy: expect.any(String) }, selectedText: 'The design.' });
+    expect(added.comment.view.badges[0].label).toBe('Outdated');
+    expect(added.comment.view.badges[0].meaning).toMatch(/editorial/);
+    const listed = await fx.call('comments_list', { target: sec });
+    expect(JSON.stringify(listed.body)).toContain('"state":"outdated"');
+    const ok2 = await fx.call('spec_implementation', { id: spec });
+    expect(ok2.body.sections.design.outdated).toBe(true);
+  });
+
+  it('a request body with a pasted mention is stored as a bare reference', async () => {
+    const { sec } = await implemented();
+    const r = await ok('request_create', { kind: 'improvement', body: `Look at @mandate:${sec} please` });
+    expect(r.request.body).toBe(`Look at ${sec} please`);
+  });
+});

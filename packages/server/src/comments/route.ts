@@ -8,6 +8,7 @@
  * running the related request. Nobody: no wake (the comment is visible on the object; the UI offers a picker).
  * The writer itself is never woken.
  */
+import { viewLine } from './view.js';
 import { isClaimStale, parseCommentTarget, type CommentRecord, type CommentThread, type CommentView, type Feedback, type WorkOrder } from '@mandate/shared';
 import type { AgentPresence } from '../agents/presence.js';
 import { clientIdentity } from '../projects/settings.js';
@@ -131,7 +132,9 @@ export function summaryOf(thread: CommentThread, c: CommentRecord | CommentView,
   const shown = msgs.slice(-3);
   const who = (m: CommentView) => (isHuman(m.author) ? m.author.user ?? 'user' : m.author.agent);
   const lines = shown.map((m) => `${who(m)}: ${clip(m.body, shown.length === 1 ? 240 : 110)}`).join(' | ');
-  return `comment on ${shortTarget(thread.target)} (thread ${thread.id}${thread.replies.length ? `, ${thread.replies.length} repl${thread.replies.length === 1 ? 'y' : 'ies'}` : ''}${thread.blocking ? ', blocking' : ''}${asRequest ? ', make it a request' : ''}): ${lines}`.slice(0, 480) + (c ? '' : '');
+  const ctxLine = viewLine([...msgs].reverse().find((m) => m.view)?.view);
+  const base = `comment on ${shortTarget(thread.target)} (thread ${thread.id}${thread.replies.length ? `, ${thread.replies.length} repl${thread.replies.length === 1 ? 'y' : 'ies'}` : ''}${thread.blocking ? ', blocking' : ''}${asRequest ? ', make it a request' : ''}): ${lines}`.slice(0, 480);
+  return ctxLine ? `${base} [UI: ${ctxLine.slice(0, 260)}]` : base + (c ? '' : '');
 }
 
 export function newsOfProject(ctx: ToolContext): NewsService | null {

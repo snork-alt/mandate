@@ -8,7 +8,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Avatar, Button, Checkbox, Loader, Textarea } from '@mantine/core';
 import { IconCheck, IconChevronRight, IconMessage, IconRobot, IconX } from '@tabler/icons-react';
 import type { CommentThread, CommentView } from '@mandate/shared';
-import { REF_SCHEME } from '@mandate/shared/refs';
+import { normalizeMentions, REF_SCHEME } from '@mandate/shared/refs';
 import { AnswerMarkdown } from '../ask/AskThread';
 import { RefMentionBox } from '../mentions/RefMentionBox';
 import { TimeAgo } from '../TimeAgo';
@@ -33,7 +33,7 @@ const HUMAN = 'mandate-ui';
 const isHuman = (m: CommentView) => m.author.agent === HUMAN;
 const nameOf = (m: CommentView) => (isHuman(m) ? m.author.user ?? 'user' : m.author.agent);
 /** Bare references in a message become links (reference chips). */
-const linkRefs = (s: string) => s.replace(/(^|[\s(])(mandate:\/\/[^\s)\]]+)/g, (_m, a: string, r: string) => `${a}[${r.replace(REF_SCHEME, '')}](${r})`);
+const linkRefs = (raw: string) => normalizeMentions(raw).replace(/(^|[\s(])(mandate:\/\/[^\s)\]]+)/g, (_m, a: string, r: string) => `${a}[${r.replace(REF_SCHEME, '')}](${r})`);
 export const shortTarget = (t: string) => t.replace(REF_SCHEME, '').replace(/^(specs|standards|components|work-orders|requests)\//, '');
 const targetLabel = (t: string, doc: string) => {
   const base = commentBase(t);
@@ -214,7 +214,7 @@ function NewThread({ doc, target, quote, onDone }: { doc: string; target: string
   const needsPicker = !!p?.needsPicker && !/@[\w.-]+/.test(body);
   const chosen = pick && activeAgents(p).some((a) => a.handle === pick) ? pick : defaultAgent(p);
   const add = useAddComment((r) => onDone(r.thread?.id));
-  const send = () => body.trim() && add.mutate({ target, body: body.trim(), ...(needsPicker ? { to: chosen } : {}), ...(asRequest ? { asRequest: true } : {}), ...(blocking ? { blocking: true } : {}) });
+  const send = () => body.trim() && add.mutate({ target, body: body.trim(), ...(quote?.trim() ? { selectedText: quote.trim().slice(0, 2000) } : {}), ...(needsPicker ? { to: chosen } : {}), ...(asRequest ? { asRequest: true } : {}), ...(blocking ? { blocking: true } : {}) });
   return (
     <div className="cmt-new" data-testid="new-thread">
       <div className="cmt-new-head">

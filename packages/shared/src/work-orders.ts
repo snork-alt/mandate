@@ -387,6 +387,8 @@ export interface CommentView {
   to?: string;
   asRequest?: boolean;
   blocking?: boolean;
+  /** The target's UI state (implementation, statuses, badges and what they mean) and the selected text, as of the comment. */
+  view?: import('./comments.js').CommentContext;
   createdAt: string;
 }
 export interface CommentThread extends CommentView {

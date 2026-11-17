@@ -48,6 +48,47 @@ const targetSchema = z
   .min(1)
   .refine((v) => !!parseCommentTarget(v) || (!!parseRef(v) && parseRef(v)!.kind !== 'feedback' && !parseRef(v)!.commit), 'a Mandate object: mandate://<specs|standards|components|work-orders|requests>/<id>[/sections/<sid> | /tasks/tN][#Lx-Ly]');
 
+/** What each badge of the web UI means (the agent cannot see the UI: comments and the guide carry this). */
+export const UI_BADGE_MEANING = {
+  Outdated: 'an implemented spec section whose text changed after it was implemented: wording only -> section_update editorial; same behaviour -> section_reverify; new behaviour -> a work order task',
+  'Implemented @x': 'the section was implemented at spec commit x (by its work order) and has not changed since',
+  'Not implemented': 'no work order has implemented the section yet',
+  'Waiting for you': 'the item needs a decision only the user can make (a question, an approval, a plan to approve, a comment addressed to the user)',
+  'Plan ready': 'a plan-only request whose work-order plan awaits the user approval; the agent stops until it is approved',
+  Queued: 'the request is assigned to an agent that has not started it yet',
+  "Can't be woken": 'the addressed agent is online but cannot be woken by a comment (its client does not accept pushes): it sees the comment at its next flow_next / news_list',
+} as const;
+
+/** The state of the commented object as the UI displays it, stored with the comment (so agents need not guess). */
+export const commentViewSchema = z
+  .object({
+    /** Readable name of the target: `spec "Title" > section "Title"`. */
+    object: z.string().min(1).max(300),
+    /** Lifecycle status of the object (spec / standard / component / work order / request). */
+    status: z.string().max(60).optional(),
+    /** Spec section: how the UI shows its implementation. */
+    implementation: z
+      .object({
+        state: z.enum(['implemented', 'outdated', 'not_implemented']),
+        implementedCommit: z.string().optional(),
+        implementedBy: z.string().optional(),
+        changedBy: z.string().optional(),
+        changedAt: z.string().optional(),
+        changedCommit: z.string().optional(),
+      })
+      .strict()
+      .optional(),
+    /** Work order / task / request details shown on the page. */
+    details: z.record(z.string(), z.string()).optional(),
+    /** The badges the user sees on the target and what each means. */
+    badges: z.array(z.object({ label: z.string(), meaning: z.string() }).strict()).max(12).optional(),
+    /** The text the user selected when commenting. */
+    selectedText: z.string().max(2000).optional(),
+    at: z.string().optional(),
+  })
+  .strict();
+export type CommentContext = z.infer<typeof commentViewSchema>;
+
 export const commentRecordSchema = z.object({
   id: idSchema,
   target: targetSchema,
@@ -62,6 +103,8 @@ export const commentRecordSchema = z.object({
   asRequest: z.boolean().optional(),
   /** Must be resolved before the work order can be completed (thread roots only). */
   blocking: z.boolean().optional(),
+  /** The UI state of the target (and the selected text) when the comment was written. */
+  view: commentViewSchema.optional(),
   createdAt: z.string().min(1),
 });
 export type CommentRecord = z.infer<typeof commentRecordSchema>;
@@ -153,6 +196,8 @@ export const commentAddInputSchema = z
     to: z.string().trim().min(1).max(120).optional(),
     /** Treat as a change request: the agent must run the /mandate flow for it (request_create source comment). */
     asRequest: z.boolean().optional(),
+    /** The text selected in the page when commenting (the server adds the target's displayed state as `view`). */
+    selectedText: z.string().trim().min(1).max(2000).optional(),
   })
   .strict();
 export const commentResolveInputSchema = z.object({ id: commentRef, note: z.string().trim().min(1).max(5000).optional() }).strict();

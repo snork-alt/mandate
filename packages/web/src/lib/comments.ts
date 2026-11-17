@@ -70,6 +70,8 @@ export interface AddCommentArgs {
   to?: string;
   asRequest?: boolean;
   blocking?: boolean;
+  /** The text selected in the page: delivered to the agent with the target's displayed state. */
+  selectedText?: string;
 }
 export function useAddComment(onDone?: (r: { thread?: CommentThread; routing?: { via: string; wakes: string[] } }) => void) {
   const qc = useQueryClient();

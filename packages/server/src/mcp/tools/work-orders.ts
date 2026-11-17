@@ -3,6 +3,7 @@
  * documents (`work-orders/<id>.md`); every write is a commit with a `Work-Order:` trailer (heartbeats excepted).
  * Comments live append-only in `comments.jsonl` (never inside the work order).
  */
+import { commentViewOf } from '../../comments/view.js';
 import {
   buildCommentRef,
   buildRef,
@@ -153,7 +154,10 @@ Example: {"target":"mandate://specs/login/sections/auth-flow#L3-L8","body":"@cla
       const commits: string[] = [];
       const svc = ctx.storage.commentService;
       const parentThread = a.parent ? (await svc.threadOf(a.parent)) : null;
-      const c = await svc.add(a, author(ctx), metaOf(ctx, commits));
+      // The target's displayed state (and the selected text) travels with the comment: the receiver need not guess what the UI shows.
+      const { selectedText, ...input } = a;
+      const view = await commentViewOf(ctx.storage, a.parent && parentThread ? parentThread.target : a.target, selectedText);
+      const c = await svc.add({ ...input, ...(view ? { view } : {}) }, author(ctx), metaOf(ctx, commits));
       if (parentThread?.status === 'resolved') await svc.setState(parentThread.id, 'reopen', ctx.commit!.agent, undefined, metaOf(ctx, commits)).catch(() => undefined);
       const threads = await svc.threads(c.target);
       const thread = threads.find((t) => t.id === c.id || t.replies.some((r) => r.id === c.id)) ?? null;

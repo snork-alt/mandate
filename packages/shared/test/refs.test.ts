@@ -156,3 +156,13 @@ describe('every reference is a node (kinds + canonical form)', () => {
     expect(canonicalRef('nope')).toBeNull();
   });
 });
+
+import { normalizeMentions as __nm, extractRefs as __er } from '../src/refs.js';
+describe('normalizeMentions', () => {
+  it('drops the @mandate: prefix of pasted mentions; extraction sees the bare reference', () => {
+    const t = 'see @mandate:mandate://specs/a/sections/b and @mandate:mandate://requests/fb-1.';
+    expect(__nm(t)).toBe('see mandate://specs/a/sections/b and mandate://requests/fb-1.');
+    expect(__er(t)).toEqual(['mandate://specs/a/sections/b', 'mandate://requests/fb-1']);
+    expect(__nm('mail @mandate or @someone')).toBe('mail @mandate or @someone');
+  });
+});

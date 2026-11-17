@@ -9,7 +9,7 @@ import { useMemo, useState } from 'react';
 import { Textarea } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconX } from '@tabler/icons-react';
-import { buildRef, extractRefs, REF_SCHEME, type NodeKind } from '@mandate/shared';
+import { buildRef, extractRefs, normalizeMentions, REF_SCHEME, type NodeKind } from '@mandate/shared';
 import { KindIcon } from '../refs/KindIcon';
 import { refKind } from '../refs/kinds';
 import { useMcpSearch } from '../../mcp/queries';
@@ -122,7 +122,8 @@ export function RefMentionBox({
         onChange={(e) => {
           setDismissed(null);
           setActive(0);
-          onChange(e.currentTarget.value);
+          // A pasted `@mandate:mandate://...` mention becomes the bare reference (what chips render and the server extracts).
+          onChange(normalizeMentions(e.currentTarget.value));
         }}
         onKeyDown={(e) => {
           if (open) {

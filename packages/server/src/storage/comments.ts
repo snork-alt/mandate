@@ -8,6 +8,7 @@
  * order (done / failed / cancelled) only replies to existing threads and resolves are allowed (no new threads, no
  * reopen: a closed work order cannot get new must-fix issues — open a new work order instead).
  */
+import { normalizeMentions } from '@mandate/shared';
 import {
   commentLineSchema,
   FROZEN_WORK_ORDER_STATUSES,
@@ -134,7 +135,7 @@ export class CommentService {
     }
   }
 
-  async add(input: { target: string; body: string; parent?: string; blocking?: boolean; to?: string; asRequest?: boolean }, who: { agent: string; user?: string }, meta: CommitMeta = {}): Promise<CommentRecord> {
+  async add(input: { target: string; body: string; parent?: string; blocking?: boolean; to?: string; asRequest?: boolean; view?: CommentRecord['view'] }, who: { agent: string; user?: string }, meta: CommitMeta = {}): Promise<CommentRecord> {
     let target = this.canonical(input.target);
     if (input.parent) {
       const p = (await this.lines()).find((l): l is CommentRecord => !isStateRecord(l) && l.id === input.parent);
@@ -145,17 +146,18 @@ export class CommentService {
       if (pr.doc === tr.doc && !tr.sectionId && !tr.step) target = p.target;
     }
     const now = (meta.date ?? new Date()).toISOString();
-    const mentions = mentionsOf(input.body);
+    const mentions = mentionsOf(normalizeMentions(input.body));
     const rec: CommentRecord = {
       id: newId('c', meta.date?.getTime()),
       target,
       ...(input.parent ? { parent: input.parent } : {}),
       author: { agent: who.agent, ...(who.user ? { user: who.user } : {}) },
-      body: input.body.trim(),
+      body: normalizeMentions(input.body.trim()),
       ...(mentions.length ? { mentions } : {}),
       ...(input.to ? { to: input.to.replace(/^@/, '') } : {}),
       ...(input.asRequest ? { asRequest: true } : {}),
       ...(input.blocking ? { blocking: true } : {}),
+      ...(input.view ? { view: input.view } : {}),
       createdAt: now,
     };
     const wo = this.workOrderOf(target);

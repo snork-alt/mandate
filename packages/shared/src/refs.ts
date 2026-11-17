@@ -356,6 +356,14 @@ export function mentionOf(uri: string): string {
   return `@${MCP_SERVER_NAME}:${uri}`;
 }
 
+/**
+ * A pasted mention (`@mandate:mandate://specs/x`) becomes the bare reference (`mandate://specs/x`): the form every text
+ * stores, extracts refs from and renders as a link chip.
+ */
+export function normalizeMentions(text: string): string {
+  return text.replace(new RegExp(`@${MCP_SERVER_NAME}:(?=[a-z][a-z0-9+.-]*://)`, 'gi'), '');
+}
+
 /** The URI without scheme (for compact labels): `specs/x/sections/y`. */
 export function refLabel(uri: string): string {
   return uri.startsWith(REF_SCHEME) ? uri.slice(REF_SCHEME.length) : uri;

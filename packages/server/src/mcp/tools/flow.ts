@@ -97,7 +97,7 @@ async function commentInbox(ctx: ToolContext, snap: FlowSnapshot) {
   const view = (t: CommentThread, extra: Record<string, unknown> = {}) => {
     const msgs = [t, ...t.replies];
     const last = msgs[msgs.length - 1]!;
-    return { thread: t.id, target: shortTarget(t.target), ...(t.blocking ? { blocking: true } : {}), ...(t.asRequest || msgs.some((m) => m.asRequest) ? { asRequest: true } : {}), messages: msgs.slice(-4).map((m) => ({ id: m.id, by: m.author.user ?? m.author.agent, body: m.body.slice(0, 600) })), last: last.id, ...extra };
+    return { thread: t.id, target: shortTarget(t.target), ...(t.blocking ? { blocking: true } : {}), ...(t.asRequest || msgs.some((m) => m.asRequest) ? { asRequest: true } : {}), ...(msgs.some((m) => m.view) ? { view: [...msgs].reverse().find((m) => m.view)!.view } : {}), messages: msgs.slice(-4).map((m) => ({ id: m.id, by: m.author.user ?? m.author.agent, body: m.body.slice(0, 600) })), last: last.id, ...extra };
   };
   const unanswered = unansweredFor(me, snap.comments, st).slice(0, 10).map((t) => view(t));
   const done = new Set(snap.requests.filter((r) => r.status === 'closed').map((r) => r.id));

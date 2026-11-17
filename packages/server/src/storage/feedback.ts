@@ -1,3 +1,4 @@
+import { normalizeMentions } from '@mandate/shared';
 import { diffDocs, type DocFormat } from '@mandate/doc';
 import {
   buildNodeUri,
@@ -359,7 +360,7 @@ export class FeedbackService {
     // The user is server-set from the commit's trailers (the authenticated principal), never from input.
     const { createdByUser: _spoof, acceptedBy: _a, approvalOverride: _o, ...rest } = input as CreateFeedbackInput & { createdByUser?: string; acceptedBy?: string; approvalOverride?: unknown };
     const user = userOfTrailers(meta.trailers);
-    const item = feedbackSchema.parse({ ...rest, id, createdBy: input.createdBy ?? actorOf(meta), ...(user ? { createdByUser: user } : {}), createdAt: '', updatedAt: '' });
+    const item = feedbackSchema.parse({ ...rest, ...(typeof rest.body === 'string' ? { body: normalizeMentions(rest.body) } : {}), id, createdBy: input.createdBy ?? actorOf(meta), ...(user ? { createdByUser: user } : {}), createdAt: '', updatedAt: '' });
     const { createdAt: _c, updatedAt: _u, ...stored } = item;
     const created = await this.repo.create((input.id ? stored : { ...stored, id: undefined }) as never, meta);
     return this.get(created.id);
