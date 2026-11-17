@@ -1,9 +1,12 @@
 import { useRef, type PointerEvent } from 'react';
 import { Tooltip } from '@mantine/core';
 import { useLocation } from 'react-router';
-import { IconActivity, IconChevronsRight, IconInfoCircle, IconSparkles } from '@tabler/icons-react';
+import { IconActivity, IconChevronsRight, IconInfoCircle, IconMessage, IconSparkles } from '@tabler/icons-react';
 import { ActivityPanel } from '../activity/ActivityPanel';
 import { AskView } from '../ask/AskView';
+import { SelectionComment } from '../comments/CommentBadge';
+import { CommentsPanel } from '../comments/CommentsPanel';
+import { docOfPath, useCommentThreads } from '../../lib/comments';
 import { useRail } from './RailProvider';
 import type { RailTab } from './persistence';
 import './rail.css';
@@ -11,6 +14,7 @@ import './rail-mobile.css';
 
 const TAB_META: Record<RailTab, { label: string; icon: typeof IconActivity; keys?: string }> = {
   details: { label: 'Details', icon: IconInfoCircle },
+  comments: { label: 'Comments', icon: IconMessage },
   activity: { label: 'Activity', icon: IconActivity, keys: '⇧⌘A' },
   ask: { label: 'Ask', icon: IconSparkles, keys: '⌘J' },
 };
@@ -21,6 +25,8 @@ export function Rail() {
   const { pathname } = useLocation();
   const drag = useRef(false);
   const docUri = r.pageType === 'doc' ? docRefOf(pathname) : undefined;
+  const commentDoc = r.pageType === 'doc' ? docOfPath(pathname) : undefined;
+  const openThreads = (useCommentThreads(commentDoc, r.activeTab === 'comments' && !r.collapsed).data?.counts.open ?? 0);
 
   const onDown = (e: PointerEvent<HTMLDivElement>) => {
     drag.current = true;
@@ -72,6 +78,11 @@ export function Rail() {
               <button type="button" role="tab" className="rail-tab" aria-selected={active} aria-label={label} onClick={() => r.selectTab(t)}>
                 <Icon size={16} stroke={1.6} />
                 <span className="rail-tab-label">{label}</span>
+                {t === 'comments' && openThreads > 0 && (
+                  <span className="rail-badge" aria-label={`${openThreads} open threads`}>
+                    {openThreads > 99 ? '99+' : openThreads}
+                  </span>
+                )}
                 {t === 'activity' && r.unread > 0 && (
                   <span className="rail-badge" aria-label={`${r.unread} unread`}>
                     {r.unread > 99 ? '99+' : r.unread}
@@ -91,6 +102,9 @@ export function Rail() {
       </div>
       <div className="rail-body" hidden={r.collapsed}>
         <div className="rail-pane" data-pane="details" ref={r.setDetailsSlot} hidden={r.activeTab !== 'details'} />
+        <div className="rail-pane" data-pane="comments" hidden={r.activeTab !== 'comments'}>
+          {r.activeTab === 'comments' && <CommentsPanel doc={commentDoc} />}
+        </div>
         <div className="rail-pane" data-pane="activity" hidden={r.activeTab !== 'activity'}>
           <ActivityPanel events={r.events} docUri={docUri} connected={r.connected} loaded={r.loaded} paused={r.paused} onPausedChange={r.setPaused} buffered={r.buffered} fresh={r.fresh} />
         </div>
@@ -99,6 +113,7 @@ export function Rail() {
         </div>
       </div>
     </aside>
+    <SelectionComment />
     </>
   );
 }

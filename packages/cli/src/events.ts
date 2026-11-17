@@ -127,6 +127,7 @@ const HINTS: Record<string, string> = {
   review_outcome: 'Address the review outcome on your work.',
   drift: 'A section you work on changed; re-read it.',
   comment: 'Read the comment and respond.',
+  comment_added: 'A comment was routed to you: read the thread (comments_list on its target; the summary shows the latest messages) and reply IN the thread (comment_add with parent). A question or remark: answer it. A change: request_create with source comment, then reply with the request link, and one final reply plus comment_resolve when it is done (flow_next { comments } lists what waits for you).',
 };
 
 export const questionOf = (ref: string): string | undefined => /^mandate:\/\/questions\/([A-Za-z0-9-]+)/.exec(ref)?.[1];

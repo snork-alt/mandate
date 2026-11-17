@@ -1,0 +1,58 @@
+/* comments: side panel (Rail tab), section badges, selection button */
+.cmt-panel { display: flex; flex-direction: column; gap: 10px; font-size: var(--mantine-font-size-sm); }
+.cmt-pad { padding: 18px 4px; }
+.cmt-faint { color: var(--app-text-faint); font-size: var(--mantine-font-size-xs); }
+.cmt-spacer { flex: 1; }
+.cmt-title { display: flex; align-items: center; gap: 8px; }
+.cmt-section-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--app-text-faint); margin-top: 4px; }
+.cmt-thread, .cmt-new { border: 1px solid var(--app-border-strong); border-radius: 10px; background: var(--app-bg); padding: 8px 10px; display: flex; flex-direction: column; gap: 8px; }
+.cmt-thread[data-active] { border-color: var(--mantine-primary-color-filled); box-shadow: 0 0 0 1px var(--mantine-primary-color-filled); }
+.cmt-thread-head { all: unset; cursor: pointer; display: flex; align-items: center; gap: 6px; }
+.cmt-target { font-family: var(--mantine-font-family-monospace); font-size: 11px; color: var(--app-text-muted); }
+.cmt-preview { color: var(--app-text-muted); cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cmt-msg { display: flex; gap: 8px; }
+.cmt-msg-main { min-width: 0; flex: 1; }
+.cmt-msg-head { display: flex; align-items: center; gap: 6px; font-size: var(--mantine-font-size-xs); }
+.cmt-msg .markdown { font-size: var(--mantine-font-size-sm); }
+.cmt-msg .markdown p { margin: 2px 0; }
+.cmt-chip { display: inline-flex; align-items: center; height: 16px; padding: 0 6px; border-radius: 8px; font-size: 10px; background: var(--app-active); color: var(--app-text-muted); }
+.cmt-chip[data-tone='red'] { color: var(--mantine-color-red-7); background: color-mix(in srgb, var(--mantine-color-red-6) 12%, transparent); }
+.cmt-chip[data-tone='green'] { color: var(--mantine-color-teal-7); background: color-mix(in srgb, var(--mantine-color-teal-6) 12%, transparent); }
+.cmt-typing { display: flex; align-items: center; gap: 6px; color: var(--app-text-faint); font-size: var(--mantine-font-size-xs); }
+.cmt-reply { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--app-border); padding-top: 8px; }
+.cmt-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.cmt-to { max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cmt-resolved { all: unset; box-sizing: border-box; cursor: pointer; display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 8px; color: var(--app-text-muted); width: 100%; }
+.cmt-resolved:hover { background: var(--app-hover); }
+.cmt-resolved-body { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cmt-new-head { display: flex; align-items: center; gap: 8px; }
+.cmt-x { all: unset; cursor: pointer; margin-left: auto; color: var(--app-text-faint); }
+.cmt-mention { position: relative; }
+.cmt-mention-list { position: absolute; z-index: 5; left: 0; right: 0; top: 100%; margin: 2px 0 0; padding: 4px; list-style: none; background: var(--app-bg); border: 1px solid var(--app-border-strong); border-radius: 8px; box-shadow: 0 6px 18px rgb(0 0 0 / 0.14); }
+.cmt-mention-list button { all: unset; cursor: pointer; display: block; width: 100%; box-sizing: border-box; padding: 4px 8px; border-radius: 6px; }
+.cmt-mention-list button:hover { background: var(--app-hover); }
+.cmt-picker { display: flex; flex-direction: column; gap: 4px; }
+.cmt-pick { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 8px; border: 1px solid var(--app-border); cursor: pointer; flex-wrap: wrap; }
+.cmt-pick[data-on] { border-color: var(--mantine-primary-color-filled); background: var(--mantine-primary-color-light); }
+.cmt-pick input { margin: 0; }
+.cmt-pick-name { font-weight: 500; }
+.cmt-pick-state { color: var(--app-text-faint); font-size: var(--mantine-font-size-xs); }
+.cmt-suggest { margin-left: auto; font-size: 10px; color: var(--mantine-primary-color-light-color); background: var(--mantine-primary-color-light); border-radius: 8px; padding: 0 6px; }
+.cmt-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--app-text-faint); }
+.cmt-dot[data-state='online'] { background: var(--mantine-color-teal-6); }
+.cmt-dot[data-state='busy'] { background: var(--mantine-color-yellow-6); }
+
+/* per-section badge (top-right of a section header): filled = open threads, outlined = only resolved, dashed = none */
+.cmt-badge { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px; border-radius: 11px; font-size: 12px; box-sizing: border-box; border: 1px solid var(--mantine-primary-color-filled); }
+.cmt-badge[data-kind='open'] { background: var(--mantine-primary-color-filled); color: var(--mantine-primary-color-contrast); }
+.cmt-badge[data-kind='open'][data-blocking] { background: var(--mantine-color-red-6); border-color: var(--mantine-color-red-6); color: #fff; }
+.cmt-badge[data-kind='resolved'] { background: transparent; color: var(--mantine-primary-color-light-color); }
+.cmt-badge[data-kind='none'] { border: 1px dashed var(--app-border-strong); color: var(--app-text-faint); background: transparent; opacity: 0; }
+.doc-section:hover .cmt-badge[data-kind='none'], .cmt-badge[data-kind='none']:focus-visible, .wo-step:hover .cmt-badge[data-kind='none'] { opacity: 1; }
+@media (hover: none) { .cmt-badge[data-kind='none'] { opacity: 1; } }
+.doc-section[data-comment-active] { box-shadow: -3px 0 0 0 var(--mantine-primary-color-filled); background: color-mix(in srgb, var(--mantine-primary-color-filled) 5%, transparent); }
+.wo-step[data-comment-active] { box-shadow: -3px 0 0 0 var(--mantine-primary-color-filled); }
+
+/* selection: a small Comment button next to the selected text */
+.cmt-selbtn { position: fixed; z-index: 120; display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: 12px; border: 0; cursor: pointer; background: var(--mantine-primary-color-filled); color: var(--mantine-primary-color-contrast); font-size: 12px; box-shadow: 0 4px 14px rgb(0 0 0 / 0.25); }
+.cmt-badge-wrap { margin-left: auto; display: inline-flex; margin-right: 6px; }

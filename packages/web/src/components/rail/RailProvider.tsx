@@ -1,3 +1,4 @@
+import { RailCtx as Ctx, useRail, useRailOptional } from './railContext';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useLocation } from 'react-router';
 import { callTool, onConnectionChange, onNotification } from '../../mcp/client';
@@ -49,14 +50,7 @@ export interface RailState {
   fresh: ReadonlySet<string>;
 }
 
-const Ctx = createContext<RailState | null>(null);
-/** Null outside a RailProvider (tests, standalone pages). */
-export const useRailOptional = () => useContext(Ctx);
-export function useRail(): RailState {
-  const v = useContext(Ctx);
-  if (!v) throw new Error('useRail outside RailProvider');
-  return v;
-}
+export { useRail, useRailOptional };
 
 export interface ActivityDeps {
   subscribe: (handler: (e: ActivityEvent) => void) => () => void;

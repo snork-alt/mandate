@@ -12,6 +12,7 @@ import { Backlinks, LinkBadges } from './LinkParts';
 import { LineageButton } from '../lineage/LineageButton';
 import { Contributors } from '../people/People';
 import { bareRef } from '../../lib/lineage';
+import { SectionComments } from '../comments/CommentBadge';
 
 
 const META_TYPES = new Set(['audit-item', 'wo-section']);
@@ -67,6 +68,7 @@ export function SectionBlock({ section, standardTitles, badge, actions, bodyOnly
             </a>
             {title}
           </h2>
+          {target && <SectionComments sectionId={id} />}
           {(actions || target) && (
             <span className="section-actions">
               {actions}

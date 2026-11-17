@@ -221,7 +221,7 @@ export function WorkOrderPage() {
           <Markdown>{item.note}</Markdown>
         </blockquote>
       )}
-      {!!item.planSteps?.length && <PlanSteps steps={item.planSteps} spec={item.spec} />}
+      {!!item.planSteps?.length && <PlanSteps steps={item.planSteps} spec={item.spec} workOrder={item.id} />}
       {missing.includes('Plan') && !tracked.commit && (
         <div className="wo-plan-missing" data-testid="wo-plan-missing">
           <strong>Plan</strong>

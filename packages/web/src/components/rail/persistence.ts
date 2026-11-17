@@ -4,7 +4,7 @@ export const RAIL_DEFAULT = 380;
 /** Width of the collapsed icon strip. */
 export const RAIL_STRIP = 40;
 
-export type RailTab = 'details' | 'activity' | 'ask';
+export type RailTab = 'details' | 'comments' | 'activity' | 'ask';
 export type PageType = 'doc' | 'list';
 
 const KEYS = { width: 'mandate.rail.width', collapsed: 'mandate.rail.collapsed', tabs: 'mandate.rail.tabs' } as const;
@@ -54,7 +54,7 @@ export const saveCollapsed = (c: boolean) => write(KEYS.collapsed, c ? '1' : '0'
 /** Document pages (`/specs/x`, `/standards/x`, `/components/x`, `/work-orders/x`, `/requests/x`, `/audits/x`) vs everything else. */
 export const pageTypeOf = (pathname: string): PageType => (/^\/(specs|standards|components|work-orders|requests|feedback|audits)\/[^/]+/.test(pathname) ? 'doc' : 'list');
 
-export const tabsFor = (t: PageType): RailTab[] => (t === 'doc' ? ['details', 'activity', 'ask'] : ['activity', 'ask']);
+export const tabsFor = (t: PageType): RailTab[] => (t === 'doc' ? ['details', 'comments', 'activity', 'ask'] : ['activity', 'ask']);
 export const defaultTab = (t: PageType): RailTab => (t === 'doc' ? 'details' : 'activity');
 
 export type TabMemory = Partial<Record<PageType, RailTab>>;

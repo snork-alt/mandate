@@ -1,7 +1,9 @@
 import { IconCircleCheckFilled, IconCircleDashed, IconCircleOff, IconPlayerPlayFilled } from '@tabler/icons-react';
 import { Link } from 'react-router';
+import { buildRef } from '@mandate/shared/refs';
 import { currentStep, type PlanStep } from '@mandate/shared';
 import { TimeAgo } from '../TimeAgo';
+import { StepComments } from '../comments/CommentBadge';
 
 const ICON = {
   pending: <IconCircleDashed size={15} aria-label="pending" />,
@@ -11,7 +13,7 @@ const ICON = {
 };
 
 /** The plan steps of a work order as a live checklist (read-only: agents set them with work_order_step_set). */
-export function PlanSteps({ steps, spec }: { steps: PlanStep[]; spec: string }) {
+export function PlanSteps({ steps, spec, workOrder }: { steps: PlanStep[]; spec: string; workOrder?: string }) {
   if (!steps.length) return null;
   const cur = currentStep(steps);
   const finished = steps.filter((s) => s.status === 'done' || s.status === 'skipped').length;
@@ -49,6 +51,7 @@ export function PlanSteps({ steps, spec }: { steps: PlanStep[]; spec: string }) 
                 </div>
               )}
             </div>
+            {workOrder && <StepComments target={`${buildRef({ kind: 'work-orders', id: workOrder })}/steps/${s.id}`} />}
             {s.status !== 'pending' && (
               <span className="wo-step-who small faint">
                 {s.by} · <TimeAgo iso={s.updatedAt} />

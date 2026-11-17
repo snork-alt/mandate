@@ -331,6 +331,29 @@ token** (web UI → Connect agent → Personal tokens): `mandate channel login -
 `~/.claude.json` or a repo. The channel stays idle (and consumes nothing) when Claude Code was not started with channels
 enabled, so plain `claude` sessions are served by the hooks.
 
+### Comments on anything, answered by your agents
+
+Every object takes comments: a section of a spec, standard or component (optionally a `#Lx-Ly` range), a request, a work
+order or one of its steps. The web UI shows a **badge on each section** (filled: open threads, outlined: only resolved,
+dashed: none) that opens the **Comments** tab of the side panel (a bottom sheet on a phone): the page's threads with the
+active one expanded, replies as they arrive, a reply box that says who it goes to, *Make it a request*, *Resolve*, and a
+*New thread* box. Selecting text in a section offers a small *Comment* button.
+
+- **Routing.** `to` (the UI picker) or `@mention` addresses an agent or user; otherwise the **responsible agent** is woken:
+  the holder of the claim on the related work order, else the agent running the related request. A reply goes to the agents
+  already in the thread (a conversation needs no mentions), and a reply on a resolved thread reopens it. Nobody
+  responsible: nothing is woken and the UI asks which agent should take it (online agents with their state, a suggestion:
+  an idle agent on the same code repo, else the least busy; *Any agent* queues it for the next `flow_next`). Delivery is an
+  event (`comment_added`) over the same stream / channel as the other news, carrying the thread so far.
+- **What the agent does.** Question or remark: it answers in the thread. A change: it runs the `/mandate` flow
+  (`request_create { source: "comment" }`, or attaches to the request in flight on that object), replies with the request
+  link, and when the work order completes posts one final reply (what changed, the commit) and resolves the thread.
+  *Make it a request* forces the flow. `flow_next` lists the comments that wait for the agent.
+- **Blocking.** A blocking comment on a work order, section or step stops `work_order_complete`; on a request it stops
+  `flow_next` for that request until resolved.
+- **Presence.** `agents_presence` (also what the picker uses): online = an event stream is connected (or a tool call in the
+  last minutes), busy = holds a claim (with what), else offline. It is kept in memory: it rebuilds as agents reconnect.
+
 ## Commands
 
 | | |
