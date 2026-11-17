@@ -1300,7 +1300,20 @@ export const setSpecStatusSchema = z.object({ id: idSchema, status: z.enum(STORE
 export type SetSpecStatusInput = z.infer<typeof setSpecStatusSchema>;
 
 /** Implementation state of each section of a spec (MCP `spec_implementation`). */
-export type SectionImplementation = Record<string, { implementedCommit?: string; outdated: boolean; pinLost?: boolean }>;
+export type SectionImplementation = Record<
+  string,
+  {
+    implementedCommit?: string;
+    outdated: boolean;
+    pinLost?: boolean;
+    /** The work order that implemented it. */
+    implementedBy?: string;
+    /** Outdated: the commit that changed the section since, who made it and when. */
+    changedCommit?: string;
+    changedBy?: string;
+    changedAt?: string;
+  }
+>;
 
 /* ---------- Integrity (repo lint after pulls / merges) ---------- */
 

@@ -43,6 +43,7 @@ import {
   type CodeLink,
   type TouchedInput,
   stepsOf,
+  sectionReverifyInputSchema,
 } from '@mandate/shared';
 import { sectionBody, targetSection } from '../../storage/work-order-docs.js';
 import { slugSchema } from '@mandate/doc';
@@ -271,6 +272,21 @@ function docWriteTools(kind: DocKind): AnyToolDef[] {
             },
           }),
           defineTool({
+            name: 'section_reverify',
+            title: 'Re-verify an implemented spec section',
+            kind: 'write',
+            description: `An implemented section shows Outdated (its text changed after it was implemented) and the change is not a behaviour change you still have to build: re-check the code and tests against the CURRENT text, then call this with the evidence (codeRefs: the code that implements it, "repo:path#Lx-Ly"; verifications: criterion / verification refs or test names that pass; note). The current commit becomes its implemented commit again (history keeps a "reverified" note). If the change IS new behaviour, do not re-verify: cover it with a task of a work order (update). Wording only: section_update with editorial { reason } instead.
+Example: {"ref":"mandate://specs/login/sections/create-vm","codeRefs":["app:src/vm.ts#L10-L40"],"verifications":["vr-0012"],"note":"checked the create flow against the new wording"}`,
+            input: withExtras(sectionReverifyInputSchema),
+            trailers: docEditTrailers,
+            run: async (a, ctx) => {
+              const { ref, codeRefs, verifications, note } = sectionReverifyInputSchema.parse(strip(a));
+              const commits: string[] = [];
+              const out = await writes(ctx).sectionReverify(ref, { ...(codeRefs ? { codeRefs } : {}), ...(verifications ? { verifications } : {}), ...(note ? { note } : {}) }, metaOf(ctx, commits));
+              return sectionResult(ctx, out.value.id, parseRef(ref)!.sectionId!, { commits, warnings: out.warnings });
+            },
+          }),
+          defineTool({
             name: 'spec_archive',
             title: 'Archive a spec',
             kind: 'write',
@@ -304,13 +320,13 @@ function docWriteTools(kind: DocKind): AnyToolDef[] {
       name: `${k}_section_update`,
       title: `Update a ${k} section`,
       kind: 'write',
-      description: `Update a section's content (title, summary, body, type, refs, symbols, verifiedBy, method, threshold; null clears an optional field). Pass ref as copied; a ref with @sha must be the current version (else stale_version: re-read and retry). Archived sections cannot be edited. Section guide: spec_section_insert.${COMMON}`,
+      description: `Update a section's content (title, summary, body, type, refs, symbols, verifiedBy, method, threshold; null clears an optional field). Pass ref as copied; a ref with @sha must be the current version (else stale_version: re-read and retry). Archived sections cannot be edited. editorial { reason }: the edit is wording only (title / summary / body, no behaviour change, not a criterion): an implemented section stays implemented (its marker moves to this edit; without it a changed implemented section shows Outdated). A behaviour change to an implemented section is NOT editorial: cover it with a task of a work order. Section guide: spec_section_insert.${COMMON}`,
       input: withExtras(S.update as unknown as z.ZodObject),
       trailers: docEditTrailers,
       run: async (a, ctx) => {
-        const { ref, ...patch } = S.update.parse(strip(a)) as { ref: string } & Record<string, unknown>;
+        const { ref, editorial, ...patch } = S.update.parse(strip(a)) as { ref: string; editorial?: { reason: string } } & Record<string, unknown>;
         const commits: string[] = [];
-        const out = await writes(ctx).sectionUpdate(kind, ref, patch, metaOf(ctx, commits));
+        const out = await writes(ctx).sectionUpdate(kind, ref, patch, metaOf(ctx, commits), editorial ? { editorial } : {});
         return sectionResult(ctx, out.value.id, parseRef(ref)!.sectionId!, { commits, warnings: out.warnings });
       },
     }),

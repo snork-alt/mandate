@@ -233,6 +233,7 @@ export const DECISION_KINDS = [
   'stale_claim',
   'audit_contradicted',
   'spec_drifted',
+  'section_outdated',
 ] as const;
 export type DecisionKind = (typeof DECISION_KINDS)[number];
 

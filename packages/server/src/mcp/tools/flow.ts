@@ -34,7 +34,31 @@ async function snapshot(ctx: ToolContext, agent?: string, tree?: TreeInput): Pro
   ]);
   const eff = ctx.settings ? effective(ctx.settings.policy(), undefined) : null;
   const git = eff ? await gitOf(ctx, eff, workOrders, tree) : undefined;
-  return { requests, comments, workOrders, questions, specs: new Map(specList.map((s) => [s.id, s])), verifications, ...(git ? { git } : {}), ...(agent ? { agent } : {}) };
+  const outdated: NonNullable<FlowSnapshot['outdated']> = new Map();
+  for (const sp of specList) {
+    if (sp.status === 'archived' || !sp.sections.some((x) => x.implementedCommit && !x.archived)) continue;
+    const impl = await st.workOrderService.implementation(sp.id).catch(() => ({}));
+    const bad = Object.fromEntries(Object.entries(impl).filter(([, v]) => v.outdated).map(([k, v]) => [k, { ...(v.implementedBy ? { implementedBy: v.implementedBy } : {}), ...(v.changedBy ? { changedBy: v.changedBy } : {}), ...(v.changedAt ? { changedAt: v.changedAt } : {}), ...(v.changedCommit ? { changedCommit: v.changedCommit } : {}) }]));
+    if (Object.keys(bad).length) outdated.set(sp.id, bad);
+  }
+  return { requests, comments, workOrders, questions, specs: new Map(specList.map((s) => [s.id, s])), verifications, ...(outdated.size ? { outdated } : {}), ...(git ? { git } : {}), ...(agent ? { agent } : {}) };
+}
+
+/** Outdated sections as re-verify items (flow_next without a request). */
+function reverifyItems(snap: FlowSnapshot) {
+  const m: NonNullable<FlowSnapshot['outdated']> = snap.outdated ?? new Map();
+  return [...m.entries()].flatMap(([spec, secs]) =>
+    Object.entries(secs).map(([sid, o]) => {
+      const ref = `mandate://specs/${spec}/sections/${sid}`;
+      return {
+        section: ref,
+        ...(o.implementedBy ? { implementedBy: o.implementedBy } : {}),
+        ...(o.changedBy ? { changedBy: o.changedBy } : {}),
+        ...(o.changedAt ? { changedAt: o.changedAt } : {}),
+        next: { tool: 'section_reverify', args: { ref, codeRefs: ['<repo:path#Lx-Ly that implements it>'], verifications: ['<test / verification proving it>'] }, why: 'Implemented, but its text changed since. Re-check the code and tests against the CURRENT text. Wording only: section_update { ref, editorial: { reason } }. Same behaviour: section_reverify with the evidence. New behaviour: a work order (update) covering it.' },
+      };
+    }),
+  );
 }
 
 /** Git settings, the tree state the agent reported (flow_next code arg, else its code_context_set) and unowned touched files. */
@@ -120,12 +144,14 @@ Example: {"request":"fb-0007"}`,
       const next = all.find((i) => i.next);
       const inbox = await commentInbox(ctx, snap);
       const pending = inbox ? inbox.unanswered.length + inbox.converted.length : 0;
+      const stale = reverifyItems(snap);
       return {
         requests: all.map(compact),
+        ...(stale.length ? { outdatedSections: stale.slice(0, 10), outdatedNote: `${stale.length} implemented section(s) are Outdated (changed since implemented): re-verify each (section_reverify), mark it editorial (section_update editorial) or cover it with a work order.` } : {}),
         ...(inbox ? { comments: inbox, commentsNote: COMMENT_NOTE } : {}),
         ...(next ? { actionable: next.request.ref } : {}),
         ...(waitingOn.length ? { waitingOn } : {}),
-        done: all.length === 0 && !pending,
+        done: all.length === 0 && !pending && !stale.length,
         note: pending ? `${pending} comment(s) wait for you (comments): reply in their threads first.` : all.length ? (next ? `Work on ${next.request.ref} first: flow_next { request } and do its next step.` : 'Nothing is actionable: the requests wait for the user (waitingOn) or for work orders of other requests.') : 'No request is in flight.',
       };
     },

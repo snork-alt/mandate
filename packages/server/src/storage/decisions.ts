@@ -196,6 +196,33 @@ export async function listDecisions(storage: Storage, input: DecisionsListInput 
     }
   }
 
+  // Implemented sections whose text changed since (Outdated): re-verify, mark editorial or cover with a work order.
+  if (want('section_outdated')) {
+    for (const sp of m.specs) {
+      if (sp.status === 'archived') continue;
+      const full = await storage.specs.get(sp.id).catch(() => null);
+      if (!full?.sections.some((x) => x.implementedCommit && !x.archived)) continue;
+      const impl = await storage.workOrderService.implementation(sp.id).catch(() => ({}));
+      for (const [sid, v] of Object.entries(impl)) {
+        if (!v.outdated) continue;
+        const sec = full.sections.find((x) => x.id === sid);
+        items.push({
+          ref: buildRef({ kind: 'specs', id: sp.id, sectionId: sid }),
+          kind: 'section_outdated',
+          title: `${sp.title} › ${sec?.title ?? sid}`,
+          question: `"${sec?.title ?? sid}" changed since it was implemented${v.implementedCommit ? ` (@${v.implementedCommit.slice(0, 7)})` : ''}${v.changedBy ? `, by ${v.changedBy}` : ''}: wording only, or does the code need to change?`,
+          options: [
+            { id: 'editorial', label: 'Wording only (mark editorial)', tool: 'section_update' },
+            { id: 'reverify', label: 'Re-verify code and tests', tool: 'section_reverify' },
+            { id: 'update', label: 'Needs work (update work order)', tool: 'work_order_create' },
+          ],
+          suggested: 'reverify',
+          ...(v.changedAt ? { since: v.changedAt } : {}),
+        });
+      }
+    }
+  }
+
   const counts = Object.fromEntries(DECISION_KINDS.map((k) => [k, 0])) as Record<DecisionKind, number>;
   for (const d of items) counts[d.kind]++;
   const picked = items.filter((d) => want(d.kind)).sort((a, b) => ORDER.get(a.kind)! - ORDER.get(b.kind)! || (b.since ?? '').localeCompare(a.since ?? ''));

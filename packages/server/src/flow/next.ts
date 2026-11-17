@@ -40,6 +40,7 @@ export type FlowState =
   | 'components'
   | 'close'
   | 'comments'
+  | 'outdated'
   | 'plan_ready'
   | 'waiting'
   | 'done';
@@ -98,6 +99,8 @@ export interface FlowSnapshot {
   verifications: VerificationRecord[];
   /** Comment threads (any state): a blocking open one on a request stops its flow until resolved. */
   comments?: CommentThread[];
+  /** Implemented sections that changed since (Outdated), per spec id: who changed them and the work order that implemented them. */
+  outdated?: Map<string, Record<string, { implementedBy?: string; changedBy?: string; changedAt?: string; changedCommit?: string }>>;
   /** Git / components context (project settings and what the agent reported); absent: no git guidance. */
   git?: FlowGit;
   /** The calling agent (claims by other agents are not yours); unknown: every claim is assumed to be yours. */
@@ -185,6 +188,10 @@ export function flowFor(f: Feedback, snap: FlowSnapshot): FlowItem {
   if (f.planOnly && mine.some((w) => w.status !== 'cancelled')) {
     return item('plan_ready', null);
   }
+
+  // A section the request changed was implemented before and now shows Outdated, yet no task of the request's work orders covers it.
+  const gap = uncoveredOutdated(f, snap, mine);
+  if (gap) return item('outdated', gap);
 
   // Drive open work orders first (their sections / steps / verification / completion).
   for (const w of live) {
@@ -276,6 +283,30 @@ export function flowFor(f: Feedback, snap: FlowSnapshot): FlowItem {
     if (failed) return item('claim', { tool: 'work_order_claim', args: { ref: woRef(failed.id) }, why: `Work order ${failed.id} failed: claim it again to retry (or cancel it and create a new one).` });
   }
   return item('specs', { tool: 'section_update', args: { addresses: [reqRef(f.id)] }, why: 'Nothing left to do for this request: close it (request_close applied | rejected | duplicate) with the reason.' });
+}
+
+/**
+ * An implemented section this request changed (it is Outdated) that no task of its work orders covers: either the edit was
+ * wording only (mark it editorial) or it is behaviour that a task must deliver.
+ */
+function uncoveredOutdated(f: Feedback, snap: FlowSnapshot, mine: WorkOrder[]): FlowStep | null {
+  const wos = mine.filter((w) => w.status !== 'cancelled');
+  if (!snap.outdated || !wos.length) return null;
+  for (const [spec, sids] of changedSections(f)) {
+    for (const sid of sids) {
+      const o = snap.outdated.get(spec)?.[sid];
+      if (!o) continue;
+      const covered = wos.some((w) => w.spec === spec && w.sections.some((x) => x.id === sid && x.status !== 'obsolete') && (w.status === 'done' || ((w.planSteps ?? []) as PlanStep[]).some((t) => t.sections?.includes(sid))));
+      if (covered) continue;
+      const ref = secRef(spec, sid);
+      return {
+        tool: 'section_update',
+        args: { ref, editorial: { reason: '<what was reworded>' } },
+        why: `${spec}/${sid} was implemented${o.implementedBy ? ` (${o.implementedBy})` : ''} and this request changed it since${o.changedBy ? ` (${o.changedBy})` : ''}, but no task covers it, so it shows Outdated. Decide now: (a) wording only, no behaviour change: section_update { ref: "${ref}", editorial: { reason } } (any wording edit left: re-send it with editorial; the section stays implemented); (b) behaviour changed: add a task covering ${sid} to the request's work order (work_order_plan_set) or create an update work order (work_order_create kind update); (c) nothing to build, the code already matches: section_reverify { ref: "${ref}", codeRefs, verifications }.`,
+      };
+    }
+  }
+  return null;
 }
 
 function claimGit(w: WorkOrder, f: Feedback, snap: FlowSnapshot): string {

@@ -1139,6 +1139,28 @@ export class WorkOrderService {
       .filter((x) => x.files.length);
   }
 
+  /** The commit (and who / when) that first changed a section's wording after `since`, from the spec's file history. */
+  private async changeOf(specId: string, sectionId: string, since: string): Promise<{ changedCommit?: string; changedBy?: string; changedAt?: string }> {
+    const path = this.specs.pathOf(specId);
+    const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
+    const hist = (await this.git.fileHistory([dir])).get(path) ?? [];
+    const base = await this.git.resolveCommit(since);
+    const chain: typeof hist = [];
+    for (const c of hist) {
+      if (c.id === base) break;
+      chain.push(c);
+    }
+    // newest first: the oldest commit of the chain whose section differs from its predecessor is the change.
+    const at = async (id: string) => (await this.specAt(specId, id))?.sections.find((x) => x.id === sectionId);
+    let prev = await at(since);
+    for (const c of chain.slice(-30).reverse()) {
+      const cur = await at(c.id);
+      if (!sameSection(prev, cur)) return { changedCommit: c.id, changedBy: c.authorName, changedAt: c.date };
+      prev = cur;
+    }
+    return {};
+  }
+
   /** Per-section implementation state of a spec: outdated when the section changed since its implementedCommit. */
   async implementation(specId: string): Promise<SectionImplementation> {
     const spec = await this.specs.get(specId);
@@ -1152,7 +1174,9 @@ export class WorkOrderService {
         out[s.id] = { implementedCommit: s.implementedCommit, outdated: false, pinLost: true };
         continue;
       }
-      out[s.id] = { implementedCommit: s.implementedCommit, outdated: !sameSection(then?.sections.find((x) => x.id === s.id), s) };
+      const outdated = !sameSection(then?.sections.find((x) => x.id === s.id), s);
+      out[s.id] = { implementedCommit: s.implementedCommit, outdated, ...(s.implementedBy ? { implementedBy: s.implementedBy } : {}) };
+      if (outdated) Object.assign(out[s.id]!, await this.changeOf(specId, s.id, s.implementedCommit).catch(() => ({})));
     }
     return out;
   }

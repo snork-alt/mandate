@@ -335,4 +335,18 @@ describe('flowFor (pure)', () => {
     expect(flowFor(closed, snap()).done).toBe(true);
     expect(flowAll(snap({ requests: [closed, open] })).map((i) => i.request.id)).toEqual(['fb-1']);
   });
+
+  it('an implemented section the request changed but no task covers asks: editorial, a task, or re-verify', () => {
+    const f = req({ specMatch: { at: 'x', by: 'y', refs: [] }, changes: [changed] });
+    const wo = (steps: unknown[]) => ({ id: 'wo-1', spec: 's', kind: 'update', status: 'in_progress', reason: ['fb-1'], sections: [{ id: 'b', status: 'pending' }, ...(steps.length ? [{ id: 'a', status: 'pending' }] : [])], planSteps: steps, hasPlan: true, createdAt: '2026-01-01T00:00:00Z', claim: { agent: 'me', startedAt: '2026-01-01T11:59:00Z', heartbeatAt: '2026-01-01T11:59:00Z' } }) as never;
+    const outdated = new Map([['s', { a: { implementedBy: 'q-0001', changedBy: 'agent' } }]]);
+    const item = flowFor(f, snap({ requests: [f], workOrders: [wo([])], outdated, agent: 'me' }));
+    expect(item.state).toBe('outdated');
+    expect(item.next?.tool).toBe('section_update');
+    expect(item.next?.args).toMatchObject({ ref: 'mandate://specs/s/sections/a', editorial: expect.anything() });
+    expect(item.next?.why).toMatch(/editorial.*task.*section_reverify/s);
+    // A task covering the section: the usual work order flow goes on.
+    const covered = flowFor(f, snap({ requests: [f], workOrders: [wo([{ id: 't1', text: 'x', status: 'pending', sections: ['a'] }])], outdated, agent: 'me' }));
+    expect(covered.state).not.toBe('outdated');
+  });
 });

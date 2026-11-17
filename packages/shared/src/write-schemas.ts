@@ -143,6 +143,8 @@ const sectionTools = (kind: WritableDocKind) => ({
       examples: z.array(z.string().min(1).max(400)).max(50).nullable().optional(),
       provenance: sectionMetaSchema.shape.provenance.unwrap().nullable().optional(),
       confidence: sectionMetaSchema.shape.confidence.unwrap().nullable().optional(),
+      /** Wording only, no behaviour change: an implemented section stays implemented (not Outdated). Only title / summary / body may change. */
+      editorial: z.object({ reason: z.string().trim().min(3).max(500) }).strict().optional(),
     })
     .omit(kind === 'specs' ? RULE_ONLY : kind === 'standards' ? ACCEPTANCE_ONLY : { ...RULE_ONLY, ...ACCEPTANCE_ONLY })
     .strict()
@@ -226,6 +228,16 @@ export const workOrderCreateInputSchema = z
     dependencies: z.array(woRef).max(50).optional(),
   })
   .strict();
+/** Re-verify an implemented (Outdated) spec section: evidence that the code / tests match its current text. */
+export const sectionReverifyInputSchema = z
+  .object({
+    ref: writeSectionRef('specs'),
+    codeRefs: z.array(woDeliveryExtras.touched.unwrap().element).max(100).optional(),
+    verifications: z.array(z.string().trim().min(1).max(400)).max(50).optional(),
+    note: z.string().trim().min(1).max(1000).optional(),
+  })
+  .strict()
+  .refine((v) => !!v.codeRefs?.length || !!v.verifications?.length, 'give the evidence: codeRefs and / or verifications');
 export const workOrderRefInputSchema = z.object({ ref: woRef }).strict();
 export const workOrderClaimInputSchema = z.object({ ref: woRef, worktree: line(500).optional(), git: woDeliveryExtras.git }).strict();
 export const workOrderHeartbeatInputSchema = z.object({ ref: woRef, git: woDeliveryExtras.git }).strict();

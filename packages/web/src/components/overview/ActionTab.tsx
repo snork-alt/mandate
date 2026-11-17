@@ -65,6 +65,7 @@ export const DECISION_GROUP: Record<DecisionKind, string> = {
   stale_claim: "Stale claims",
   audit_contradicted: "Contradicted audit passes",
   spec_drifted: "Drifted done specs",
+  section_outdated: "Outdated implemented sections",
   question: "Questions from agents",
 };
 
@@ -100,11 +101,12 @@ const GROUP_ICON: Partial<Record<DecisionKind, typeof IconGavel>> = {
   stale_claim: IconClockPause,
   audit_contradicted: KIND_ICON.audit,
   spec_drifted: IconGitCompare,
+  section_outdated: IconGitCompare,
 };
 
 /* ---------------------------------------------------------------- tabs */
 
-export type ActionTabKey = 'questions' | 'waivers' | 'drafts' | 'claims' | 'audits' | 'drift' | 'integrity' | 'attention' | 'findings' | 'blocked';
+export type ActionTabKey = 'questions' | 'waivers' | 'drafts' | 'claims' | 'audits' | 'drift' | 'integrity' | 'outdated' | 'attention' | 'findings' | 'blocked';
 
 interface TabDef {
   key: ActionTabKey;
@@ -128,6 +130,7 @@ export const ACTION_TABS: TabDef[] = [
   { key: 'claims', label: 'Claims', icon: IconClockPause, kinds: ['stale_claim'], hint: 'Work orders nobody is moving: release the claim so another agent can continue', empty: { title: 'No stale claims', text: 'Work orders whose coding agent stopped sending heartbeats show up here.' } },
   { key: 'audits', label: 'Audits', icon: KIND_ICON.audit, kinds: ['audit_contradicted'], hint: 'Audit passes that later evidence contradicts', empty: { title: 'No contradicted audits', text: 'Audit passes contradicted by later verification show up here.' } },
   { key: 'drift', label: 'Drift', icon: IconGitCompare, kinds: ['spec_drifted'], hint: 'Done specs whose code changed after they were verified', empty: { title: 'No drifted specs', text: 'Done specs whose code changed since they were verified show up here.' } },
+  { key: 'outdated', label: 'Outdated', icon: IconGitCompare, kinds: ['section_outdated'], hint: 'Implemented sections whose text changed since: re-verify them, mark the edit editorial, or update the code', empty: { title: 'No outdated sections', text: 'Implemented spec sections that changed since they were implemented show up here.' } },
   { key: 'integrity', label: 'Integrity', icon: IconAlertTriangle, kinds: ['integrity_error'], hint: 'Errors in the project records: fix them with your coding agent', empty: { title: 'No integrity errors', text: 'Broken references and invalid records show up here.' } },
   { key: 'attention', label: 'Specs', icon: KIND_ICON.spec, empty: { title: 'Every spec is on track', text: 'Specs with failing, drifted or stale verification show up here with what to do next. Blocked work has its own tab.' } },
 ];

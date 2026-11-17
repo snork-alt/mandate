@@ -5,7 +5,7 @@ import { RailDetails } from '../components/rail/RailDetails';
 import { ActionIcon, CopyButton, Skeleton, Text, Tooltip } from '@mantine/core';
 import { IconAlertTriangle, IconCircleCheckFilled, IconBrandGit, IconCheck, IconCopy, IconFileOff, IconFolder, IconGitBranch, IconLock, IconRotateClockwise2, IconUnlink, IconUser } from '@tabler/icons-react';
 import { KindIcon } from '../components/refs/KindIcon';
-import type { WorkOrder, Spec } from '@mandate/shared';
+import type { WorkOrder, Spec, SectionImplementation } from '@mandate/shared';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api';
 import { Link, useNavigate, useParams } from 'react-router';
@@ -51,7 +51,8 @@ function SpecLink({ id, spec }: { id: string; spec?: Spec }) {
 }
 
 /** "Implemented @abc1234" / "Outdated" / "Not implemented", plus links to open work orders for the section. */
-export function ImplementationBadge({ state, openItems, by }: { state?: { implementedCommit?: string; outdated: boolean }; openItems: WorkOrder[]; /** Work order that delivered the implementation (`implementedBy`). */ by?: string }) {
+export function ImplementationBadge({ state, openItems, by, spec }: { state?: SectionImplementation[string]; openItems: WorkOrder[]; /** Work order that delivered the implementation (`implementedBy`). */ by?: string; /** Spec id: the Outdated badge links to the diff of the change. */ spec?: string }) {
+  const implBy = by ?? state?.implementedBy;
   return (
     <span className="impl-badges">
       {!state ? (
@@ -59,20 +60,30 @@ export function ImplementationBadge({ state, openItems, by }: { state?: { implem
           Not implemented
         </span>
       ) : state.outdated ? (
-        <Tooltip label={`Changed since it was implemented at ${state.implementedCommit?.slice(0, 7) ?? ''}`}>
-          <span className="impl-badge" data-state="outdated">
-            <IconAlertTriangle size={12} /> Outdated
-          </span>
+        <Tooltip
+          multiline
+          w={300}
+          label={`Changed since implemented commit ${state.implementedCommit?.slice(0, 7) ?? ''}${state.changedBy ? ` (by ${state.changedBy}${state.changedAt ? `, ${relativeTime(state.changedAt)}` : ''})` : ''}.${implBy ? ` Implemented by ${implBy}.` : ''}${spec && state.changedCommit ? ' Click for the diff.' : ''} Wording only: the agent marks the edit editorial; otherwise it re-verifies or updates the code.`}
+        >
+          {spec && state.changedCommit ? (
+            <Link to={`/specs/${spec}/history/${state.changedCommit}`} className="impl-badge" data-state="outdated" data-testid="outdated-diff-link">
+              <IconAlertTriangle size={12} /> Outdated
+            </Link>
+          ) : (
+            <span className="impl-badge" data-state="outdated">
+              <IconAlertTriangle size={12} /> Outdated
+            </span>
+          )}
         </Tooltip>
       ) : (
         <span className="impl-badge" data-state="done">
           <IconCircleCheckFilled size={12} /> Implemented {state.implementedCommit && <CommitHash sha={state.implementedCommit} className="impl-commit" />}
         </span>
       )}
-      {by && (
-        <Tooltip label={`Implemented by work order ${by}`} openDelay={300}>
-          <Link to={`/work-orders/${by}`} className="impl-badge impl-work-order" data-testid="implemented-by">
-            Implemented by <span className="mono">{by}</span>
+      {implBy && (
+        <Tooltip label={`Implemented by work order ${implBy}`} openDelay={300}>
+          <Link to={`/work-orders/${implBy}`} className="impl-badge impl-work-order" data-testid="implemented-by">
+            Implemented by <span className="mono">{implBy}</span>
           </Link>
         </Tooltip>
       )}
@@ -542,6 +553,7 @@ export function SpecDetailPage() {
             <ImplementationBadge
               state={implementation.data?.[section.id]}
               by={section.implementedBy}
+              spec={id}
               openItems={openItems.filter((q) => q.sections.some((x) => x.id === section.id))}
             />
           </>

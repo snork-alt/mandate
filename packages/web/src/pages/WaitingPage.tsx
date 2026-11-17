@@ -35,7 +35,7 @@ import '../components/overview/overview.css';
 const NONE = '~none';
 
 /** The Actions tabs that are project health (not counted, collapsed by default). */
-export const HEALTH_TABS: ActionTabKey[] = ['blocked', 'findings', 'drift', 'claims', 'audits', 'integrity', 'attention'];
+export const HEALTH_TABS: ActionTabKey[] = ['blocked', 'findings', 'drift', 'outdated', 'claims', 'audits', 'integrity', 'attention'];
 
 /** Open questions grouped by request (those without one last); blocking ones first, newest first inside a group. */
 export function groupByRequest(questions: Question[]): { request: string; items: Question[] }[] {
@@ -90,7 +90,7 @@ export function WaitingPage() {
   const deepHealth = (!!urlTab && HEALTH_TABS.includes(urlTab as ActionTabKey)) || !!params.get('focus');
   const [healthOpen, setHealthOpen] = useState(deepHealth);
   const projectId = getCurrentProject() ?? '';
-  const health = overview.data ? attentionCount(overview.data) + findingsCount(overview.data) + overview.data.blockedTotal + (['drift', 'claims', 'audits', 'integrity'] as const).reduce((n, k) => n + ((decisions.data?.counts as Record<string, number> | undefined)?.[{ drift: 'spec_drifted', claims: 'stale_claim', audits: 'audit_contradicted', integrity: 'integrity_error' }[k]] ?? 0), 0) : null;
+  const health = overview.data ? attentionCount(overview.data) + findingsCount(overview.data) + overview.data.blockedTotal + (['drift', 'outdated', 'claims', 'audits', 'integrity'] as const).reduce((n, k) => n + ((decisions.data?.counts as Record<string, number> | undefined)?.[{ drift: 'spec_drifted', outdated: 'section_outdated', claims: 'stale_claim', audits: 'audit_contradicted', integrity: 'integrity_error' }[k]] ?? 0), 0) : null;
   const approvalTabs = ACTION_TABS.filter((t) => t.key === 'waivers' || t.key === 'drafts');
 
   if (open.isPending) {

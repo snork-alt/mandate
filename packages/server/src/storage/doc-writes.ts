@@ -5,10 +5,11 @@
  * and the document is serialized and validated (round trip) before anything is written: never a partial write.
  */
 import { diffDocs, IMAGE_EXT, IMAGE_FILE_FIELDS, imageBody, imageBodyProblems, parseImageBody, sectionAdvice, type DocFormat, type ImageMeta, type ImageMime, type Section } from '@mandate/doc';
-import { buildRef, idFromTitle, parseRef, slugify, type SectionCreate, type StoredComponent, type StoredSpec, type StoredStandard } from '@mandate/shared';
+import { buildRef, idFromTitle, parseRef, slugify, touchedFromInput, type TouchedInput, type SectionCreate, type StoredComponent, type StoredSpec, type StoredStandard } from '@mandate/shared';
 import { componentCodec, componentFormat, specCodec, specFormat, standardCodec, standardFormat } from './codecs.js';
 import { NotFoundError, type CommitMeta } from './GitBackedRepository.js';
 import { presetIds } from './preset-ids.js';
+import { applyCodeToSection } from './work-order-plan.js';
 import type { Storage } from './index.js';
 
 export type DocKind = 'specs' | 'standards' | 'components';
@@ -262,24 +263,80 @@ export class DocWriteService {
     return { ...out, sectionId: out.result! };
   }
 
-  async sectionUpdate(kind: DocKind, ref: string, patch: Partial<Record<(typeof SECTION_PATCH_KEYS)[number], unknown>>, meta: CommitMeta, opts: { image?: ImageUpload } = {}): Promise<WriteOutcome<Doc>> {
-    return this.editSections(
+  async sectionUpdate(kind: DocKind, ref: string, patch: Partial<Record<(typeof SECTION_PATCH_KEYS)[number], unknown>>, meta: CommitMeta, opts: { image?: ImageUpload; editorial?: { reason: string } } = {}): Promise<WriteOutcome<Doc>> {
+    const editorial = opts.editorial;
+    let carried: { id: string; commit?: string } | null = null;
+    const out = await this.editSections(
       kind,
       ref,
       (doc, sectionId) => {
         const current = this.section(kind, doc, sectionId!);
         if (current.archived) throw new WriteError('validation', `section '${sectionId}' is archived; archived sections are kept as they were`, 409, 'insert a new section instead');
+        if (editorial) {
+          const behaviour = Object.keys(patch).filter((k) => !['title', 'summary', 'body'].includes(k));
+          if (behaviour.length || current.type === 'acceptance' || current.type === 'rule') {
+            throw new WriteError('editorial_not_allowed', `editorial is for wording only (title, summary, body of a non-criterion section); this edit ${behaviour.length ? `changes ${behaviour.join(', ')}` : `is on a ${current.type} section (a criterion / rule is behaviour)`}`, 400, 'drop editorial and cover the change with a task of a work order (update), or split the wording edit from the behaviour edit');
+          }
+        }
         const next: Record<string, unknown> = { ...current };
         for (const k of SECTION_PATCH_KEYS) {
           if (!(k in patch)) continue;
           if (patch[k] === null) delete next[k];
           else next[k] = patch[k];
         }
+        carried = editorial && current.implementedCommit ? { id: sectionId! } : null;
         const sections = doc.sections.map((s) => (s.id === sectionId ? (next as Section) : s));
-        return { sections, touched: [sectionId!], message: `${label(kind)}(${doc.id}): update section ${sectionId}` };
+        return { sections, touched: [sectionId!], message: `${label(kind)}(${doc.id}): update section ${sectionId}${editorial ? `\n\nEditorial: ${editorial.reason}` : ''}` };
       },
       meta,
       opts,
+    );
+    const sha = out.commits.at(-1);
+    const marker = carried as { id: string } | null;
+    if (editorial && marker && sha) {
+      // The implemented marker moves to the edit's own commit: the section is compared with its wording from now on.
+      const rid = parseRef(ref);
+      const id = rid ? rid.id : ref;
+      const note = { kind: 'editorial' as const, commit: sha, reason: editorial.reason, ...(meta.agent ? { by: meta.agent } : {}), at: (meta.date ?? new Date()).toISOString() };
+      const moved = await this.write(
+        (m) =>
+          this.repo(kind).modify(
+            id,
+            (cur) => {
+              const d = cur as Doc;
+              return { ...d, sections: d.sections.map((s) => (s.id === marker.id && s.implementedCommit ? ({ ...s, implementedCommit: sha, implementationNotes: [...(s.implementationNotes ?? []), note] } as Section) : s)) } as never;
+            },
+            { ...m, message: `${label(kind)}(${id}): editorial change of ${marker.id} stays implemented @${sha.slice(0, 7)}\n\nEditorial: ${editorial.reason}` },
+          ) as Promise<Doc>,
+        meta,
+      );
+      return { ...out, value: moved.value, commits: [...out.commits, ...moved.commits] };
+    }
+    return out;
+  }
+
+  /**
+   * Re-verify an implemented (possibly Outdated) spec section: the code and tests were checked against its CURRENT text.
+   * The comparison base moves to the spec's current commit; code refs are merged into the section, the evidence is noted.
+   */
+  async sectionReverify(ref: string, input: { codeRefs?: TouchedInput[]; verifications?: string[]; note?: string }, meta: CommitMeta): Promise<WriteOutcome<Doc>> {
+    const code = (input.codeRefs ?? []).map(touchedFromInput);
+    return this.editSections(
+      'specs',
+      ref,
+      async (doc, sectionId) => {
+        const current = this.section('specs', doc, sectionId!);
+        if (current.archived) throw new WriteError('validation', `section '${sectionId}' is archived`, 409);
+        if (!current.implementedCommit) throw new WriteError('not_implemented', `section '${sectionId}' was never implemented: implement it through a work order (flow_next)`, 409, 'section_reverify is for implemented sections (Outdated)');
+        const base = (await this.storage.history.meta(this.repo('specs').pathOf(doc.id))).lastCommit;
+        if (!base) throw new WriteError('validation', 'the spec has no commit yet', 409);
+        const applied = applyCodeToSection(current, code);
+        const evidence = [input.note?.trim(), code.length ? `code: ${code.map((c) => `${c.repo}:${c.path}`).join(', ')}` : '', input.verifications?.length ? `verified by: ${input.verifications.join(', ')}` : ''].filter(Boolean).join('; ');
+        const note = { kind: 'reverified' as const, commit: base, reason: evidence || 're-verified', ...(meta.agent ? { by: meta.agent } : {}), at: (meta.date ?? new Date()).toISOString() };
+        const next = { ...current, implementedCommit: base, refs: applied.refs, symbols: applied.symbols, implementationNotes: [...(current.implementationNotes ?? []), note] } as Section;
+        return { sections: doc.sections.map((x) => (x.id === sectionId ? next : x)), touched: [sectionId!], message: `spec(${doc.id}): re-verified ${sectionId} @${base.slice(0, 7)}\n\n${evidence}` };
+      },
+      meta,
     );
   }
 

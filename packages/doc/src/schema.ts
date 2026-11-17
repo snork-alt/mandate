@@ -146,6 +146,17 @@ export const provedBySchema = z.object({
 });
 export type ProvedBy = z.output<typeof provedBySchema>;
 
+/** A note on a section's implementation: wording-only edit (editorial) or a re-verification; the comparison base moved to `commit`. */
+export const implementationNoteSchema = z.object({
+  kind: z.enum(['editorial', 'reverified']),
+  /** The commit recorded as the new comparison base (implementedCommit). */
+  commit: z.string().min(1),
+  reason: z.string().min(1),
+  by: z.string().min(1).optional(),
+  at: z.string().min(1).optional(),
+});
+export type ImplementationNote = z.output<typeof implementationNoteSchema>;
+
 export const sectionMetaSchema = z.object({
   id: slugSchema,
   title: z
@@ -223,6 +234,8 @@ export const sectionMetaSchema = z.object({
   implementedCommit: looseString.optional(),
   /** Implemented spec sections: the work order that delivered the implementation (set with implementedCommit). */
   implementedBy: z.string().min(1).optional(),
+  /** Implemented spec sections: editorial edits / re-verifications that moved implementedCommit forward (newest last). */
+  implementationNotes: z.array(implementationNoteSchema).optional(),
   /** Acceptance criteria: the tests that prove it (recorded by verification_record; the work order that delivered them). */
   provedBy: z.array(provedBySchema).optional(),
 });
