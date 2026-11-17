@@ -34,7 +34,7 @@ export const viewTools = [
     name: 'project_overview',
     title: 'Project overview',
     kind: 'read',
-    description: `Project state in one call: maturity distribution, needs-attention counts (failing / drifted / blocked / stale specs, must findings, stale claims, integrity), work in progress, blocked items and their blockers, pending decisions and coverage.
+    description: `Project state in one call: maturity distribution, needs-attention counts (failing / outdated / blocked specs, must findings, stale claims, integrity), work in progress, blocked items and their blockers, pending decisions and coverage.
 Example: {}`,
     input: projectOverviewInputSchema,
     run: (a, ctx) => projectOverview(ctx.storage, a, { lineage: () => cachedLineage(ctx) }),

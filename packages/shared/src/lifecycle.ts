@@ -402,7 +402,7 @@ const ENTRIES: LifecycleEntry[] = [
     table: {},
     enforced: false,
     steps: [],
-    notes: ['Derived from spec status, work orders, verifications and audits; agents never set it. Overlays: archived, failing, drifted, blocked, stale. Raise it by doing the work (implement, verify, audit).'],
+    notes: ['Derived from spec status, work orders, verifications and audits; agents never set it. Overlays: archived, failing, outdated (a section changed since implemented, upstream changed, a test result out of date, a done gate that no longer holds), blocked. Raise it by doing the work (implement, verify, audit).'],
   },
 ];
 

@@ -2,7 +2,7 @@ import { MATURITY_OVERLAYS, OVERLAY_TONE, STEP_TONE, MATURITY_LABELS, type Matur
 import { parseRef } from '@mandate/shared/refs';
 
 /** Overlay severity for sorting / aggregation (lower = worse). */
-const OVERLAY_RANK: Record<MaturityOverlayKind, number> = { failing: 0, drifted: 1, blocked: 2, stale: 3, archived: 4 };
+const OVERLAY_RANK: Record<MaturityOverlayKind, number> = { failing: 0, outdated: 1, blocked: 2, archived: 3 };
 
 /** Filter values: a step or an overlay kind. */
 export function matchesMaturityFilter(s: { maturity?: SpecMaturity }, f: string[]): boolean {
@@ -13,7 +13,7 @@ export function matchesMaturityFilter(s: { maturity?: SpecMaturity }, f: string[
 }
 
 /**
- * "Maturity" sort: specs needing attention first: any overlay (worst first: failing, drifted, blocked, stale; archived last),
+ * "Maturity" sort: specs needing attention first: any overlay (worst first: failing, outdated, blocked; archived last),
  * then by step ascending (draft first), then title.
  */
 export function compareMaturity(a: { maturity?: SpecMaturity; title: string }, b: { maturity?: SpecMaturity; title: string }): number {
@@ -55,7 +55,7 @@ export interface ComponentMaturity {
   step: MaturityStep;
   stepIndex: number;
   tone: SpecMaturity['tone'];
-  /** Worst overlay among them (failing > drifted > blocked > stale), if any. */
+  /** Worst overlay among them (failing > outdated > blocked), if any. */
   overlay?: MaturityOverlayKind;
   specs: { id: string; title: string; maturity: SpecMaturity }[];
 }

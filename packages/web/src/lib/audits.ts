@@ -106,5 +106,5 @@ export function matchesAuditFilter(s: { lastAudit?: LastAudit | null }, f: strin
 /** Label of the audit indicator: "Audit passed", "Audit: 2 findings", "Audit outdated", "Never audited". */
 export function auditIndicatorLabel(a: LastAudit | null | undefined): string {
   const st = auditIndicator(a);
-  return st === 'never' ? 'Never audited' : st === 'passed' ? 'Audit passed' : st === 'outdated' ? 'Audit outdated' : `Audit: ${plural(a!.openMust + a!.openShould, 'finding')}`;
+  return st === 'never' ? 'Never audited' : st === 'passed' ? 'Audit passed' : st === 'outdated' ? 'Audit outdated' : `Audit: ${plural(a!.openFindings, 'finding')}`;
 }

@@ -54,9 +54,8 @@ export function attentionChips(o: ProjectOverview): ChipDef[] {
   const a = o.attention;
   return [
     { key: 'failing', label: 'failing', n: a.failing, tone: 'danger' as const, tip: 'Specs with a failing must criterion or an open must finding' },
-    { key: 'drifted', label: 'drifted', n: a.drifted, tone: 'danger' as const, tip: 'Done specs whose gate no longer holds' },
+    { key: 'outdated', label: 'outdated', n: a.outdated, tone: 'warn' as const, tip: 'Specs with a section changed since implemented, upstream changes or out-of-date test results' },
     { key: 'blocked', label: 'blocked', n: a.blocked, tone: 'warn' as const, tip: 'Specs with sections waiting on work that is not implemented' },
-    { key: 'stale', label: 'stale', n: a.stale, tone: 'warn' as const, tip: 'Specs whose verifications or last audit are out of date' },
     { key: 'findings', label: 'open must findings', n: a.mustFindings, tone: 'danger' as const, tip: 'Open must findings in the latest audits' },
     { key: 'claims', label: 'stale claims', n: a.staleClaims, tone: 'warn' as const, tip: 'Claimed work orders without a heartbeat for 30 minutes' },
     { key: 'failed', label: 'failed work orders', n: a.failedWorkOrders, tone: 'danger' as const, tip: 'Work orders that ended as failed' },
@@ -71,7 +70,7 @@ function Attention({ o, onPick }: { o: ProjectOverview; onPick: (key: string) =>
     return (
       <div className="ov-attention" data-testid="ov-chips" data-clear>
         <IconCircleCheck size={15} className="ov-ok" />
-        <span>Nothing needs attention: no failing, drifted, blocked or stale specs, no stale claims and no integrity errors.</span>
+        <span>Nothing needs attention: no failing, outdated or blocked specs, no stale claims and no integrity errors.</span>
       </div>
     );
   }

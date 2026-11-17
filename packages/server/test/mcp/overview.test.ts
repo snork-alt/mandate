@@ -20,13 +20,13 @@ describe('project_overview', () => {
     const live = specs.filter((s) => s.status !== 'archived');
     expect(body.maturity.total).toBe(live.length);
     for (const st of MATURITY_STEPS) expect(body.maturity.steps[st], st).toBe(live.filter((s) => mat[s.id]!.step === st).length);
-    for (const o of ['failing', 'drifted', 'blocked', 'stale']) {
+    for (const o of ['failing', 'outdated', 'blocked']) {
       const n = live.filter((s) => mat[s.id]!.overlays.some((x) => x.kind === o)).length;
       expect(body.maturity.overlays[o], o).toBe(n);
       expect(body.attention[o], o).toBe(n);
     }
     // Attention specs: worst first, each with a reason.
-    const order = { failing: 0, drifted: 1, blocked: 2, stale: 3 } as Record<string, number>;
+    const order = { failing: 0, outdated: 1, blocked: 2 } as Record<string, number>;
     const ranks = body.attention.specs.map((s: any) => order[mat[s.id]!.overlays[0]!.kind]);
     expect(ranks).toEqual([...ranks].sort((a, b) => a - b));
     expect(body.attention.specs.every((s: any) => typeof s.reason === 'string' && s.reason.length > 0)).toBe(true);

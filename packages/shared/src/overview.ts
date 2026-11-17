@@ -16,7 +16,7 @@ export const projectOverviewInputSchema = z
   .strict();
 export type ProjectOverviewInput = z.input<typeof projectOverviewInputSchema>;
 
-export type OverviewOverlay = 'failing' | 'drifted' | 'blocked' | 'stale';
+export type OverviewOverlay = 'failing' | 'outdated' | 'blocked';
 
 export interface OverviewSpec {
   id: string;
@@ -24,7 +24,7 @@ export interface OverviewSpec {
   step: MaturityStep;
   /** "In progress · 2/5". */
   label: string;
-  /** The worst overlay (failing, drifted, blocked, stale). */
+  /** The worst overlay (failing, outdated, blocked). */
   overlay: OverviewOverlay;
   /** Its reason. */
   reason?: string;
@@ -162,9 +162,8 @@ export interface ProjectOverview {
   };
   attention: {
     failing: number;
-    drifted: number;
+    outdated: number;
     blocked: number;
-    stale: number;
     /** Open must findings across the latest audits. */
     mustFindings: number;
     staleClaims: number;
@@ -173,7 +172,7 @@ export interface ProjectOverview {
     /** Warnings not snoozed. */
     integrityWarnings: number;
     integritySnoozed: number;
-    /** Worst specs first (failing, drifted, blocked, stale), capped. */
+    /** Worst specs first (failing, outdated, blocked), capped. */
     specs: OverviewSpec[];
   };
   /** Open work orders that are claimed or in progress (fresh heartbeat first), capped. */

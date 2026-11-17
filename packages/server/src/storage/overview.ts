@@ -30,13 +30,13 @@ import {
 } from '@mandate/shared';
 import { parseLinkTarget } from '@mandate/doc';
 import { projectOverviewInputSchema } from '@mandate/shared';
-import { specMaturity } from './maturity.js';
+import { changesOf, specMaturity } from './maturity.js';
 import { dependencyState, finder, type Model } from './model.js';
 import { deriveSpecs } from './insights.js';
 import type { Storage } from './index.js';
 
-const OVERLAYS: OverviewOverlay[] = ['failing', 'drifted', 'blocked', 'stale'];
-const RANK: Record<string, number> = { failing: 0, drifted: 1, blocked: 2, stale: 3 };
+const OVERLAYS: OverviewOverlay[] = ['failing', 'outdated', 'blocked'];
+const RANK: Record<string, number> = { failing: 0, outdated: 1, blocked: 2 };
 
 export interface OverviewDeps {
   /** Cause coverage of content edits (needs the index); omitted → null. */
@@ -96,7 +96,7 @@ export async function projectOverview(storage: Storage, input: ProjectOverviewIn
   const maturity = new Map<string, SpecMaturity>();
   for (const spec of specs) {
     const verification = await storage.verificationService.forSpec(spec, recs, m);
-    const mat = specMaturity({ spec, verification, workOrders, lastAudit: audits[spec.id] ?? null, blockedSections: blockedSections[spec.id] ?? [], drift: derived[spec.id]?.drift ?? [] });
+    const mat = specMaturity({ spec, verification, workOrders, lastAudit: audits[spec.id] ?? null, blockedSections: blockedSections[spec.id] ?? [], drift: derived[spec.id]?.drift ?? [], changes: await changesOf(storage, spec) });
     maturity.set(spec.id, mat);
     if (spec.status === 'archived') {
       archived++;

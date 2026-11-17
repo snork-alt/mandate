@@ -49,7 +49,7 @@ const STEP_COLOR: Record<string, string> = {
 
 /**
  * Thin stacked bar + clickable counts per MATURITY step: the same ladder the rows show, so the summary and the
- * badges always agree. "Needs attention" counts specs with an overlay (failing, drifted, blocked, stale).
+ * badges always agree. "Needs attention" counts specs with an overlay (failing, outdated, blocked).
  */
 function MaturitySummary({ specs, selected, onToggle }: { specs: Spec[]; selected: string[]; onToggle: (v: string) => void }) {
   const live = specs.filter((s) => !s.maturity?.overlays.some((o) => o.kind === 'archived'));
@@ -80,7 +80,7 @@ function MaturitySummary({ specs, selected, onToggle }: { specs: Spec[]; selecte
         <button
           type="button"
           className="status-count status-count-attention"
-          data-active={['failing', 'drifted', 'blocked', 'stale'].every((k) => selected.includes(k)) || undefined}
+          data-active={['failing', 'outdated', 'blocked'].every((k) => selected.includes(k)) || undefined}
           data-empty={!attention || undefined}
           onClick={() => onToggle('attention')}
         >
@@ -269,7 +269,7 @@ export function SpecListPage() {
           specs={base}
           selected={filters.maturity}
           onToggle={(v) => {
-            const group = v === 'attention' ? ['failing', 'drifted', 'blocked', 'stale'] : [v];
+            const group = v === 'attention' ? ['failing', 'outdated', 'blocked'] : [v];
             const on = group.every((k) => filters.maturity.includes(k));
             update({ maturity: on ? filters.maturity.filter((k) => !group.includes(k)) : [...new Set([...filters.maturity, ...group])] });
           }}

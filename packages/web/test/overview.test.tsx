@@ -25,8 +25,8 @@ const steps = { draft: 1, specified: 1, in_progress: 1, implemented: 2 };
 const fullOverview = (): ProjectOverview => ({
   head: 'a'.repeat(40),
   at: new Date().toISOString(),
-  maturity: { total: 5, archived: 0, steps, overlays: { failing: 1, drifted: 0, blocked: 1, stale: 1 } },
-  attention: { failing: 1, drifted: 0, blocked: 1, stale: 1, mustFindings: 2, staleClaims: 1, failedWorkOrders: 0, integrityErrors: 0, integrityWarnings: 3, integritySnoozed: 1, specs: [{ id: 'login-sso', title: 'Login with SSO', step: 'implemented', label: 'Implemented', overlay: 'failing', reason: '1 must criterion failing (Callback).' }] },
+  maturity: { total: 5, archived: 0, steps, overlays: { failing: 1, outdated: 1, blocked: 1 } },
+  attention: { failing: 1, outdated: 1, blocked: 1, mustFindings: 2, staleClaims: 1, failedWorkOrders: 0, integrityErrors: 0, integrityWarnings: 3, integritySnoozed: 1, specs: [{ id: 'login-sso', title: 'Login with SSO', step: 'implemented', label: 'Implemented', overlay: 'failing', reason: '1 must criterion failing (Callback).' }] },
   inProgress: [{ id: 'q-0001', title: 'Implement Login', spec: 'login-sso', specTitle: 'Login with SSO', kind: 'implement', status: 'in_progress', sections: { done: 1, total: 3 }, claim: { agent: 'claude-code@mbp', branch: 'feat/sso', startedAt: new Date(Date.now() - 7200_000).toISOString(), heartbeatAt: new Date(Date.now() - 3600_000).toISOString(), stale: true }, git: [], hasPlan: true, updatedAt: new Date().toISOString() }],
   inProgressTotal: 1,
   queued: 2,
@@ -52,8 +52,8 @@ const fullOverview = (): ProjectOverview => ({
 });
 const emptyOverview = (): ProjectOverview => ({
   ...fullOverview(),
-  maturity: { total: 0, archived: 0, steps: { draft: 0, specified: 0, in_progress: 0, implemented: 0 }, overlays: { failing: 0, drifted: 0, blocked: 0, stale: 0 } },
-  attention: { failing: 0, drifted: 0, blocked: 0, stale: 0, mustFindings: 0, staleClaims: 0, failedWorkOrders: 0, integrityErrors: 0, integrityWarnings: 0, integritySnoozed: 0, specs: [] },
+  maturity: { total: 0, archived: 0, steps: { draft: 0, specified: 0, in_progress: 0, implemented: 0 }, overlays: { failing: 0, outdated: 0, blocked: 0 } },
+  attention: { failing: 0, outdated: 0, blocked: 0, mustFindings: 0, staleClaims: 0, failedWorkOrders: 0, integrityErrors: 0, integrityWarnings: 0, integritySnoozed: 0, specs: [] },
   inProgress: [],
   inProgressTotal: 0,
   queued: 0,
@@ -247,10 +247,10 @@ describe.each(['light', 'dark'] as const)('overview page (%s)', (scheme) => {
     await waitFor(() => expect(loc).toBe('/waiting?focus=failing'));
     expect(await screen.findByText(/Specs needing attention: failing/)).toBeTruthy();
     cleanup();
-    render(<R scheme={scheme} path="/?tab=action&focus=stale" />);
-    await waitFor(() => expect(loc).toBe('/waiting?focus=stale'));
+    render(<R scheme={scheme} path="/?tab=action&focus=outdated" />);
+    await waitFor(() => expect(loc).toBe('/waiting?focus=outdated'));
     await waitFor(() => expect(screen.getByTestId('atab-attention').getAttribute('aria-selected')).toBe('true'));
-    expect(await screen.findByText(/Specs needing attention: stale/)).toBeTruthy();
+    expect(await screen.findByText(/Specs needing attention: outdated/)).toBeTruthy();
   });
 
   it('item menu copies a one-item prompt; waivers have no direct action (approved by answering the approval question)', async () => {

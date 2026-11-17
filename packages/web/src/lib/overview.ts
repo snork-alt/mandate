@@ -106,7 +106,7 @@ export const STEP_COLOR: Record<string, string> = {
 export const OVERVIEW_TABS = ['progress', 'health'] as const;
 export type OverviewTab = (typeof OVERVIEW_TABS)[number];
 /** What a header chip focuses inside a tab (`?focus=`). */
-export type AttentionFocus = 'failing' | 'drifted' | 'blocked' | 'stale' | 'findings' | 'claims' | 'failed' | 'errors' | 'warnings';
+export type AttentionFocus = 'failing' | 'outdated' | 'blocked' | 'findings' | 'claims' | 'failed' | 'errors' | 'warnings';
 
 export const isTab = (v: unknown): v is OverviewTab => typeof v === 'string' && (OVERVIEW_TABS as readonly string[]).includes(v);
 const tabKey = (projectId: string) => `mandate.overview.tab.${projectId}`;
@@ -146,9 +146,8 @@ export function pickTab(url: string | null, remembered: OverviewTab | null): Ove
 /** Header chip → Overview tab (or the Actions page, `actions`) and focus. */
 export const CHIP_TARGET: Record<string, { tab: OverviewTab | 'actions'; focus: AttentionFocus; card: string }> = {
   failing: { tab: 'actions', focus: 'failing', card: 'attention' },
-  drifted: { tab: 'actions', focus: 'drifted', card: 'attention' },
+  outdated: { tab: 'actions', focus: 'outdated', card: 'attention' },
   blocked: { tab: 'actions', focus: 'blocked', card: 'attention' },
-  stale: { tab: 'actions', focus: 'stale', card: 'attention' },
   findings: { tab: 'actions', focus: 'findings', card: 'findings' },
   claims: { tab: 'actions', focus: 'claims', card: 'decisions' },
   failed: { tab: 'progress', focus: 'failed', card: 'in-progress' },

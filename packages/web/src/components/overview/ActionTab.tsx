@@ -132,7 +132,7 @@ export const ACTION_TABS: TabDef[] = [
   { key: 'drift', label: 'Drift', icon: IconGitCompare, kinds: ['spec_drifted'], hint: 'Done specs whose code changed after they were verified', empty: { title: 'No drifted specs', text: 'Done specs whose code changed since they were verified show up here.' } },
   { key: 'outdated', label: 'Outdated', icon: IconGitCompare, kinds: ['section_outdated'], hint: 'Implemented sections whose text changed since: re-verify them, mark the edit editorial, or update the code', empty: { title: 'No outdated sections', text: 'Implemented spec sections that changed since they were implemented show up here.' } },
   { key: 'integrity', label: 'Integrity', icon: IconAlertTriangle, kinds: ['integrity_error'], hint: 'Errors in the project records: fix them with your coding agent', empty: { title: 'No integrity errors', text: 'Broken references and invalid records show up here.' } },
-  { key: 'attention', label: 'Specs', icon: KIND_ICON.spec, empty: { title: 'Every spec is on track', text: 'Specs with failing, drifted or stale verification show up here with what to do next. Blocked work has its own tab.' } },
+  { key: 'attention', label: 'Specs', icon: KIND_ICON.spec, empty: { title: 'Every spec is on track', text: 'Specs with failing, outdated or blocked sections show up here with what to do next. Blocked work has its own tab.' } },
 ];
 
 const isActionTab = (v: unknown): v is ActionTabKey => ACTION_TABS.some((t) => t.key === v);
@@ -140,9 +140,8 @@ const isActionTab = (v: unknown): v is ActionTabKey => ACTION_TABS.some((t) => t
 /** Overview attention chips (`?focus=`) → tab. */
 export const FOCUS_TAB: Partial<Record<AttentionFocus, ActionTabKey>> = {
   failing: 'attention',
-  drifted: 'attention',
+  outdated: 'attention',
   blocked: 'blocked',
-  stale: 'attention',
   findings: 'findings',
   claims: 'claims',
   errors: 'integrity',
@@ -379,7 +378,7 @@ export function ActionTabs({
   const otherTabs = (["findings", "drift", "claims", "attention"] as const)
     .filter((k) => k !== "attention" || counts.attention > 0)
     .map((k) => ACTION_TABS.find((t) => t.key === k)!)
-    .map((t) => ({ key: t.key, label: t.key === "attention" ? "Specs (failing, stale)" : t.label, icon: t.icon }));
+    .map((t) => ({ key: t.key, label: t.key === "attention" ? "Specs (failing, outdated)" : t.label, icon: t.icon }));
   const panel = (t: TabDef) => {
     if (t.kinds && q.isPending)
       return (
@@ -534,9 +533,8 @@ export function Blocked({
 
 const OVERLAY_ACTION: Record<string, PromptAction> = {
   failing: "fix_failing",
-  drifted: "reverify_drift",
+  outdated: "reverify_drift",
   blocked: "resolve_blocker",
-  stale: "verify",
 };
 
 export function AttentionSpecs({
@@ -551,7 +549,7 @@ export function AttentionSpecs({
   flat?: boolean;
 }) {
   const filter =
-    focus && ["failing", "drifted", "blocked", "stale"].includes(focus)
+    focus && ["failing", "outdated", "blocked"].includes(focus)
       ? focus
       : undefined;
   // Blocked specs are listed (per section) in the Blocked tab.
@@ -585,7 +583,7 @@ export function AttentionSpecs({
           icon={<IconCircleCheck size={18} stroke={1.5} />}
           title={filter ? `No ${filter} specs` : "Every spec is on track"}
         >
-          Specs with failing, drifted, blocked or stale verification show up
+          Specs with failing, outdated or blocked sections show up
           here with what to do next.
         </Empty>
       ) : (
@@ -607,7 +605,7 @@ export function AttentionSpecs({
                       <span
                         className="ov-status"
                         data-status={
-                          kind === "failing" || kind === "drifted"
+                          kind === "failing"
                             ? "danger"
                             : "warn"
                         }

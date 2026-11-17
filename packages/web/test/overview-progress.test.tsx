@@ -46,8 +46,8 @@ const wo = (id: string, spec: string, specTitle: string, extra: Partial<ProjectO
 const overview = (): ProjectOverview => ({
   head: null,
   at: new Date(NOW).toISOString(),
-  maturity: { total: 3, archived: 0, steps: { ...steps0, implemented: 1 }, overlays: { failing: 0, drifted: 0, blocked: 1, stale: 0 } },
-  attention: { failing: 0, drifted: 0, blocked: 1, stale: 0, mustFindings: 0, staleClaims: 1, failedWorkOrders: 0, integrityErrors: 0, integrityWarnings: 0, integritySnoozed: 0, specs: [] },
+  maturity: { total: 3, archived: 0, steps: { ...steps0, implemented: 1 }, overlays: { failing: 0, outdated: 0, blocked: 1 } },
+  attention: { failing: 0, outdated: 0, blocked: 1, mustFindings: 0, staleClaims: 1, failedWorkOrders: 0, integrityErrors: 0, integrityWarnings: 0, integritySnoozed: 0, specs: [] },
   inProgress: [
     wo('wo-118', 'coupons', 'Checkout coupons'),
     wo('wo-120', 'coupons', 'Checkout coupons', { kind: 'fix', title: 'Coupon rounding', plan: { total: 3 } }),

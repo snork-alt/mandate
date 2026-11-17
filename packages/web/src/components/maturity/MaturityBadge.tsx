@@ -9,7 +9,7 @@ import { refKind, fallbackLabel } from '../refs/kinds';
 import { SPEC_STATUS_META } from '../../lib/specs';
 import './maturity.css';
 
-const OVERLAY_LABEL: Record<MaturityOverlayKind, string> = { archived: 'Archived', failing: 'Failing', drifted: 'Drifted', blocked: 'Blocked', stale: 'Stale' };
+const OVERLAY_LABEL: Record<MaturityOverlayKind, string> = { archived: 'Archived', failing: 'Failing', outdated: 'Outdated', blocked: 'Blocked' };
 
 /** Four-step segmented meter (filled up to the step). */
 export function MaturityMeter({ stepIndex, tone }: { stepIndex: number; tone: SpecMaturity['tone'] }) {

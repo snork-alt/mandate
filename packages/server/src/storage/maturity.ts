@@ -28,6 +28,19 @@ export interface MaturityInput {
   blockedSections: string[];
   /** Drift reasons (done specs whose gate no longer holds). */
   drift: string[];
+  /** Section ids changed since they were implemented (Outdated) and sections with an upstream item changed since the pin. */
+  changes?: { outdated: string[]; upstream: string[] };
+}
+
+/** The sections of a spec that changed since implemented / whose upstream changed (git history; empty for archived specs). */
+export async function changesOf(storage: Storage, spec: StoredSpec): Promise<{ outdated: string[]; upstream: string[] }> {
+  if (spec.status === 'archived') return { outdated: [], upstream: [] };
+  const impl = spec.sections.some((s) => s.implementedCommit && !s.archived) ? await storage.workOrderService.implementation(spec.id).catch(() => ({})) : {};
+  const outdated = Object.entries(impl).filter(([, v]) => (v as { outdated?: boolean }).outdated).map(([k]) => k);
+  const hasLinks = spec.sections.some((s) => s.links.length);
+  const links = hasLinks ? await storage.linkService.forDoc('specs', spec).catch(() => null) : null;
+  const upstream = links ? Object.entries(links.sections).filter(([, v]) => v.outgoing.some((l) => l.upstreamChanged)).map(([k]) => k) : [];
+  return { outdated, upstream };
 }
 
 const CHANGING = new Set(['implement', 'update', 'fix']);
@@ -65,10 +78,20 @@ export function specMaturity(i: MaturityInput): SpecMaturity {
   if (spec.status === 'archived') overlays.push({ kind: 'archived', reason: 'The spec is archived (no longer in force).', refs: [specUri] });
   const failing = gating.filter((c) => c.state === 'failing');
   if (failing.length) overlays.push({ kind: 'failing', reason: `${failing.length} must criteri${failing.length === 1 ? 'on' : 'a'} failing (${failing.map((c) => c.title).join(', ')}).`, refs: failing.map((c) => c.uri) });
-  if (i.drift.length) overlays.push({ kind: 'drifted', reason: `Done, but the gate no longer holds: ${i.drift.join('; ')}.`, refs: [specUri] });
-  if (i.blockedSections.length) overlays.push({ kind: 'blocked', reason: `${i.blockedSections.length} section(s) depend on work that is not implemented: ${i.blockedSections.join(', ')}.`, refs: i.blockedSections.map((s) => buildRef({ kind: 'specs', id: spec.id, sectionId: s })) });
+  // Outdated: a section changed since implemented, upstream changed, a test result out of date, or a done gate that no longer holds.
   const staleCrit = gating.filter((c) => c.state === 'stale' || c.state === 'unknown');
-  if (staleCrit.length) overlays.push({ kind: 'stale', reason: `${staleCrit.length} verification${staleCrit.length === 1 ? ' is' : 's are'} stale (${staleCrit.map((c) => c.title).join(', ')}).`, refs: staleCrit.map((c) => c.uri) });
+  const ch = i.changes ?? { outdated: [], upstream: [] };
+  if (ch.outdated.length || ch.upstream.length || staleCrit.length || i.drift.length) {
+    const sec = (ids: string[]) => ids.map((s) => buildRef({ kind: 'specs', id: spec.id, sectionId: s }));
+    const parts = [
+      ch.outdated.length ? `${ch.outdated.length} section${ch.outdated.length === 1 ? '' : 's'} changed since implemented (${ch.outdated.join(', ')})` : '',
+      ch.upstream.length ? `upstream changed for ${ch.upstream.join(', ')}` : '',
+      staleCrit.length ? `${staleCrit.length} test result${staleCrit.length === 1 ? ' is' : 's are'} out of date (${staleCrit.map((c) => c.title).join(', ')})` : '',
+      i.drift.length ? `the done gate no longer holds: ${i.drift.join('; ')}` : '',
+    ].filter(Boolean);
+    overlays.push({ kind: 'outdated', reason: `${parts.join('; ')}.`, refs: [...sec(ch.outdated), ...sec(ch.upstream), ...staleCrit.map((c) => c.uri), ...(i.drift.length ? [specUri] : [])] });
+  }
+  if (i.blockedSections.length) overlays.push({ kind: 'blocked', reason: `${i.blockedSections.length} section(s) depend on work that is not implemented: ${i.blockedSections.join(', ')}.`, refs: i.blockedSections.map((s) => buildRef({ kind: 'specs', id: spec.id, sectionId: s })) });
 
   const label = step === 'in_progress' ? `${MATURITY_LABELS[step]} · ${implemented}/${sections.total}` : MATURITY_LABELS[step];
   return {
@@ -100,6 +123,7 @@ export async function maturities(storage: Storage, specs: StoredSpec[]): Promise
       lastAudit: audits[spec.id] ?? null,
       blockedSections: blocked[spec.id] ?? [],
       drift: derived[spec.id]?.drift ?? [],
+      changes: await changesOf(storage, spec),
     });
   }
   return out;

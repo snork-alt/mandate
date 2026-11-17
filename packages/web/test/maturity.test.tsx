@@ -48,8 +48,8 @@ describe.each(['light', 'dark'] as const)('maturity badge (%s)', (scheme) => {
     expect(b.querySelector('.maturity-marker')).toBeNull();
   });
 
-  it.each(['failing', 'drifted', 'blocked', 'stale', 'archived'] as const)('overlay %s: overlay tone + marker, step label kept', (k) => {
-    const { container } = render(<R scheme={scheme}><MaturityBadge m={mat('implemented', [k, 'stale'].filter((x, i, a) => a.indexOf(x) === i) as MaturityOverlayKind[])} /></R>);
+  it.each(['failing', 'outdated', 'blocked', 'archived'] as const)('overlay %s: overlay tone + marker, step label kept', (k) => {
+    const { container } = render(<R scheme={scheme}><MaturityBadge m={mat('implemented', [k, 'outdated'].filter((x, i, a) => a.indexOf(x) === i) as MaturityOverlayKind[])} /></R>);
     const b = container.querySelector('.maturity-badge')!;
     expect(b.getAttribute('data-tone')).toBe(OVERLAY_TONE[k]);
     expect(b.textContent).toContain('Implemented');
@@ -101,10 +101,10 @@ describe('maturity filter, sort and component roll-up', () => {
   });
 
   it('component: least mature step, worst overlay of the specs affecting it (archived ignored)', () => {
-    const list = [spec('a', mat('implemented'), ['auth']), spec('c', mat('implemented', ['stale']), ['auth', 'db']), spec('e', mat('draft', ['archived']), ['auth'])];
+    const list = [spec('a', mat('implemented'), ['auth']), spec('c', mat('implemented', ['outdated']), ['auth', 'db']), spec('e', mat('draft', ['archived']), ['auth'])];
     const cm = componentMaturity(list, ['auth'])!;
     expect(cm.step).toBe('implemented');
-    expect(cm.overlay).toBe('stale');
+    expect(cm.overlay).toBe('outdated');
     expect(cm.tone).toBe('orange');
     expect(cm.specs.map((s) => s.id)).toEqual(['a', 'c']);
     expect(componentMaturity(list, ['billing'])).toBeNull();
