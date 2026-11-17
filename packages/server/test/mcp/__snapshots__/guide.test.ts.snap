@@ -19,8 +19,8 @@ Call \`project_info\`; follow \`effective\` (\`reason\` says why).
 
 ## Hard rules
 
-1. **Ask via Mandate**: \`question_ask\` (options + recommended), not your harness's question tool; keep working on what
-   doesn't depend on it; answers arrive as \`news\` (rule 10) (if the user is chatting with you, you may also ask in chat).
+1. **Ask via Mandate, only when necessary** (ambiguity that changes behaviour, conflict with a spec / standard, irreversible step, standard confirmation; else decide and \`request_decision_add\`): \`question_ask { request, blocks }\` (options + recommended), not your harness's question tool; keep working on what
+   doesn't depend on it (\`flow_next\` skips what it blocks); answers arrive as \`news\` (rule 10) (if the user is chatting with you, you may also ask in chat).
 2. **Standards need explicit confirmation**, even if the user says "don't ask": before ANY standard write
    (inferred drafts excepted; activating them needs it), \`question_ask\` purpose \`standard_confirmation\` (the
    standard, the exact change: rule text, level, scope; why; Approve / Edit / Skip; title = name, badge = level,
@@ -46,9 +46,11 @@ Call \`project_info\`; follow \`effective\` (\`reason\` says why).
 
 ## Request: any instruction from the user
 
+\`/mandate <request>\` drives all of this: \`flow_next { request }\` returns the next step (tool, args, why) from the stored state and the server refuses out-of-order writes; do it, call it again, until done or waiting. \`flow_next {}\` lists every request in flight (several can run at once). The steps below are what it walks through.
+
 1. \`request_create\` (kind \`improvement\` | \`bug\`; the user's words in \`body\` / \`quote\`; \`targets\` may wait). It needs no
-   approval: carry on. Doubts for the user go to \`question_ask\` (Questions); keep working on what doesn't depend on them.
-2. Fit: \`spec_match\`, then \`get\` (spec or section refs) / \`graph_neighbors\`. Decide: covered · extend section X · new
+   approval: carry on. Doubts that change behaviour go to \`question_ask { request, blocks }\`; everything else: decide, \`request_decision_add\`.
+2. Fit: \`spec_match { request, for: <request id> }\` (records the match; the work-order gate needs it), then \`get\` (spec or section refs) / \`graph_neighbors\`. Decide: covered · extend section X · new
    section in spec Y · new spec · cross-cutting rule (\`list { of: "standards" }\`, \`standard_usage\`) · several.
 3. Take it on: edit with \`addresses: [<request ref>]\`: \`create\`, \`section_insert\`, \`section_update\`. Every new or
    changed section needs a criterion: a \`type: acceptance\` section (method test | manual | review | metric) in its
@@ -58,7 +60,7 @@ Call \`project_info\`; follow \`effective\` (\`reason\` says why).
 4. Components (\`create { of: "components" }\`: owns globs, layer, parent): \`affects\` links from the spec sections that change it,
    \`follows\` its standards, \`owns\` code (or \`kind: external\`). Architecture level, few (reuse first; not one per
    folder or class; depth ≤ 2), one responsibility each, non-overlapping \`owns\`, acyclic \`depends_on\` by layer.
-5. \`status_set\` ready → \`work_order_create\` (kind implement | update, the sections, \`reason: [<request ref>]\`) with the
+5. \`status_set\` ready → \`work_order_create\` (refused with \`flow_out_of_order\` until the request has its spec_match and a spec / standard change addressing it; fast path exempt) (kind implement | update, the sections, \`reason: [<request ref>]\`) with the
    FULL \`plan\`: \`steps\`, \`files\`, \`tests\` (name, ref, \`proves\`: the acceptance criteria ids each test proves; every criterion
    needs one) and \`risks\`. The request closes by itself when its work orders complete (else \`request_close\`).
 

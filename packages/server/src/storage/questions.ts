@@ -41,6 +41,8 @@ export class QuestionService {
   readonly repo: JsonlFileRepository<Line>;
   /** Does a context reference resolve? (wired by createStorage). */
   resolve?: (ref: string) => Promise<string>;
+  /** Does a request id exist? (wired by createStorage). */
+  requestExists?: (id: string) => Promise<boolean>;
 
   constructor(git: GitStore, lock: Mutex, beforeCommit?: (message: string) => Promise<void>, integrity?: IntegrityHook<Line>) {
     this.repo = new JsonlFileRepository<Line>(QUESTIONS_FILE, {
@@ -87,7 +89,7 @@ export class QuestionService {
   }
 
   async ask(
-    input: { purpose: QuestionPurpose; questions: (QuestionInputItem & { multiSelect: boolean })[]; context?: string[]; blocking: boolean; expiresInHours?: number; supersedes?: string },
+    input: { purpose: QuestionPurpose; questions: (QuestionInputItem & { multiSelect: boolean })[]; context?: string[]; request?: string; blocks?: string[]; blocking: boolean; expiresInHours?: number; supersedes?: string },
     asker: QuestionActor,
     meta: CommitMeta = {},
   ): Promise<Question> {
@@ -95,6 +97,14 @@ export class QuestionService {
     for (const r of input.context ?? []) {
       const uri = this.resolve ? await this.resolve(r).catch((e: Error) => { throw new QuestionError('validation', `context ${r}: ${e.message}`); }) : r;
       if (!context.includes(uri)) context.push(uri);
+    }
+    if (input.request && this.requestExists && !(await this.requestExists(input.request))) throw new QuestionError('validation', `request '${input.request}' does not exist`);
+    // blocks: canonical references that must resolve (a step: its work order must).
+    const blocks: string[] = [];
+    for (const r of input.blocks ?? []) {
+      const step = /^(mandate:\/\/work-orders\/[^/]+)\/steps\/s\d+$/.exec(r);
+      if (this.resolve) await this.resolve(step ? step[1]! : r).catch((e: Error) => { throw new QuestionError('validation', `blocks ${r}: ${e.message}`); });
+      if (!blocks.includes(r)) blocks.push(r);
     }
     if (input.supersedes) {
       const old = await this.get(input.supersedes);
@@ -104,6 +114,8 @@ export class QuestionService {
     const rec: Omit<QuestionRecord, 'id'> = {
       asker,
       context,
+      ...(input.request ? { request: input.request } : {}),
+      ...(blocks.length ? { blocks } : {}),
       purpose: input.purpose,
       questions: input.questions.map((q, i) => ({
         id: `q${i + 1}`,

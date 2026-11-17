@@ -77,7 +77,7 @@ describe('the mandate-flow MCP prompt', () => {
     await server.connect(a);
     const c = new Client({ name: 't', version: '0' });
     await c.connect(b);
-    expect((await c.listPrompts()).prompts.map((p) => p.name)).toEqual(['mandate-flow', 'mandate-bootstrap']);
+    expect((await c.listPrompts()).prompts.map((p) => p.name)).toEqual(['mandate', 'mandate-flow', 'mandate-bootstrap']);
     const r = await c.getPrompt({ name: 'mandate-flow', arguments: { setting: 'approval off' } });
     const text = (r.messages[0]!.content as { text: string }).text;
     expect(text).toContain('Argument: "approval off"');

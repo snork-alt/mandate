@@ -7,12 +7,12 @@
  * installer (`instructions_get` / `project_info` `stubVersion`). Pure module (no server imports): the CLI bundles it.
  */
 import { BOOTSTRAP_COMMAND, BOOTSTRAP_SKILL_BODY } from './bootstrap.js';
-import { FLOW_COMMAND, SKILL_BODY } from './guide.js';
+import { FLOW_COMMAND, MANDATE_COMMAND, SKILL_BODY } from './guide.js';
 
 /** Version of the installed stub files (stamped into each one). */
-export const STUB_VERSION = 2;
+export const STUB_VERSION = 3;
 
-export const INSTRUCTION_NAMES = ['core', 'bootstrap', 'flow'] as const;
+export const INSTRUCTION_NAMES = ['core', 'bootstrap', 'flow', 'mandate'] as const;
 export type InstructionName = (typeof INSTRUCTION_NAMES)[number];
 
 /**
@@ -21,6 +21,7 @@ export type InstructionName = (typeof INSTRUCTION_NAMES)[number];
  */
 export function instructionsFor(name: InstructionName, args?: string): { text: string; command?: string } {
   if (name === 'core') return { text: SKILL_BODY };
+  if (name === 'mandate') return { text: MANDATE_COMMAND.render(args?.trim() || 'status') };
   if (name === 'flow') return { text: FLOW_COMMAND.render(args?.trim() || 'status') };
   return { text: BOOTSTRAP_SKILL_BODY, ...(args !== undefined ? { command: BOOTSTRAP_COMMAND.render(args.trim()) } : {}) };
 }
@@ -68,7 +69,7 @@ ${STUB_FALLBACK}
 `;
 
 /** Text of a slash-command stub (`args`: the agent's argument placeholder, e.g. $ARGUMENTS). */
-export function commandStub(name: 'flow' | 'bootstrap', args: string): string {
+export function commandStub(name: 'flow' | 'bootstrap' | 'mandate', args: string): string {
   const follow = name === 'bootstrap' ? 'Follow the returned `command`, then `text` (the bootstrap procedure).' : 'Follow the returned `text`.';
   return `Load the current instructions for this command from Mandate: ${load(name, `,"args":"${args}"`)}. ${follow}
 ${STUB_FALLBACK}

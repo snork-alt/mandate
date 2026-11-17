@@ -301,6 +301,7 @@ export function createStorage(git: GitStore, opts: StorageOptions = {}): Storage
   auditService = new AuditService(audits, { specs, standards, git, verification: verificationService, workOrders: workOrderService, model, lock });
   const causeStorage = { git, specs, standards, components, feedback, workOrders, audits, verifications, commentService, questionService };
   questionService.resolve = async (uri) => (await resolveCauses(causeStorage, uri))[0]!;
+  questionService.requestExists = async (id) => (await feedbackService.list()).some((f) => f.id === id);
   feedbackService.resolveRef = (uri) => resolveCauses(causeStorage, uri);
   feedbackService.audit = (id) => audits.get(id).catch(() => null) as never;
   return {

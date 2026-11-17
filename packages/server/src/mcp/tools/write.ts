@@ -470,6 +470,19 @@ const workOrderTools: AnyToolDef[] = [
       if (needsPlan && (!a.plan || typeof a.plan === 'string')) {
         throw new ToolError('plan_required', `a ${a.kind} work order carries the full plan from creation: plan { steps, files, tests: [{ name, proves: [criterion ids] }], risks }`, ERROR_ACTIONS.plan_required!, 'plan');
       }
+      // Flow order: a request is matched against the specs and changed (spec / standard commits that address it) before
+      // work orders exist for it. The fast-path fix route is exempt (no behaviour change).
+      if (!a.fastPath) {
+        for (const rid of (a.reason ?? []).map(idOf)) {
+          const f = await ctx.storage.feedbackService.get(rid).catch(() => null);
+          if (!f || f.status === 'closed') continue;
+          const hasChange = f.changes.some((c) => c.kind === 'specs' || c.kind === 'standards');
+          const missing = [...(f.specMatch ? [] : ['spec_match recorded on it (spec_match { request, for: "' + rid + '" })']), ...(hasChange ? [] : ['a spec / standard change that addresses it (edit with addresses: [mandate://requests/' + rid + '])'])];
+          if (missing.length) {
+            throw new ToolError('flow_out_of_order', `flow_out_of_order: request ${rid} is not ready for a work order: it needs ${missing.join(' and ')}`, `call flow_next { request: "${rid}" } and follow it; a bug fix without behaviour change: kind fix, fastPath: true`, 'reason', { kind: 'request', request: rid, missing });
+          }
+        }
+      }
       const wo = await ctx.storage.workOrderService.create(
         {
           spec,
@@ -731,6 +744,18 @@ const verificationTools: AnyToolDef[] = [
     run: async (a, ctx) => {
       const commits: string[] = [];
       const c = parseRef(a.criterion)!;
+      // Inside a work order, results are recorded by the agent that holds it (or once every section is done): an open
+      // implement / update / fix work order covering the criterion that nobody claimed yet gives not_claimed.
+      if (c.kind === 'specs' && c.sectionId) {
+        const spec = await ctx.storage.specs.get(c.id).catch(() => null);
+        const covering = (await ctx.storage.workOrderService.list()).filter(
+          (w) => w.spec === c.id && ['pending', 'in_progress'].includes(w.status) && ['implement', 'update', 'fix'].includes(w.kind) && coveredCriteria(spec, w.sections.map((s) => s.id)).some((x) => x.id === c.sectionId),
+        );
+        if (covering.length && covering.every((w) => !w.claim && !w.sections.every((s) => s.status === 'done' || s.status === 'obsolete'))) {
+          const w = covering[0]!;
+          throw new ToolError('not_claimed', `not_claimed: work order ${w.id} covers this criterion and nobody has claimed it: claim it (work_order_claim) before recording its results`, `flow_next { request: "${w.reason[0] ?? ''}" } names the next step`, 'criterion', { kind: 'work_order', id: w.id });
+        }
+      }
       // A claim about code: repo (registered) + commit; codeRefs in registered repos too.
       const cw = [...checkClaim(ctx, a.code, 'code'), ...checkCodeRepos(ctx, (a.codeRefs ?? []).map((x) => repoOfLocation(x) ?? '').filter(Boolean), 'codeRefs')];
       const r = await ctx.storage.verificationService.record(

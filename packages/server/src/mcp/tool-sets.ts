@@ -291,7 +291,7 @@ export const TOOL_SETS: Record<ToolSetName, readonly string[]> = {
   core: [
     'project_info', 'instructions_get', 'lifecycle_get', 'flow_set', 'code_context_set', 'tools_enable',
     'search', 'get', 'list',
-    'request_create', 'request_update', 'request_close', 'spec_match',
+    'flow_next', 'request_create', 'request_update', 'request_close', 'request_decision_add', 'spec_match',
     'create', 'update_meta', 'archive', 'section_insert', 'section_move', 'section_link_add', 'section_link_remove',
     'work_order_create', 'work_order_cancel',
     'work_order_next', 'work_order_claim', 'work_order_heartbeat', 'work_order_plan_set', 'work_order_step_set', 'work_order_touch', 'work_order_git_update', 'work_order_section_done', 'work_order_complete', 'work_order_fail', 'work_order_release',
@@ -318,7 +318,7 @@ export const TOOL_SETS: Record<ToolSetName, readonly string[]> = {
     'standard_where_used', 'standard_usage', 'code_rules', 'code_owner', 'architecture_get', 'project_overview',
   ],
   /** Operations: activity, Ask, index and git sync. */
-  admin: ['activity_list', 'activity_subscribe', 'ask', 'ask_status', 'index_status', 'git_status', 'git_push', 'git_pull', 'work_order_touch_from_commits', 'project_overview'],
+  admin: ['flow_edit_allowed', 'activity_list', 'activity_subscribe', 'ask', 'ask_status', 'index_status', 'git_status', 'git_push', 'git_pull', 'work_order_touch_from_commits', 'project_overview'],
 };
 
 /** `?tools=` / tools_enable value: set names (comma separated) or `all`. Unknown names are returned separately. */

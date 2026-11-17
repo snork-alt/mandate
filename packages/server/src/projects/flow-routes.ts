@@ -111,12 +111,12 @@ export function registerFlowRoutes(app: FastifyInstance, d: FlowRouteDeps): void
       const { project } = req.params as { project: string };
       await visible(who.login, project);
       if (!who.admin) throw new HttpError(403, 'forbidden', 'only Mandate admins can change the project policy');
-      const b = z.object({ flowPolicy: z.enum(FLOW_POLICIES).optional() }).strict().parse(req.body);
-      if (!b.flowPolicy) throw new HttpError(400, 'invalid_input', 'pass flowPolicy');
+      const b = z.object({ flowPolicy: z.enum(FLOW_POLICIES).optional(), strictFlow: z.boolean().optional() }).strict().parse(req.body);
+      if (!b.flowPolicy && b.strictFlow === undefined) throw new HttpError(400, 'invalid_input', 'pass flowPolicy or strictFlow');
       const s = d.settings(project);
       const before = s.policy();
       const policy = await s.setPolicy(b);
-      await emit(project, (['flowPolicy'] as const).filter((k) => before[k] !== policy[k]).map((k) => `flow policy ${policy[k]}`), who.login);
+      await emit(project, [...(before.flowPolicy !== policy.flowPolicy ? [`flow policy ${policy.flowPolicy}`] : []), ...(!!before.strictFlow !== !!policy.strictFlow ? [`strict flow ${policy.strictFlow ? 'on' : 'off'}`] : [])], who.login);
       return { policy };
     }),
   );

@@ -84,9 +84,9 @@ Example: {}`,
     name: 'instructions_get',
     title: 'Current Mandate instructions',
     kind: 'read',
-    description: `The current Mandate instructions, from the server; they override any local or remembered copy. name: core (working agreement) | bootstrap (args: its arguments, rendered as command) | flow (args: the /mandate-flow argument). stubVersion: your local skill's (update: re-run the installer). Works with the flow off.
+    description: `The current Mandate instructions, from the server; they override any local or remembered copy. name: core (working agreement) | bootstrap (args: its arguments, rendered as command) | flow (args: the /mandate-flow argument) | mandate (args: the /mandate argument). stubVersion: your local skill's (update: re-run the installer). Works with the flow off.
 Example: {"name":"core","stubVersion":1}`,
-    input: z.object({ name: z.enum(INSTRUCTION_NAMES), args: z.string().max(500).optional(), stubVersion }).strict(),
+    input: z.object({ name: z.enum(INSTRUCTION_NAMES), args: z.string().max(4000).optional(), stubVersion }).strict(),
     run: async (a) => ({ name: a.name, ...instructionsFor(a.name, a.args), stubVersion: STUB_VERSION, ...(stubUpdateNotice(a.stubVersion) ? { update: stubUpdateNotice(a.stubVersion) } : {}) }),
   }),
   defineTool({
@@ -129,15 +129,15 @@ Example: {"enabled":false}`,
     title: 'Set the project flow policy (admin)',
     kind: 'write',
     uiOnly: true,
-    description: `Web UI admins only: the project flow policy. flowPolicy: required | optional (default, each client chooses) | off (read-only).
+    description: `Web UI admins only: the project flow policy. flowPolicy: required | optional (default, each client chooses) | off (read-only); strictFlow: true = the guard hook refuses code edits outside a claimed work order step.
 Example: {"flowPolicy":"required"}`,
-    input: z.object({ flowPolicy: z.enum(FLOW_POLICIES).optional() }).strict(),
+    input: z.object({ flowPolicy: z.enum(FLOW_POLICIES).optional(), strictFlow: z.boolean().optional() }).strict(),
     run: async (a, ctx) => {
       const s = settingsOf(ctx);
-      if (!a.flowPolicy) throw new ToolError('validation', 'pass flowPolicy', 'e.g. {"flowPolicy":"required"}', 'flowPolicy');
+      if (!a.flowPolicy && a.strictFlow === undefined) throw new ToolError('validation', 'pass flowPolicy or strictFlow', 'e.g. {"flowPolicy":"required"}', 'flowPolicy');
       const before = s.policy();
       const policy = await s.setPolicy(a);
-      const fields = (['flowPolicy'] as const).filter((k) => before[k] !== policy[k]).map((k) => `flow policy ${policy[k]}`);
+      const fields = [...(before.flowPolicy !== policy.flowPolicy ? [`flow policy ${policy.flowPolicy}`] : []), ...(!!before.strictFlow !== !!policy.strictFlow ? [`strict flow ${policy.strictFlow ? 'on' : 'off'}`] : [])];
       const login = ctx.principal?.kind === 'ui' ? ctx.principal.user.login : undefined;
       const e = flowChangedEvent(s.project, fields, { agent: 'mandate-ui', ...(login ? { user: login } : {}) }, (await ctx.storage.git.head().catch(() => null)) ?? '');
       if (e) ctx.activity?.emit(e);

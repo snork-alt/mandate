@@ -9,11 +9,12 @@
 /** Short form for the server `instructions`. */
 export const CORE_RULES = `Working agreement (every instruction the user gives is a REQUEST: feature, change, fix):
 START: project_info; follow effective { flow, questions }. TOOLS: the request flow is listed; tools_enable { sets } adds bootstrap, review, lineage or admin. flow off = read context only (no requests, spec / standard edits or work orders; every write tool is refused with flow_off: stop, work in the code). A user's per-request override covers that request only. Requests need NO approval: only questions you raise need the user.
-QUESTIONS: ask the user via question_ask (options + recommended), not your harness's question tool; continue with work that doesn't depend on it; answers arrive as NEWS. effective.questions chat (or the user is chatting and it blocks everything): ask in chat.
+DRIVEN: /mandate <request> runs the loop: flow_next { request } names the next step (tool, args, why); do it, repeat until done or waiting. The server refuses out-of-order writes (flow_out_of_order). Several requests can be in flight: flow_next {} lists them.
+QUESTIONS: ask ONLY when necessary (ambiguity that changes behaviour, conflict with a spec / standard, irreversible step, standard confirmation); otherwise decide and request_decision_add { ref, text, reason }. Ask via question_ask { request, blocks: [what it blocks] } (options + recommended), not your harness's question tool; flow_next skips what a question blocks; answers arrive as NEWS. effective.questions chat (or the user is chatting and it blocks everything): ask in chat.
 NEWS: any reply may carry news (your own work): act on it before continuing: answered question → get it, continue the blocked work; work order cancelled / reassigned / claim released → stop that work; claim expired → reclaim it or stop; findings / changes requested → address them; waiver rejected → follow the standard; draft standard dropped → don't rely on it; flow changed → follow the new instructions, update memory. An item stays until you read its ref or news_ack it; news_list = history. Everything blocked: news_list { unread: true, wait: 300 }, up to 6 times, then tell the user you are blocked and stop; never wait while other work is possible.
 STANDARDS (always, even if the user says "don't ask"): before ANY standard write (except inferred drafts, e.g. bootstrap; activating needs it), question_ask purpose standard_confirmation (exact change, why; Approve / Edit / Skip), then cite the answered question as cause (asked in chat: confirmedByUser: true). Waivers, exemptions, criteria removals on done / claimed specs: question_ask purpose approval, cite the answer as cause.
 WRITES: pass cause (the request, finding, work order, section or question acted on). Ids are assigned by Mandate. TLDR: set a plain-words tldr (no ids, jargon) on every spec / standard / component create; refresh it when a change alters what the doc does (a tldr-only standard edit needs no confirmation). Errors carry a hint: follow it; never force a gate.
-REQUEST: request_create (user's words; targets may wait) → spec_match → edit specs / standards (addresses: [request]; every changed section gets an acceptance criterion; links follows / depends_on / affects) → work_order_create (reason: [request], FULL plan: steps, files, tests each mapped to the criteria it proves, risks; at creation, not later) → deliver. Questions to the user (question_ask) never block work that doesn't depend on the answer. Fast path (bug fix, no behaviour change): kind fix, fastPath: true.
+REQUEST: request_create (user's words; targets may wait) → spec_match { for: request } → edit specs / standards (addresses: [request]; every changed section gets an acceptance criterion; links follows / depends_on / affects) → work_order_create (reason: [request], FULL plan: steps, files, tests each mapped to the criteria it proves, risks; at creation, not later) → deliver. Questions to the user (question_ask) never block work that doesn't depend on the answer. Fast path (bug fix, no behaviour change): kind fix, fastPath: true.
 PLANS (flow on): the plan lives in the work order (plan at work_order_create, work_order_plan_set to refine), never local files (plans/, PLAN.md, docs/plans/). Flow off: plan as usual.
 DELIVERY: work_order_next / work_order_claim → its comments (list) → rules_for_code before editing → work_order_step_set (step in_progress when starting, done when finished, skipped + note) → work_order_section_done per section (codeRefs: they land on the spec section), work_order_touch, work_order_git_update, work_order_heartbeat → verification_record per criterion (pass + the test: evidence.test / codeRefs; needed to complete) → reconcile spec / component text and code refs (section_update) → comments again (resolve blocking ones) → work_order_complete (outcome, reconciliation) → status_set done once its work orders are complete and criteria verified or waived.
 CODE: at start your repo = the project_info.codeRepos entry whose github matches \`git remote get-url origin\`; code_context_set { repo, commit, branch, dirty }, again after each commit or branch switch. Code claims (verifications, touched code, completion git headCommit, audits) pass repo + commit (uncommitted: dirty: true). Code refs: mandate://code/<repo>/<path>[#La-Lb], that short name only.
@@ -43,8 +44,8 @@ Call \`project_info\`; follow \`effective\` (\`reason\` says why).
 
 ## Hard rules
 
-1. **Ask via Mandate**: \`question_ask\` (options + recommended), not your harness's question tool; keep working on what
-   doesn't depend on it; answers arrive as \`news\` (rule 10) (if the user is chatting with you, you may also ask in chat).
+1. **Ask via Mandate, only when necessary** (ambiguity that changes behaviour, conflict with a spec / standard, irreversible step, standard confirmation; else decide and \`request_decision_add\`): \`question_ask { request, blocks }\` (options + recommended), not your harness's question tool; keep working on what
+   doesn't depend on it (\`flow_next\` skips what it blocks); answers arrive as \`news\` (rule 10) (if the user is chatting with you, you may also ask in chat).
 2. **Standards need explicit confirmation**, even if the user says "don't ask": before ANY standard write
    (inferred drafts excepted; activating them needs it), \`question_ask\` purpose \`standard_confirmation\` (the
    standard, the exact change: rule text, level, scope; why; Approve / Edit / Skip; title = name, badge = level,
@@ -70,9 +71,11 @@ Call \`project_info\`; follow \`effective\` (\`reason\` says why).
 
 ## Request: any instruction from the user
 
+\`/mandate <request>\` drives all of this: \`flow_next { request }\` returns the next step (tool, args, why) from the stored state and the server refuses out-of-order writes; do it, call it again, until done or waiting. \`flow_next {}\` lists every request in flight (several can run at once). The steps below are what it walks through.
+
 1. \`request_create\` (kind \`improvement\` | \`bug\`; the user's words in \`body\` / \`quote\`; \`targets\` may wait). It needs no
-   approval: carry on. Doubts for the user go to \`question_ask\` (Questions); keep working on what doesn't depend on them.
-2. Fit: \`spec_match\`, then \`get\` (spec or section refs) / \`graph_neighbors\`. Decide: covered · extend section X · new
+   approval: carry on. Doubts that change behaviour go to \`question_ask { request, blocks }\`; everything else: decide, \`request_decision_add\`.
+2. Fit: \`spec_match { request, for: <request id> }\` (records the match; the work-order gate needs it), then \`get\` (spec or section refs) / \`graph_neighbors\`. Decide: covered · extend section X · new
    section in spec Y · new spec · cross-cutting rule (\`list { of: "standards" }\`, \`standard_usage\`) · several.
 3. Take it on: edit with \`addresses: [<request ref>]\`: \`create\`, \`section_insert\`, \`section_update\`. Every new or
    changed section needs a criterion: a \`type: acceptance\` section (method test | manual | review | metric) in its
@@ -82,7 +85,7 @@ Call \`project_info\`; follow \`effective\` (\`reason\` says why).
 4. Components (\`create { of: "components" }\`: owns globs, layer, parent): \`affects\` links from the spec sections that change it,
    \`follows\` its standards, \`owns\` code (or \`kind: external\`). Architecture level, few (reuse first; not one per
    folder or class; depth ≤ 2), one responsibility each, non-overlapping \`owns\`, acyclic \`depends_on\` by layer.
-5. \`status_set\` ready → \`work_order_create\` (kind implement | update, the sections, \`reason: [<request ref>]\`) with the
+5. \`status_set\` ready → \`work_order_create\` (refused with \`flow_out_of_order\` until the request has its spec_match and a spec / standard change addressing it; fast path exempt) (kind implement | update, the sections, \`reason: [<request ref>]\`) with the
    FULL \`plan\`: \`steps\`, \`files\`, \`tests\` (name, ref, \`proves\`: the acceptance criteria ids each test proves; every criterion
    needs one) and \`risks\`. The request closes by itself when its work orders complete (else \`request_close\`).
 
@@ -150,4 +153,25 @@ export const FLOW_COMMAND = {
 policy_required / policy_off: the project policy decides (an admin changes it in Settings → Agent flow).
 Follow the result's \`instructions\` from now on; save them to your memory (replace any earlier Mandate-flow note).
 Reply with ONE line from policy, client and effective, e.g. "Project policy: optional · this client (<client.label>): flow off, questions via mandate". Besides saving the instructions, do nothing else.`,
+};
+
+/**
+ * `/mandate <what you want>`: the driven flow. A thin prompt: the order of the steps lives in the server (`flow_next`),
+ * which also refuses out-of-order writes. Slash-command file and MCP prompt share it.
+ */
+export const MANDATE_COMMAND = {
+  name: 'mandate',
+  title: 'Mandate: drive a request through the flow',
+  description: 'Give Mandate a request and let the agent drive the whole flow (specs, work order, code, tests, verification) without stopping, asking you only what it must. Forms: <request text> · resume <request id> · status.',
+  argumentHint: '<what you want> | resume <request id> | status',
+  render: (args: string) => `Mandate: drive work through the flow. Argument: "${args}".
+First (once per session): project_info; follow effective (flow off: say so and stop). Then, by the argument:
+- "status" or empty: flow_next {} and show the requests in flight, one line each: id, summary, state, next step or what it waits on. Stop.
+- "resume <id>": flow_next { request: id } and run the LOOP.
+- anything else = a NEW request: request_create (kind improvement | bug; the user's words verbatim in body and quote), then the LOOP on it.
+LOOP: flow_next { request } -> do exactly its next { tool, args } (you fill in the content: spec text, plan, code, tests) -> flow_next again, until done: true or it only waits. The server enforces the order (flow_out_of_order, claims): never skip or reorder a stage; its hint says what is missing. Follow the working agreement (instructions_get core) for every detail of a step; write code and tests yourself.
+DO NOT STOP to ask. A choice that does not change behaviour (names, defaults, equal options): decide, then request_decision_add { ref, text, reason }.
+ASK ONLY WHEN NECESSARY: ambiguity that changes behaviour, a conflict with a spec or standard, an irreversible or destructive step, a standard confirmation (standards always need the user's answer). Use question_ask { request, blocks: [what stays blocked: the request, work order, step or section], purpose, options, recommended } (never your harness's question tool). Then carry on: flow_next skips whatever the question blocks.
+WAITING: waitingOn lists unanswered questions, waitingOnWorkOrders work orders of other requests. Continue with the parallel items (flow_next { request: other }) and with other requests in flight (flow_next {}). When nothing is actionable, report in a few lines what waits (question ids, what each blocks, work orders) and stop; the user answers in Mandate and the answer arrives as news: then continue with /mandate resume <id>.
+END: one short report per request: what changed (specs, work orders, tests proved), decisions you took, anything still waiting.`,
 };

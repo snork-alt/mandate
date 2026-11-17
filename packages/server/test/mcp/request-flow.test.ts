@@ -159,6 +159,7 @@ describe('criteria are proved by tests; sections point at their work order', () 
   it('work_order_complete refuses until each criterion has a passing, test-linked result; then the request closes by itself', async () => {
     const id = await newSpec();
     const fb = await ok('request_create', { targets: [`mandate://specs/${id}/sections/design`], kind: 'improvement', body: 'Build the design.' });
+    await read('spec_match', { request: 'Build the design.', for: fb.ref });
     await ok('spec_section_update', { ref: `mandate://specs/${id}/sections/design`, body: 'The design, v2.', addresses: [fb.ref] });
     const wo = await ok('work_order_create', { spec: id, sections: ['design', 'ac-works'], kind: 'implement', plan: PLAN, reason: [fb.ref] });
     const woId = wo.ref.split('/').pop()!;

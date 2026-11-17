@@ -40,6 +40,13 @@ describe('rendering', () => {
     expect(renderUninstallSh({ url: TEAM.url })).toContain('"$CLI" uninstall "$@"');
     expect(renderUninstallPs1({ url: TEAM.url })).toContain('& $cliPath uninstall @PassArgs');
   });
+  it('strict flow: the project installer passes --strict-flow to connect (the edit guard hook); otherwise it does not', () => {
+    expect(renderInstallSh(TEAM)).not.toContain('--strict-flow');
+    expect(renderInstallSh({ ...TEAM, strictFlow: true })).toContain('set -- --strict-flow "$@"');
+    expect(renderInstallPs1(TEAM)).not.toContain('--strict-flow');
+    expect(renderInstallPs1({ ...TEAM, strictFlow: true })).toContain("$cli += '--strict-flow'");
+  });
+
   it('refuses unsafe inputs (they end up in a shell script)', () => {
     expect(() => renderInstallSh({ ...TEAM, project: "x'; rm -rf ~" })).toThrow(/project/);
     expect(() => renderInstallSh({ ...TEAM, version: '1.2.3; curl evil' })).toThrow(/version/);

@@ -6,3 +6,4 @@ coverage/
 .DS_Store
 plans/
 dev-restart.signal
+.claude/worktrees/

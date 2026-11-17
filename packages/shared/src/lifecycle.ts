@@ -225,7 +225,7 @@ const ENTRIES: LifecycleEntry[] = [
     kind: 'work_order',
     states: [...WORK_ORDER_STATUSES],
     initial: 'pending',
-    create: { tools: ['work_order_create'], when: 'right after the spec / standard edit that addresses the request: reason: [request], plan (REQUIRED for implement / update / fix: steps, files, tests mapped to the criteria they prove, risks); at most one open implement/update work order per section', errors: ['validation'] },
+    create: { tools: ['work_order_create'], when: 'once the request has its spec_match and a spec / standard change addressing it (else flow_out_of_order; fix + fastPath exempt), right after that edit: reason: [request], plan (REQUIRED for implement / update / fix: steps, files, tests mapped to the criteria they prove, risks); at most one open implement/update work order per section', errors: ['validation'] },
     terminal: ['done', 'cancelled'],
     frozen: ['done', 'failed', 'cancelled'],
     derived: [],
@@ -234,7 +234,7 @@ const ENTRIES: LifecycleEntry[] = [
     steps: [
       step('pending', ['work_order_release'], 'give a claimed work order back (not for finished work: with every section done the claim is released automatically)', { from: ['in_progress'] }),
       step('in_progress', ['work_order_claim', 'work_order_next'], 'when you start delivery (also reopens a failed one; claiming an all-sections-done work order keeps its progress)', {
-        gate: 'a plan (given at work_order_create, or work_order_plan_set) unless fastPath fix; no fresh claim by another agent',
+        gate: 'a plan (given at work_order_create, or work_order_plan_set) unless fastPath fix; no fresh claim by another agent; step / section / completion writes need that claim (flow_next says which)',
         enforcedBy: 'WorkOrderService.claim (storage/work-orders.ts)',
         errors: ['plan_required', 'claim_conflict', 'transition_not_allowed'],
       }),
@@ -437,6 +437,9 @@ export const ERROR_ACTIONS: Record<string, string> = {
   transition_not_allowed: 'not allowed from the current status: lifecycle_get { kind } lists the allowed moves; go through the intermediate status (e.g. reopen done -> ready)',
   done_gate: 'never force it (no override passes it): verify (verification_record) each detail.failures criterion or ask the user whether to waive it, unblock sections, complete open implement/update work orders, then retry',
   plan_required: 'implement / update / fix work orders carry the FULL plan from creation: work_order_create { plan: { steps, files, tests: [{ name, proves: [criterion ids] }], risks } } (an older work order without a plan: work_order_plan_set, then claim)',
+  flow_out_of_order: 'a step of the flow came too early: call flow_next { request } and do the step it names (spec_match { for }, spec / standard edits with addresses, then the work order); a bug fix without behaviour change: kind fix, fastPath: true',
+  request_required: 'questions inside the Mandate flow belong to a request: pass request (the request id) and, if the answer gates work, blocks: [the request / work order / step / section it blocks]; flow_next lists the requests in flight',
+  edit_not_allowed: 'strict flow: edit code only while you hold a claimed work order with a step in progress: flow_next, work_order_claim, work_order_step_set in_progress',
   plan_invalid: 'plan.tests[].proves must name acceptance criteria of the targeted sections (the message lists them) and every such criterion needs a test: fix the plan and retry',
   open_comments: 'answer, fix and comment_resolve each blocking comment in detail.threads, then retry',
   outcome_required: 'pass outcome (what was delivered)',

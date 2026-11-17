@@ -40,6 +40,8 @@ export const specMatchInputSchema = z
     sectionsPerSpec: z.number().int().min(1).max(5).default(3),
     /** Include archived specs (default false). */
     includeArchived: z.boolean().default(false),
+    /** The request this match is for: records the match on it (flow_next and the work-order gate read it). */
+    for: z.string().trim().min(1).optional(),
   })
   .strict();
 
@@ -50,7 +52,7 @@ export const matchTools = [
     name: 'spec_match',
     title: 'Match a request to specs',
     kind: 'read',
-    description: `Where does a feature / change request fit? Pass it in the user's words; call right after request_create.
+    description: `Where does a feature / change request fit? Pass it in the user's words; call right after request_create with for: <request id> (records the match on the request; the work-order gate needs it).
 Returns top candidate specs (fit 0..1, reasons, best sections, affected components, standards, criteria count) and a suggestion extend_section | new_section | new_spec (you decide; also consider "already covered" or a standard).
 Example: {"request":"let users stay signed in for 30 days"}`,
     input: specMatchInputSchema,
@@ -118,7 +120,16 @@ Example: {"request":"let users stay signed in for 30 days"}`,
       candidates.sort((x, y) => y.fit - x.fit);
       const best = candidates[0];
       const decision: Decision = !best || best.fit < 0.3 ? 'new_spec' : best.fit >= 0.6 && Math.max(0, ...best.sections.map((x) => x.fit)) >= 0.5 ? 'extend_section' : 'new_section';
+      // `for`: record the match on the request (the flow gates read it). Not for read-only users or the web UI.
+      let recorded: string | undefined;
+      if (a.for && ctx.access !== 'read' && ctx.principal?.kind !== 'ui') {
+        const id = a.for.replace(/^@mandate:/, '').replace(/^mandate:\/\/(?:requests|feedback)\//, '');
+        const refs = candidates.slice(0, a.limit).flatMap((c) => [c.spec.ref, ...c.sections.map((x) => x.ref)]);
+        await ctx.storage.lock.run(() => ctx.storage.feedbackService.recordSpecMatch(id, { by: ctx.clientName ?? 'agent', refs, decision }, { agent: ctx.clientName ?? 'agent' }));
+        recorded = id;
+      }
       return {
+        ...(recorded ? { recordedOn: `mandate://requests/${recorded}` } : {}),
         request: a.request,
         terms: ts,
         candidates: candidates.slice(0, a.limit),

@@ -178,6 +178,7 @@ registerInstallRoutes(app, {
   trustProxy: config.trustProxy,
   hostOk,
   hasProject: (id) => !!projects.config(id),
+  strictFlow: (id) => !!flowSettings(id).policy().strictFlow,
   cli: cliPackage ? new CliTarball(cliPackage, path.join(mandateHome(), 'cache', 'cli'), undefined, cliSource ? () => buildFromSource(cliSource.dir) : undefined) : null,
 });
 // Agent flow: project policy (projects.json) + per-client preferences (server-state database).

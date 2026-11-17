@@ -40,7 +40,9 @@ const settle = async () => {
   await news.idle();
 };
 const ask = async (ctx: ToolContext, header: string) => {
-  const r = await call(ctx, 'question_ask', { purpose: 'decision', questions: [{ header, question: `${header}?`, options: [{ label: 'A', description: 'a' }, { label: 'B', description: 'b' }], recommended: 'A' }] });
+  const req = await call(ctx, 'request_create', { kind: 'improvement', body: `Request for ${header}` });
+  expect(req.isError, JSON.stringify(req.body)).toBe(false);
+  const r = await call(ctx, 'question_ask', { purpose: 'decision', request: req.body.request.id, questions: [{ header, question: `${header}?`, options: [{ label: 'A', description: 'a' }, { label: 'B', description: 'b' }], recommended: 'A' }] });
   expect(r.isError, JSON.stringify(r.body)).toBe(false);
   return r.body.question.id as string;
 };

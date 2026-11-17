@@ -903,7 +903,23 @@ const SECTION_HINT = 'request targets are sections or verification results: pick
 /** A feedback item's `relatedTo` entry: a feedback id, or a canonical element reference (`mandate://...`). */
 export const relatedRefSchema = z.union([idSchema, z.string().max(400).refine((v) => !!parseNodeUri(v), 'an element reference (mandate://...)')]);
 
+/** The spec_match recorded on a request (flow_next reads it): matched refs, the suggested decision, who and when. */
+export const requestSpecMatchSchema = z.object({
+  at: z.string().min(1),
+  by: z.string().min(1),
+  refs: z.array(z.string().min(1)).max(20).default([]),
+  decision: z.enum(['extend_section', 'new_section', 'new_spec']).optional(),
+});
+export type RequestSpecMatch = z.infer<typeof requestSpecMatchSchema>;
+/** A decision the agent took without asking the user (ask only when necessary): what, why, when, by whom. */
+export const requestDecisionSchema = z.object({ text: z.string().trim().min(1).max(500), reason: z.string().trim().min(1).max(500), at: z.string().min(1), by: z.string().min(1) });
+export type RequestDecision = z.infer<typeof requestDecisionSchema>;
+
 const feedbackFields = {
+  /** The spec_match that placed this request (server-set by spec_match { for }). */
+  specMatch: requestSpecMatchSchema.optional(),
+  /** Decisions the agent took on its own while handling the request (append-only; request_decision_add). */
+  decisions: z.array(requestDecisionSchema).max(100).optional(),
   /** Empty only for an intake request (improvement / bug) filed before its sections are known. */
   targets: z.array(feedbackTargetSchema).default([]),
   quote: z.string().optional(),
@@ -1016,6 +1032,8 @@ export const updateFeedbackSchema = z.object({
   relatedTo: z.array(relatedRefSchema).optional(),
   body: z.string().min(1).optional(),
   targets: z.array(feedbackTargetSchema.refine(isSectionTarget, SECTION_HINT)).min(1).optional(),
+  specMatch: requestSpecMatchSchema.optional(),
+  decisions: z.array(requestDecisionSchema).max(100).optional(),
 });
 export type UpdateFeedbackInput = z.input<typeof updateFeedbackSchema>;
 

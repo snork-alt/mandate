@@ -373,6 +373,22 @@ export class FeedbackService {
     return this.get(id);
   }
 
+  /** Record the spec_match that placed a request (no-op for closed requests). */
+  async recordSpecMatch(id: string, match: { by: string; refs: string[]; decision?: 'extend_section' | 'new_section' | 'new_spec' }, meta: CommitMeta = {}): Promise<void> {
+    const current = await this.repo.get(id);
+    if (current.status === 'closed') return;
+    await this.repo.update(id, { specMatch: { at: (meta.date ?? new Date()).toISOString(), by: match.by, refs: match.refs.slice(0, 20), ...(match.decision ? { decision: match.decision } : {}) } } as never, meta);
+  }
+
+  /** Append a decision the agent took without asking the user (what, why). */
+  async addDecision(id: string, d: { text: string; reason: string; by: string }, meta: CommitMeta = {}): Promise<Feedback> {
+    const current = await this.repo.get(id);
+    if (current.status === 'closed') throw new FeedbackClosedError(id, 'modified');
+    const decisions = [...(current.decisions ?? []), { text: d.text, reason: d.reason, at: (meta.date ?? new Date()).toISOString(), by: d.by }];
+    await this.repo.update(id, { decisions } as never, { ...meta, message: meta.message ?? `request: decision on ${id}: ${d.text.slice(0, 60)}` });
+    return this.get(id);
+  }
+
   async delete(id: string, meta: CommitMeta = {}) {
     const current = await this.repo.get(id);
     if (current.status === 'closed') throw new FeedbackClosedError(id, 'deleted');

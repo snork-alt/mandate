@@ -30,6 +30,8 @@ export const FLOW_POLICIES = ['required', 'optional', 'off'] as const;
 
 export interface Policy {
   flowPolicy: FlowPolicy;
+  /** Strict flow (opt-in): the `mandate guard` hook refuses code edits unless the agent holds a claimed work order with a step in progress. */
+  strictFlow?: boolean;
 }
 export const DEFAULT_POLICY: Policy = { flowPolicy: 'optional' };
 
@@ -152,13 +154,14 @@ export function refusal(policy: Policy, patch: PrefPatch): { code: 'policy_requi
 
 /* ------------------------------------------------------------------ policy (projects.json) */
 
-type Entry = { id: string; flowPolicy?: FlowPolicy; approvalPolicy?: ApprovalPolicy; flow?: { enabled?: boolean; approval?: boolean } };
+type Entry = { id: string; flowPolicy?: FlowPolicy; strictFlow?: boolean; approvalPolicy?: ApprovalPolicy; flow?: { enabled?: boolean; approval?: boolean } };
 
 /** Policy of a registry entry (legacy `flow.enabled: false` → off; anything else → optional). */
 export function policyOf(e: Entry | undefined): Policy {
   if (!e) return { ...DEFAULT_POLICY };
   return {
     flowPolicy: e.flowPolicy ?? (e.flow?.enabled === false ? 'off' : 'optional'),
+    ...(e.strictFlow ? { strictFlow: true } : {}),
       };
 }
 
@@ -369,8 +372,14 @@ export function projectSettings(store: ProjectsStore, id: string, clients: Clien
       store.mutate((reg) => {
         const e = reg.projects.find((p) => p.id === id) as Entry | undefined;
         if (!e) throw new Error(`project '${id}' is not in the project registry (${store.file})`);
-        const next = { ...policyOf(e), ...(patch.flowPolicy ? { flowPolicy: patch.flowPolicy } : {})  };
+        const next = { ...policyOf(e), ...(patch.flowPolicy ? { flowPolicy: patch.flowPolicy } : {}) };
+        if (patch.strictFlow !== undefined) {
+          if (patch.strictFlow) next.strictFlow = true;
+          else delete next.strictFlow;
+        }
         e.flowPolicy = next.flowPolicy;
+        if (next.strictFlow) e.strictFlow = true;
+        else delete e.strictFlow;
         delete e.approvalPolicy;
         delete e.flow;
         return next;

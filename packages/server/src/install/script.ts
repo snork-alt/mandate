@@ -21,6 +21,8 @@ export interface InstallScriptInput {
   /** sha256 of `<url>/getmandate.tgz` when known (embedded: verifying the script then pins the CLI too); else the
    * script fetches `<url>/getmandate.tgz.sha256`. */
   cliSha256?: string | null;
+  /** The project has strict flow on: pass --strict-flow to connect (installs the `mandate guard` edit hook). */
+  strictFlow?: boolean;
 }
 
 const PROJECT_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -135,7 +137,7 @@ else
   say "    without write access to npm's global folder: into $CLI_PREFIX);"
   say "  - for every coding agent found on this machine (Claude Code, Codex, Cursor, ...):"
   say "    add the Mandate MCP server ($MANDATE_URL/p/<project>/mcp) to its user config,"
-  say "    and the Mandate skills and the /mandate-flow, /mandate-bootstrap commands;"
+  say "    and the Mandate skills and the /mandate, /mandate-flow, /mandate-bootstrap commands;"
   say "  - sign-in: your agent opens GitHub sign-in on first use (MCP OAuth); no token is written."
   say "It runs: getmandate connect --url $MANDATE_URL ..."
   say "Remove it all later: curl -fsSL $MANDATE_URL/uninstall.sh | sh"
@@ -189,7 +191,7 @@ done
 if [ "$UNINSTALL" = 1 ]; then set -- --remove "$@"; fi
 set -- "$REPO_FLAG" "$@"
 if [ -n "$MANDATE_PROJECT" ]; then set -- --project "$MANDATE_PROJECT" "$@"; fi
-set -- connect --url "$MANDATE_URL" "$@"
+${i.strictFlow ? 'set -- --strict-flow "$@"\n' : ''}set -- connect --url "$MANDATE_URL" "$@"
 
 TMPD=$(mktemp -d 2>/dev/null || mktemp -d -t mandate)
 trap 'rm -rf "$TMPD"' EXIT
@@ -343,7 +345,7 @@ if (-not (Get-Command npm -ErrorAction SilentlyContinue)) { throw "npm not found
 $cli = @('connect', '--url', $MandateUrl)
 if ($MandateProject) { $cli += @('--project', $MandateProject) }
 if ($Uninstall) { $cli += '--remove' }
-$cli += @($PassArgs | Where-Object { $_ -notin @('--uninstall', '--insecure', '--reinstall') })
+${i.strictFlow ? "$cli += '--strict-flow'\n" : ''}$cli += @($PassArgs | Where-Object { $_ -notin @('--uninstall', '--insecure', '--reinstall') })
 
 function Find-MandateCli {
   $p = Join-Path $CliPrefix 'getmandate.cmd'

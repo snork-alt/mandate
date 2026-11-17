@@ -22,6 +22,8 @@ export interface InstallRouteDeps {
   hostOk: (req: FastifyRequest) => boolean;
   /** Known project ids (unknown → 404). */
   hasProject: (id: string) => boolean;
+  /** Does the project turn strict flow on? (its installer then installs the edit guard hook). */
+  strictFlow?: (id: string) => boolean;
   /** This server's CLI package as a tarball; null when not available (running from source without a built CLI). */
   cli?: CliTarball | null;
 }
@@ -59,7 +61,7 @@ export function registerInstallRoutes(app: FastifyInstance, d: InstallRouteDeps)
     if (!guard(req, reply)) return reply;
     const project = (req.params as { projectId?: string }).projectId ?? null;
     if (project !== null && !d.hasProject(project)) return reply.code(404).send({ error: { code: 'not_found', message: `unknown project '${project}'` } });
-    const input: InstallScriptInput = { url: d.url, project, version, cliSha256: await cliSha(req.log) };
+    const input: InstallScriptInput = { url: d.url, project, version, cliSha256: await cliSha(req.log), ...(project && d.strictFlow?.(project) ? { strictFlow: true } : {}) };
     return sendScript(reply, `install.${kind}`, kind === 'sh' ? renderInstallSh(input) : renderInstallPs1(input), checksum);
   };
   const uninstall = (kind: Kind, checksum: boolean) => async (req: FastifyRequest, reply: FastifyReply) => {

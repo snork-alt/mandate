@@ -73,12 +73,56 @@ const contextRef = z
   .max(600)
   .refine((v) => !!parseNodeUri(v), 'a mandate:// reference (spec, section, standard, work order, feedback, ...)');
 
+/* ---------- Questions bound to requests: what an unanswered question blocks ---------- */
+
+const WO_STEP_RE = /^mandate:\/\/work-orders\/([a-z0-9][a-z0-9_-]*)\/steps\/(s\d+)$/;
+export type BlockRef =
+  | { kind: 'request'; id: string }
+  | { kind: 'work-order'; id: string }
+  | { kind: 'step'; workOrder: string; step: string }
+  | { kind: 'section'; doc: 'specs' | 'standards' | 'components' | 'work-orders'; id: string; sectionId: string };
+
+/** Parse a `blocks` reference: a request, work order, work-order step (`mandate://work-orders/<id>/steps/sN`) or a section. */
+export function parseBlockRef(ref: string): BlockRef | null {
+  const m = WO_STEP_RE.exec(ref);
+  if (m) return { kind: 'step', workOrder: m[1]!, step: m[2]! };
+  const n = parseNodeUri(ref);
+  if (!n) return null;
+  const r = n as { kind: string; id: string; sectionId?: string };
+  if (r.kind === 'feedback' && !r.sectionId) return { kind: 'request', id: r.id };
+  if (r.kind === 'work-orders') return r.sectionId ? { kind: 'section', doc: 'work-orders', id: r.id, sectionId: r.sectionId } : { kind: 'work-order', id: r.id };
+  if ((r.kind === 'specs' || r.kind === 'standards' || r.kind === 'components') && r.sectionId) return { kind: 'section', doc: r.kind, id: r.id, sectionId: r.sectionId };
+  return null;
+}
+/** Canonical text of a block reference. */
+export const buildBlockRef = (b: BlockRef): string =>
+  b.kind === 'request' ? `mandate://requests/${b.id}` : b.kind === 'work-order' ? `mandate://work-orders/${b.id}` : b.kind === 'step' ? `mandate://work-orders/${b.workOrder}/steps/${b.step}` : `mandate://${b.doc}/${b.id}/sections/${b.sectionId}`;
+
+const blockRef = z
+  .string()
+  .trim()
+  .min(3)
+  .max(600)
+  .transform((v) => v.replace(/^@mandate:/, ''))
+  .refine((v) => !!parseBlockRef(v), 'blocks: a request (mandate://requests/<id>), work order, work-order step (mandate://work-orders/<id>/steps/sN) or spec / standard / work-order section')
+  .transform((v) => buildBlockRef(parseBlockRef(v)!));
+
+const requestIdInput = z
+  .string()
+  .trim()
+  .transform((v) => v.replace(/^@mandate:/, '').replace(/^mandate:\/\/(?:requests|feedback)\//, ''))
+  .pipe(z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/, 'a request id (fb-NNNN) or mandate://requests/<id>'));
+
 export const questionAskInputSchema = z
   .object({
     purpose: z.enum(QUESTION_PURPOSES),
     questions: z.array(questionInputItemSchema).min(1).max(4),
     /** The elements the question concerns (shown as chips; graph edges). */
     context: z.array(contextRef).max(10).optional(),
+    /** The request this question belongs to (required inside the Mandate flow; the user sees it on the request). */
+    request: requestIdInput.optional(),
+    /** What stays blocked until it is answered: requests, work orders, work-order steps, sections. Default: nothing (informational). */
+    blocks: z.array(blockRef).max(10).optional(),
     /** true: you cannot make progress without the answer. */
     blocking: z.boolean().default(false),
     /** Stop asking after this many hours (the question expires unanswered). */
@@ -136,6 +180,9 @@ export const questionRecordSchema = z.object({
   purpose: z.enum(QUESTION_PURPOSES),
   questions: z.array(questionItemSchema).min(1).max(4),
   blocking: z.boolean(),
+  /** The request it belongs to (`fb-NNNN`) and the references it blocks until answered (canonical `mandate://` forms). */
+  request: z.string().min(1).optional(),
+  blocks: z.array(z.string().min(1)).optional(),
   createdAt: z.string().min(1),
   expiresAt: z.string().optional(),
 });
@@ -214,3 +261,6 @@ export function checkAnswers(q: Pick<QuestionRecord, 'questions'>, answers: Reco
   }
   return null;
 }
+
+/** Open questions that block `ref` (a request, work order, step or section reference), newest last. */
+export const blockingQuestions = (questions: Question[], ref: string): Question[] => questions.filter((q) => q.status === 'open' && (q.blocks ?? []).includes(ref));
