@@ -62,7 +62,7 @@ describe('connect: Claude Code event delivery wiring', () => {
   it('--push off on a fresh machine writes nothing for events; a bad value is refused', async () => {
     const ctx = tempCtx();
     expect(await connect(ctx, '--push', 'off')).toBe(0);
-    expect(existsSync(path.join(ctx.home, '.claude', 'settings.json'))).toBe(false);
+    expect(settings(ctx).hooks).toBeUndefined(); // only the permission rule is written
     expect(claudeJson(ctx).mcpServers.mandate_events_web).toBeUndefined();
     expect(await connect(ctx, '--push', 'sometimes')).toBe(2);
   });

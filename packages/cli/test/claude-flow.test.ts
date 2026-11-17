@@ -22,12 +22,19 @@ describe('permission rules', () => {
     write(path.join(ctx.home, '.claude', 'settings.json'), JSON.stringify({ model: 'opus', permissions: { allow: ['Bash(ls)'], deny: ['Bash(rm *)'] } }, null, 2) + '\n');
     const args = ['connect', '--yes', '--no-repo', '--url', URL, '--project', 'web', '--agents', 'claude-code'];
     expect(await run(args, envOf(ctx), capture(), ctx.dir)).toBe(0);
-    expect(settings(ctx)).toEqual({ model: 'opus', permissions: { allow: ['Bash(ls)', 'mcp__mandate-web__*'], deny: ['Bash(rm *)'] } });
+    // One settings.json carries both features: the allow rule and the event hooks (push default: channels).
+    const s1 = settings(ctx);
+    expect(s1.model).toBe('opus');
+    expect(s1.permissions).toEqual({ allow: ['Bash(ls)', 'mcp__mandate-web__*'], deny: ['Bash(rm *)'] });
+    expect(Object.keys(s1.hooks).sort()).toEqual(['SessionStart', 'Stop', 'UserPromptSubmit']);
     expect(permissionRule('web')).toBe('mcp__mandate-web__*');
     expect(await run(args, envOf(ctx), capture(), ctx.dir)).toBe(0);
     expect(settings(ctx).permissions.allow).toEqual(['Bash(ls)', 'mcp__mandate-web__*']);
     expect(await run([...args, '--remove'], envOf(ctx), capture(), ctx.dir)).toBe(0);
-    expect(settings(ctx).permissions.allow).toEqual(['Bash(ls)']);
+    const s2 = settings(ctx);
+    expect(s2.permissions).toEqual({ allow: ['Bash(ls)'], deny: ['Bash(rm *)'] });
+    expect(s2.hooks).toBeUndefined();
+    expect(s2.model).toBe('opus');
   });
 
   it('not written for agents other than Claude Code', async () => {

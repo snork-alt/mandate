@@ -29,7 +29,17 @@ export function permissionChange(ctx: Ctx, project: string, remove = false): Cha
   if (!remove && current.includes(rule)) return null;
   const next = remove ? allow : [...allow, rule];
   if (remove && next.length === current.length) return null;
-  return change(file, jsonSet(file, text, ['permissions', 'allow'], next), remove ? `remove ${rule}` : `allow the Mandate tools without prompts (${rule})`);
+  let after: string | null = jsonSet(file, text, ['permissions', 'allow'], next);
+  if (remove && !next.length) {
+    // Nothing of ours left: prune the empty keys, and the file when nothing else (hooks, model, ...) remains.
+    after = jsonRemove(file, text, ['permissions', 'allow']);
+    if (after !== null) {
+      const o = JSON.parse(after) as { permissions?: Record<string, unknown> };
+      if (o.permissions && !Object.keys(o.permissions).length) after = jsonRemove(file, after, ['permissions']);
+      if (after !== null && !Object.keys(JSON.parse(after) as object).length) after = null;
+    }
+  }
+  return change(file, after, remove ? `remove ${rule}` : `allow the Mandate tools without prompts (${rule})`);
 }
 
 const isGuardOf = (e: unknown, project: string) =>
