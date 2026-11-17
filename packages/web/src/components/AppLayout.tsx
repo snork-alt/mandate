@@ -54,13 +54,13 @@ function ActionsCount() {
   );
 }
 
-/** Open questions from coding agents, on the Questions item (same query as the Overview's decisions card). */
-function QuestionsCount() {
+/** Open questions from coding agents, on the "Waiting for you" item (same query as the Overview's decisions card). */
+function WaitingCount() {
   const n = useDecisions(50).data?.counts.question ?? 0;
   if (!n) return <span className="nav-count" />;
   return (
     <Tooltip label={`${n} open question${n === 1 ? '' : 's'} from coding agents`} openDelay={300} withinPortal>
-      <span className="nav-count nav-count-alert" data-testid="nav-questions" aria-label={`${n} open question${n === 1 ? '' : 's'}`}>
+      <span className="nav-count nav-count-alert" data-testid="nav-waiting" aria-label={`${n} open question${n === 1 ? '' : 's'}`}>
         {n}
       </span>
     </Tooltip>
@@ -141,10 +141,10 @@ function AppLayoutShell() {
             {SECTIONS.map((section) => (
               <NavItem key={section.kind} section={section} onClick={close} />
             ))}
-            <NavLink to="/questions" onClick={close} className="nav-item" data-testid="nav-questions-item">
+            <NavLink to="/waiting" onClick={close} className="nav-item" data-testid="nav-waiting-item">
               <IconMessageQuestion size={16} stroke={1.7} className="nav-icon" />
-              <span>Questions</span>
-              <QuestionsCount />
+              <span>Waiting for you</span>
+              <WaitingCount />
             </NavLink>
             <NavLink to="/lineage" onClick={close} className="nav-item" data-testid="nav-lineage">
               <IconGitMerge size={16} stroke={1.7} className="nav-icon" />

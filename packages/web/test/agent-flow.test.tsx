@@ -39,13 +39,28 @@ describe('Settings → Agent flow', () => {
     expect(st.textContent).toBe('Off');
     expect(screen.queryByLabelText(/Approval for/)).toBeNull();
     expect(screen.queryByText(/Approval/)).toBeNull();
-    expect(screen.queryByRole('switch')).toBeNull();
-    expect(document.querySelector('input[type="checkbox"]')).toBeNull();
+    // No per-client switches (only the admin's project-level strict flow one).
+    const notStrict = (el: Element) => !el.closest('[data-testid^="flow-strict-"]');
+    expect(screen.queryAllByRole('switch').filter(notStrict)).toEqual([]);
+    expect([...document.querySelectorAll('input[type="checkbox"]')].filter(notStrict)).toEqual([]);
     fireEvent.click(st);
     expect(screen.getByTestId('flow-mine-hint-web').textContent).toContain('/mandate-flow on|off');
     expect(calls.some((c) => c.method === 'PUT')).toBe(false);
     expect(screen.getByText('Only Mandate admins change the policy.')).toBeTruthy();
     expect(screen.queryByTestId('flow-all-web')).toBeNull();
+  });
+
+  it('strict flow: an admin switch (PUT strictFlow); read-only for others', async () => {
+    const calls = serve({ mode: 'server', admin: true, user: 'ada', projects: [{ id: 'web', name: 'Web', policy: { flowPolicy: 'optional', strictFlow: false }, mine: [client({})] }] });
+    mount();
+    const sw = (await screen.findByLabelText('Strict flow')) as HTMLInputElement;
+    expect(sw.checked).toBe(false);
+    fireEvent.click(sw);
+    await vi.waitFor(() => expect(calls.some((c) => c.method === 'PUT' && c.url.includes('/policy') && JSON.stringify(c.body) === '{"strictFlow":true}')).toBe(true));
+    cleanup();
+    serve({ mode: 'server', admin: false, user: 'ada', projects: [{ id: 'web', name: 'Web', policy: { flowPolicy: 'optional', strictFlow: true }, mine: [client({})] }] });
+    mount();
+    expect(((await screen.findByLabelText('Strict flow')) as HTMLInputElement).disabled).toBe(true);
   });
 
   it('locked by policy: state with "enforced by policy"; admins see all clients', async () => {

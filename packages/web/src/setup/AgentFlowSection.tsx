@@ -2,7 +2,7 @@
  * Settings → Agent flow: per project, the policy (admins) and my agents' state (read-only: only the agent changes it,
  * with /mandate-flow; locked when the policy enforces it). Team admins also see every client.
  */
-import { Alert, Avatar, Badge, Group, Loader, SegmentedControl, Table, Text, Tooltip } from '@mantine/core';
+import { Alert, Avatar, Badge, Group, Loader, SegmentedControl, Switch, Table, Text, Tooltip } from '@mantine/core';
 import { IconLock } from '@tabler/icons-react';
 import { relativeTime } from '../lib/time';
 import { StepIntro } from './widgets';
@@ -175,6 +175,23 @@ function PolicyControls({ p, admin }: { p: FlowProject; admin: boolean }) {
         />
         <Text size="xs" c="dimmed">
           {POLICY_TEXT[p.policy.flowPolicy].body}
+        </Text>
+      </div>
+      <div className="flow-policy-row" data-testid={`flow-strict-${p.id}`}>
+        <Text size="sm" fw={500}>
+          Strict flow
+        </Text>
+        <Switch
+          size="sm"
+          checked={!!p.policy.strictFlow}
+          disabled={!admin || m.policy.isPending}
+          onChange={(e) => set({ strictFlow: e.currentTarget.checked })}
+          aria-label="Strict flow"
+          label={p.policy.strictFlow ? 'On' : 'Off'}
+        />
+        <Text size="xs" c="dimmed">
+          Opt-in. Claude Code refuses code edits (the <code>mandate guard</code> hook) unless the agent holds a claimed work order with a step in progress. Installed by the project&apos;s
+          installer when this is on; needs a personal token.
         </Text>
       </div>
       {!admin && (

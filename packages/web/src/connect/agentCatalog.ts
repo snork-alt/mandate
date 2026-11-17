@@ -33,11 +33,11 @@ export interface AgentDef {
 }
 
 const AGENTS_SKILLS = '~/.agents/skills/mandate';
-const SLASH = '/mandate-flow, /mandate-bootstrap';
+const SLASH = '/mandate, /mandate-flow, /mandate-bootstrap';
 
 export const AGENT_DEFS: AgentDef[] = [
   { id: 'claude-code', label: 'Claude Code', oauth: true, main: true, files: { skills: ['~/.claude/skills/mandate'], commands: { dir: '~/.claude/commands/', names: SLASH }, instructions: 'CLAUDE.md' }, flowCommand: '/mandate-flow' },
-  { id: 'codex', label: 'Codex', oauth: true, main: true, files: { skills: [AGENTS_SKILLS], commands: { dir: '~/.codex/prompts/', names: '/prompts:mandate-flow, /prompts:mandate-bootstrap' }, instructions: 'AGENTS.md' }, flowCommand: '/prompts:mandate-flow' },
+  { id: 'codex', label: 'Codex', oauth: true, main: true, files: { skills: [AGENTS_SKILLS], commands: { dir: '~/.codex/prompts/', names: '/prompts:mandate, /prompts:mandate-flow, /prompts:mandate-bootstrap' }, instructions: 'AGENTS.md' }, flowCommand: '/prompts:mandate-flow' },
   { id: 'cursor', label: 'Cursor', oauth: true, main: true, files: { skills: [AGENTS_SKILLS], commands: { dir: '~/.cursor/commands/', names: SLASH }, instructions: 'AGENTS.md' }, flowCommand: '/mandate-flow' },
   { id: 'vscode', label: 'VS Code', oauth: true, main: true, files: { skills: [AGENTS_SKILLS, '~/.copilot/skills/mandate'], commands: { dir: '.github/prompts/ (prompt files, in your code repository)', names: SLASH }, instructions: 'AGENTS.md' }, flowCommand: '/mandate-flow' },
   { id: 'gemini', label: 'Gemini CLI', oauth: true, main: true, files: { skills: [AGENTS_SKILLS], commands: { dir: '~/.gemini/commands/', names: SLASH }, instructions: 'GEMINI.md' }, flowCommand: '/mandate-flow' },

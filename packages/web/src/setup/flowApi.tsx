@@ -10,6 +10,8 @@ export type OnOff = 'on' | 'off';
 export type QuestionsVia = 'mandate' | 'chat';
 export interface Policy {
   flowPolicy: 'required' | 'optional' | 'off';
+  /** Strict flow (opt-in): code edits need a claimed work order step (the `mandate guard` hook). */
+  strictFlow?: boolean;
 }
 export interface FlowClient {
   id: string;

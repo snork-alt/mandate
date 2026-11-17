@@ -16,6 +16,7 @@ import { OverviewPage } from './pages/OverviewPage';
 import { IntegrityPage } from './pages/IntegrityPage';
 import { QuestionPage } from './pages/QuestionPage';
 import { QuestionsListPage } from './pages/QuestionsListPage';
+import { WaitingPage } from './pages/WaitingPage';
 import { ActionsPage } from './pages/ActionsPage';
 
 /**
@@ -53,6 +54,12 @@ export function RequestsRedirect() {
   const { id } = useParams();
   const { search, hash } = useLocation();
   return <Navigate to={`/requests${id ? `/${id}` : ''}${search}${hash}`} replace />;
+}
+
+/** The old Questions list: the inbox (`/waiting`); a filtered / answered view (any query) lands on the history list. */
+export function QuestionsRedirect() {
+  const { search } = useLocation();
+  return <Navigate to={search ? `/waiting/history${search}` : '/waiting'} replace />;
 }
 
 /** Project pages (rendered under the `/p/<projectId>` basename). */
@@ -121,7 +128,9 @@ export const projectRoutes: RouteObject[] = [
       { path: 'lineage', element: <LineagePage /> },
       { path: 'integrity', element: <IntegrityPage /> },
       { path: 'actions', element: <ActionsPage /> },
-      { path: 'questions', element: <QuestionsListPage /> },
+      { path: 'waiting', element: <WaitingPage /> },
+      { path: 'waiting/history', element: <QuestionsListPage /> },
+      { path: 'questions', element: <QuestionsRedirect /> },
       { path: 'questions/:id', element: <QuestionPage /> },
       { path: '*', element: <Navigate to="/specs" replace /> },
     ],

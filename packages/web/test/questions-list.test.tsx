@@ -316,7 +316,7 @@ describe('questions in the Ask pane', () => {
 });
 
 describe('sidebar', () => {
-  it('Questions: open-questions badge, links to /questions; Actions: open decisions; Overview: no badge', async () => {
+  it('Waiting for you: open-questions badge, links to /waiting; Actions: open decisions; Overview: no badge', async () => {
     openCount = 3;
     render(
       <MantineProvider>
@@ -325,18 +325,18 @@ describe('sidebar', () => {
             <Routes>
               <Route path="/" element={<AppLayout />}>
                 <Route index element={<div />} />
-                <Route path="questions" element={<div data-testid="questions-route" />} />
+                <Route path="waiting" element={<div data-testid="questions-route" />} />
               </Route>
             </Routes>
           </MemoryRouter>
         </QueryClientProvider>
       </MantineProvider>,
     );
-    const item = screen.getByTestId('nav-questions-item');
-    expect(within(item).getByText('Questions')).toBeTruthy();
+    const item = screen.getByTestId('nav-waiting-item');
+    expect(within(item).getByText('Waiting for you')).toBeTruthy();
     await waitFor(() => expect(calls.some((c) => c.name === 'list' && c.args.of === 'decisions')).toBe(true));
-    expect((await within(item).findByTestId('nav-questions')).textContent).toBe('3');
-    expect(within(screen.getByTestId('nav-overview')).queryByTestId('nav-questions')).toBeNull();
+    expect((await within(item).findByTestId('nav-waiting')).textContent).toBe('3');
+    expect(within(screen.getByTestId('nav-overview')).queryByTestId('nav-waiting')).toBeNull();
     // Actions (right below Overview): the open decisions total; Overview has no badge.
     const actions = screen.getByTestId('nav-actions-item');
     expect(actions.previousElementSibling).toBe(screen.getByTestId('nav-overview'));

@@ -258,7 +258,7 @@ function TabEmpty({ t }: { t: TabDef }) {
       <div className="act-empty-title">{t.empty.title}</div>
       <div className="act-empty-text">{t.empty.text}</div>
       {t.key === "questions" && (
-        <Button component={Link} to="/questions?tab=answered" variant="default" size="sm" mt={10} leftSection={<IconHistory size={14} />} data-testid="show-answered">
+        <Button component={Link} to="/waiting/history?tab=answered" variant="default" size="sm" mt={10} leftSection={<IconHistory size={14} />} data-testid="show-answered">
           Show answered questions
         </Button>
       )}

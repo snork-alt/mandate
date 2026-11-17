@@ -75,7 +75,16 @@ function FeedbackRow({ f, titles, workOrder, workOrders = [], questions = [] }: 
       leadWidth={36}
       id={f.id}
       idWidth={84}
-      title={<span className="fb-title">{firstLine(f.body)}</span>}
+      title={
+        <>
+          <span className="fb-title">{firstLine(f.body)}</span>
+          {questions.some((x) => x.status === 'open') && (
+            <span className="w-marker" data-testid="waiting-marker" title="An agent asked a question about this request and waits for your answer">
+              Waiting for you
+            </span>
+          )}
+        </>
+      }
       chips={chips}
       chipsMax={legacy ? 4 : 3}
       chipsWidth={FEEDBACK_CHIPS_W}

@@ -1,5 +1,6 @@
 /** What hangs off a request: its open questions, the work orders acting on it and the spec / standard changes. */
 import type { FeedbackChange, Question, WorkOrder } from '@mandate/shared';
+import { parseBlockRef } from '@mandate/shared';
 import { parseRef } from '@mandate/shared/refs';
 
 /** The request id a question context (a request ref, current or old form) names. */
@@ -13,7 +14,7 @@ export function questionsByRequest(questions: Question[]): Map<string, Question[
   const m = new Map<string, Question[]>();
   for (const q of questions) {
     if (q.status === 'superseded') continue;
-    for (const id of new Set(q.context.map(requestIdOfRef).filter((x): x is string => !!x))) m.set(id, [...(m.get(id) ?? []), q]);
+    for (const id of new Set([...q.context.map(requestIdOfRef), q.request].filter((x): x is string => !!x))) m.set(id, [...(m.get(id) ?? []), q]);
   }
   for (const [id, list] of m) m.set(id, list.sort((a, b) => Number(b.status === 'open') - Number(a.status === 'open') || b.createdAt.localeCompare(a.createdAt)));
   return m;
@@ -34,3 +35,28 @@ export function changedDocs(changes: FeedbackChange[]): { key: string; kind: Fee
 }
 
 export const questionTitle = (q: Pick<Question, 'questions' | 'id'>) => q.questions[0]?.title ?? q.questions[0]?.question ?? q.id;
+
+/** What a question blocks, as a link: a request, work order, step (a `/steps/sN` reference) or a section. */
+export function blockTarget(ref: string): { label: string; href: string | null; kind: 'request' | 'work-order' | 'step' | 'section' } {
+  const b = parseBlockRef(ref);
+  if (b?.kind === 'step') return { label: `step ${b.step} of ${b.workOrder}`, href: `/work-orders/${b.workOrder}`, kind: 'step' };
+  if (b?.kind === 'request') return { label: b.id, href: `/requests/${b.id}`, kind: 'request' };
+  if (b?.kind === 'work-order') return { label: b.id, href: `/work-orders/${b.id}`, kind: 'work-order' };
+  if (b?.kind === 'section') return { label: `${b.id} · ${b.sectionId}`, href: `/${b.doc}/${b.id}`, kind: 'section' };
+  return { label: ref, href: null, kind: 'section' };
+}
+
+/** Open questions bound to a request (a question with `request`, or naming it as context): the user is asked to answer. */
+export const waitingRequestIds = (open: Question[]): Set<string> => new Set([...questionsByRequest(open.filter((q) => q.status === 'open')).keys()]);
+
+const wosOf = (q: Question): string[] =>
+  (q.blocks ?? []).flatMap((b) => {
+    const p = parseBlockRef(b);
+    return p?.kind === 'work-order' || p?.kind === 'section' && p.doc === 'work-orders' ? [p.id] : p?.kind === 'step' ? [p.workOrder] : [];
+  });
+
+/** Open questions that block a work order, one of its steps or sections (`blocks`). */
+export const questionsBlockingWorkOrder = (questions: Question[], woId: string): Question[] => questions.filter((q) => q.status === 'open' && wosOf(q).includes(woId));
+
+/** Work order ids with at least one open blocking question. */
+export const blockedWorkOrderIds = (questions: Question[]): Set<string> => new Set(questions.filter((q) => q.status === 'open').flatMap(wosOf));

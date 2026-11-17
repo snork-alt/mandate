@@ -18,6 +18,9 @@ import { absoluteTime } from '../lib/time';
 import { TopBar } from '../components/TopBar';
 import { workOrderTarget } from '../lib/refs';
 import { useWorkOrders } from '../lib/queries';
+import { useOpenQuestions } from '../lib/questions';
+import { blockedWorkOrderIds } from '../lib/requestLinks';
+import '../components/questions/questions.css';
 import { matches, useSearchQuery } from '../lib/useSearchQuery';
 import type { SectionDef } from '../sections';
 import { RowPeople } from '../components/people/People';
@@ -70,7 +73,7 @@ function WorkOrderListHeader() {
   );
 }
 
-function WorkOrderRow({ item, spec, now }: { item: WorkOrder; spec?: Spec; now: number }) {
+function WorkOrderRow({ item, spec, now, waiting }: { item: WorkOrder; spec?: Spec; now: number; waiting?: boolean }) {
   const target = workOrderTarget(item);
   const blocked = item.sections.filter((x) => spec?.blockedSections?.includes(x.id));
   const issues = (item as { validationIssues?: string[] }).validationIssues;
@@ -96,6 +99,13 @@ function WorkOrderRow({ item, spec, now }: { item: WorkOrder; spec?: Spec; now: 
       cols={withNodes(WO_COLS, {
         flags: (
           <>
+            {waiting && (
+              <Tooltip label="A question blocks this work order (or one of its steps): it waits for your answer">
+                <span className="w-marker" data-testid="waiting-marker">
+                  Waiting for you
+                </span>
+              </Tooltip>
+            )}
             {blocked.length > 0 && (
               <Tooltip label={`Blocked: ${blocked.map((x) => x.id).join(', ')}`}>
                 <span className="row-indicator" data-tone="warn">
@@ -160,6 +170,8 @@ export function WorkOrderListPage({ section }: { section: SectionDef }) {
   const query = useWorkOrders();
   const specs = useSpecs();
   const now = useNow();
+  const openQuestions = useOpenQuestions();
+  const blockedWos = useMemo(() => blockedWorkOrderIds(openQuestions.data?.items ?? []), [openQuestions.data]);
   const specById = useMemo(() => new Map((specs.data ?? []).map((s) => [s.id, s])), [specs.data]);
   const [q, setQ] = useSearchQuery();
   const [filter, setFilter] = useState<Filter>('all');
@@ -253,7 +265,7 @@ export function WorkOrderListPage({ section }: { section: SectionDef }) {
                 {items.length}
               </Text>
             </button>
-            {!isCollapsed && items.map((item) => <WorkOrderRow key={item.id} item={item} spec={specById.get(item.spec)} now={now} />)}
+            {!isCollapsed && items.map((item) => <WorkOrderRow key={item.id} item={item} spec={specById.get(item.spec)} now={now} waiting={blockedWos.has(item.id)} />)}
           </section>
         );
       })}

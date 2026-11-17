@@ -23,6 +23,10 @@ import { TopBar } from '../components/TopBar';
 import { FEEDBACK_KIND_META, firstLine } from '../lib/feedback';
 import { useStandards, useWorkOrders } from '../lib/queries';
 import { useAllQuestions } from '../lib/questions';
+import { useDecisionAccess } from '../lib/decisions';
+import { BlockChips } from '../components/questions/BlockChips';
+import { NO_ACCESS, QuestionCard } from '../components/questions/QuestionCard';
+import '../components/questions/questions.css';
 import { questionTitle, questionsByRequest, workOrdersByRequest } from '../lib/requestLinks';
 import { sectionTarget } from '../lib/refs';
 import { refHref } from '../components/refs/kinds';
@@ -104,6 +108,8 @@ export function FeedbackItemPage() {
   const standards = useStandards();
   const workOrders = useWorkOrders();
   const questions = useAllQuestions();
+  const access = useDecisionAccess();
+  const canAnswer = access.data?.canDecide ?? false;
   const standardTitles = useMemo(() => new Map((standards.data ?? []).map((s) => [s.id, s.title])), [standards.data]);
   const crumbs = [{ label: 'Requests', to: '/requests' }, { label: <span className="mono">{id}</span>, kind: 'feedback' as const }];
   const r = resolved.data;
@@ -224,11 +230,40 @@ export function FeedbackItemPage() {
           </div>
         </>
       )}
-      {myQuestions.length > 0 && (
+      {(f.decisions?.length ?? 0) > 0 && (
         <>
-          <h2 className="fb-h2">Questions · {myQuestions.length}</h2>
+          <h2 className="fb-h2">Decisions taken by the agent · {f.decisions!.length}</h2>
+          <ul className="w-decisions" data-testid="fb-decisions">
+            {f.decisions!.map((d, i) => (
+              <li key={`${d.at}-${i}`}>
+                <strong>{d.text}</strong> — {d.reason} <span className="faint small">({d.by}, <TimeAgo iso={d.at} />)</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      {myQuestions.some((x) => x.status === 'open') && (
+        <>
+          <h2 className="fb-h2" data-testid="fb-waiting">
+            Waiting for you · {myQuestions.filter((x) => x.status === 'open').length}
+          </h2>
+          <ul className="q-cards">
+            {myQuestions
+              .filter((x) => x.status === 'open')
+              .map((x) => (
+                <li key={x.id} data-testid="fb-open-question">
+                  <BlockChips q={x} />
+                  <QuestionCard q={x} canAnswer={canAnswer} reason={access.isPending ? 'Checking access…' : NO_ACCESS} />
+                </li>
+              ))}
+          </ul>
+        </>
+      )}
+      {myQuestions.some((x) => x.status !== 'open') && (
+        <>
+          <h2 className="fb-h2">Questions · {myQuestions.filter((x) => x.status !== 'open').length}</h2>
           <div className="fb-links" data-testid="fb-questions">
-            {myQuestions.map((x) => (
+            {myQuestions.filter((x) => x.status !== 'open').map((x) => (
               <span key={x.id} className="fb-link-row">
                 <QuestionChip q={x} />
                 <span className="faint small">{x.status}{` · ${questionTitle(x)}`}</span>

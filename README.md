@@ -270,6 +270,21 @@ MCP server's instructions carry the same rules for agents without it) runs the f
   names its test (the spec then reads "Proved by" that test). `work_order_complete` refuses until every acceptance
   criterion the work order covers has a test-linked pass; completing it closes the request. If the spec is unclear, the
   agent asks you instead of guessing.
+- **`/mandate <what you want>`** drives the whole flow by itself. It records the request, then loops on **`flow_next`**, a
+  state machine in the server that returns the next step (tool, arguments, why) from the stored state: spec match, spec and
+  standard changes with acceptance criteria, the work order with its full plan, claim, plan steps, sections, a test-linked
+  verification per criterion, completion, request closed. The server enforces the order (`flow_out_of_order`, claims). The
+  agent asks you **only when necessary** (ambiguity that changes behaviour, a conflict with a spec or standard, an
+  irreversible step, a standard confirmation); anything else it decides and records on the request as a **decision**.
+  Several requests can be in flight: `/mandate status` lists them, `/mandate resume <request>` continues one. A question
+  belongs to a request and says what it **blocks** (the request, a work order, a step, a section); the agent skips what is
+  blocked and carries on elsewhere. Questions wait in **Waiting for you** (sidebar badge), grouped by request, answered inline.
+  The installer pre-approves the project's Mandate tools in Claude Code (`mcp__mandate-<project>__*`) so the loop is not
+  interrupted by prompts.
+- **Strict flow** (opt-in, Settings → Agent flow, admins): the project installer then adds a Claude Code `PreToolUse` hook
+  (`mandate guard`, in the repo's `.claude/settings.local.json`) that refuses Edit, Write, MultiEdit and NotebookEdit unless
+  the agent holds a claimed work order with a step in progress (`flow_edit_allowed`). It needs a personal token and fails
+  open when Mandate cannot be reached.
 - **`/mandate-flow on|off|status`** (and `questions mandate|chat`) turns the flow on or off for your agent client, within
   the project policy an admin sets in Settings → Agent flow (*required*, *optional* or *off*). Only the agent changes it
   (Settings shows it read-only). With the flow off, the server refuses that agent's write tools (`flow_off`) and Mandate

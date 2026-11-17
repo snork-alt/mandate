@@ -27,6 +27,12 @@ import { useFeedback, useHistory, useSpec, useStandards } from '../lib/queries';
 import { categoryLabel, isStale, KIND_LABEL, PRIORITY_META, useNow, withFrontmatter } from '../lib/specs';
 import { CodeTouched, CommentCount, CommentList, GitPanel, SectionProgress, WorkOrderGitSummary, WorkOrderViewContext } from '../components/work-orders/parts';
 import { PlanSteps } from '../components/work-orders/PlanSteps';
+import { BlockChips } from '../components/questions/BlockChips';
+import { NO_ACCESS, QuestionCard } from '../components/questions/QuestionCard';
+import { useDecisionAccess } from '../lib/decisions';
+import { useOpenQuestions } from '../lib/questions';
+import { questionsBlockingWorkOrder } from '../lib/requestLinks';
+import '../components/questions/questions.css';
 import { WoSectionBadge } from '../components/work-orders/WoSection';
 import { plural } from '../lib/audits';
 import { SpecMaturityDot } from '../components/maturity/SpecMaturity';
@@ -53,6 +59,10 @@ export function WorkOrderPage() {
   const depsAt = useQuery({ queryKey: ['work-orders', id, 'deps', tracked.commit], queryFn: () => api.workOrder(id, tracked.commit!), enabled: !!tracked.commit });
   const standards = useStandards();
   const feedback = useFeedback();
+  const openQuestions = useOpenQuestions();
+  const access = useDecisionAccess();
+  const canAnswer = access.data?.canDecide ?? false;
+  const blocking = useMemo(() => questionsBlockingWorkOrder(openQuestions.data?.items ?? [], id), [openQuestions.data, id]);
   const r = query.data?.workOrder;
   const specFull = useSpec(r?.item.spec ?? '');
   const standardTitles = useMemo(() => new Map((standards.data ?? []).map((s) => [s.id, s.title])), [standards.data]);
@@ -193,6 +203,19 @@ export function WorkOrderPage() {
           </span>
         </div>
       </div>
+      {blocking.length > 0 && (
+        <div className="w-wo-questions" data-testid="wo-waiting-questions">
+          <h2 className="fb-h2">Waiting for you · {blocking.length}</h2>
+          <ul className="q-cards">
+            {blocking.map((x) => (
+              <li key={x.id}>
+                <BlockChips q={x} />
+                <QuestionCard q={x} canAnswer={canAnswer} reason={access.isPending ? 'Checking access…' : NO_ACCESS} />
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {item.note && (
         <blockquote className="q-note">
           <Markdown>{item.note}</Markdown>

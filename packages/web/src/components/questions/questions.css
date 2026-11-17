@@ -155,3 +155,14 @@
 .qa-sum-foot .q-continue { flex: 1 1 auto; min-width: 0; }
 .qa-sum-foot { flex-wrap: wrap; }
 .q-open-page { padding: 12px 16px 24px; max-width: 980px; }
+
+/* what a question blocks, and the "Waiting for you" inbox */
+.q-blocks { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; margin: 0 0 6px; }
+.q-block-chip { text-decoration: none; }
+.w-group { display: flex; flex-direction: column; gap: 10px; margin-bottom: 22px; }
+.w-group-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; }
+.w-group-title { font-weight: 600; color: var(--app-text); text-decoration: none; }
+.w-group-count { font-size: var(--mantine-font-size-xs); color: var(--app-text-muted); }
+.w-decisions { margin: 6px 0 0; padding-left: 18px; color: var(--app-text-muted); font-size: var(--mantine-font-size-sm); }
+.w-marker { display: inline-flex; align-items: center; gap: 4px; padding: 0 6px; border-radius: 6px; line-height: 18px; font-size: var(--mantine-font-size-xs); font-weight: 500; color: var(--mantine-color-orange-8); background: var(--mantine-color-orange-light); }
+[data-mantine-color-scheme='dark'] .w-marker { color: var(--mantine-color-orange-4); }
