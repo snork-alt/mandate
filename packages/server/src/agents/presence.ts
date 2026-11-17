@@ -2,7 +2,8 @@
  * Agent presence and handles of one project (memory only: it rebuilds from tool calls and event-stream connections).
  *
  * An agent is a CLIENT (news clients: `<login>/claude-code`, `claude-code/<key-name>`). Its state is
- *   online  - an event stream (SSE / channel) is connected, or it called a tool in the last PRESENCE_ACTIVE_MS,
+ *   online  - an event stream (SSE / channel) is connected, or it called a tool in the last PRESENCE_ACTIVE_MS
+ *             (`wakeable`: only with a stream; an MCP-only agent gets news on its next tool reply, it cannot be woken),
  *   busy    - it holds a (fresh) claim on a work order (with what),
  *   offline - otherwise.
  * Handles an `@mention` / `to` can use: the client id, the agent name seen on its calls / claims, its client slug
@@ -11,7 +12,8 @@
 import { isClaimStale, type WorkOrder } from '@mandate/shared';
 import { normaliseClient } from '../projects/settings.js';
 
-export const PRESENCE_ACTIVE_MS = 3 * 60_000;
+/** An agent that made an MCP request this recently is online (it may not be wakeable: see AgentView.wakeable). */
+export const PRESENCE_ACTIVE_MS = 5 * 60_000;
 
 export interface AgentInfo {
   id: string;
@@ -34,6 +36,8 @@ export interface AgentView {
   label: string;
   user?: string;
   state: AgentState;
+  /** An event stream (channel / hook) is connected: news wakes it. False: it only sees news on its next tool reply. */
+  wakeable: boolean;
   /** Open claims (work orders) while busy. */
   busyWith: { ref: string; summary: string }[];
   repos: string[];
@@ -104,6 +108,11 @@ export class AgentPresence {
     return [...out];
   }
 
+  /** An event stream is connected for this client (news is pushed and wakes an idle agent). */
+  isWakeable(id: string): boolean {
+    return (this.agents.get(id)?.streams ?? 0) > 0;
+  }
+
   /** Is `handle` a known agent / user of this project? */
   isHandle(handle: string): boolean {
     return this.resolve(handle).length > 0;
@@ -133,6 +142,7 @@ export class AgentPresence {
           label: a.user ? `${a.label} (${a.user})` : a.label,
           ...(a.user ? { user: a.user } : {}),
           state: busyWith.length && online ? 'busy' : online ? 'online' : busyWith.length ? 'busy' : 'offline',
+          wakeable: a.streams > 0,
           busyWith,
           repos: [...a.repos],
           lastSeen: new Date(a.lastSeen).toISOString(),
@@ -158,6 +168,7 @@ export function suggestAgent(views: AgentView[], repos: string[] = []): string |
   const idle = online.filter((v) => v.state === 'online');
   const onRepo = idle.find((v) => v.repos.some((r) => repos.includes(r)));
   if (onRepo) return onRepo.id;
-  if (idle.length) return idle[0]!.id;
+  // A wakeable agent (event stream) answers at once; an MCP-only one only at its next tool call.
+  if (idle.length) return (idle.find((v) => v.wakeable) ?? idle[0]!).id;
   return [...online].sort((x, y) => x.busyWith.length - y.busyWith.length)[0]!.id;
 }

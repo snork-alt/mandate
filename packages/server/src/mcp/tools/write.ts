@@ -45,7 +45,7 @@ import {
 } from '@mandate/shared';
 import { slugSchema } from '@mandate/doc';
 import { canonicalRef, extractRefs } from '@mandate/shared/refs';
-import { ANY, deliverAssigned } from '../../flow/assign.js';
+import { ANY, deliverAssigned, wakeableAny } from '../../flow/assign.js';
 import { newsOfProject } from '../../comments/route.js';
 import { z } from 'zod';
 import { DocWriteService, type DocKind } from '../../storage/doc-writes.js';
@@ -711,7 +711,7 @@ const requestTools: AnyToolDef[] = [
         return created;
       });
       const delivered = assignee && news ? await deliverAssigned(news, f, 'new') : [];
-      return { ...(await fbResult(ctx, f.id, commits)), ...(assignee ? { assignee, queued: assignee !== ANY && !news?.presence.isOnline(assignee), delivered } : {}) };
+      return { ...(await fbResult(ctx, f.id, commits)), ...(assignee ? { assignee, queued: assignee !== ANY && !news?.presence.isOnline(assignee), wakeable: wakeableAny(news, assignee, delivered), delivered } : {}) };
     },
   }),
   defineTool({

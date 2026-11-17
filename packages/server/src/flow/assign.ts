@@ -65,3 +65,10 @@ export async function catchUpAssigned(news: NewsService, client: string, list: (
   }
   return n;
 }
+
+/** Will an idle agent be woken by the assignment (an event stream is connected for it / one of the told agents)? Otherwise it sees the request on its next tool reply (flow_next {}). */
+export function wakeableAny(news: NewsService | null | undefined, assignee: string, delivered: string[]): boolean {
+  const p = news?.presence;
+  if (!p) return false;
+  return (assignee === ANY ? delivered : [assignee]).some((c) => p.isWakeable(c));
+}

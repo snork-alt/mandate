@@ -21,6 +21,7 @@ import { PUSH_ENV } from './channel.js';
 import { withoutMandateRules } from './claude-flow.js';
 import { BIN, type Ctx } from './context.js';
 import { change, jsonGet, jsonRemove, jsonSet, readText, type Change } from './edits.js';
+import { resolveToken } from './events.js';
 import { readManifest } from './wiring.js';
 
 export type PushMode = 'channels' | 'rewake' | 'off';

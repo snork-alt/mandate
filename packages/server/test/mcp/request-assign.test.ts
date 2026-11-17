@@ -143,6 +143,12 @@ describe('plan only', () => {
     const claim = await fx.call('work_order_claim', { agent: AGENT, ref: wo.ref });
     expect(claim.isError).toBe(true);
     expect(claim.body.error.code).toBe('plan_not_approved');
+    // work_order_next does not take it either (consistent reason), and nothing got claimed.
+    const nxt = await fx.call('work_order_next', { agent: AGENT, spec });
+    expect(nxt.isError).toBe(false);
+    expect(nxt.body.workOrder).toBeNull();
+    expect(nxt.body.skipped).toEqual([{ id: wo.ref.split('/').pop(), reason: expect.stringContaining('plan_not_approved') }]);
+    expect((await read('work_order_get', { ref: wo.ref })).claim ?? null).toBeNull();
     // Only the UI approves.
     expect((await run('request_plan_approve', { ref: id }, agent('ada'))).isError).toBe(true);
     const before = (await unread('ada')).length;
@@ -154,5 +160,30 @@ describe('plan only', () => {
     expect((await fx.call('work_order_claim', { agent: AGENT, ref: wo.ref })).isError).toBe(false);
     // Not plan-only anymore: approving again is refused.
     expect((await run('request_plan_approve', { ref: id }, ui())).body.error.code).toBe('not_plan_only');
+  });
+});
+
+describe('presence: MCP-only agents', () => {
+  it('an agent that only made an MCP call is online but not wakeable; a stream makes it wakeable; "any" requests reach it as news and flow_next {}', async () => {
+    const p = news().presence;
+    const c = { id: 'mia/claude-code', label: 'Claude Code', client: 'claude-code', user: 'mia' };
+    p.note(c);
+    expect(p.isOnline(c.id)).toBe(true);
+    expect(p.isWakeable(c.id)).toBe(false);
+    expect(p.isOnline(c.id, Date.now() + 4 * 60_000)).toBe(true); // 5 minute window
+    expect(p.isOnline(c.id, Date.now() + 6 * 60_000)).toBe(false);
+    expect(p.list([]).find((v) => v.id === c.id)).toMatchObject({ state: 'online', wakeable: false });
+    const r = await create({ assignee: 'any', body: 'Anyone: add a logout button' });
+    expect(r.wakeable).toBe(false);
+    expect(r.delivered).toContain(c.id);
+    expect((await unread('mia')).some((i) => i.ref === `mandate://requests/${r.request.id}`)).toBe(true);
+    const list = await run('flow_next', {}, agent('mia'));
+    expect(list.body.requests.find((x: any) => x.request === `mandate://requests/${r.request.id}`)).toMatchObject({ queued: true, assignee: 'any' });
+    const close = p.open(c);
+    expect(p.list([]).find((v) => v.id === c.id)).toMatchObject({ wakeable: true });
+    const r2 = await create({ assignee: 'any', body: 'Anyone: add a login button' });
+    expect(r2.wakeable).toBe(true);
+    close();
+    expect(p.isWakeable(c.id)).toBe(false);
   });
 });

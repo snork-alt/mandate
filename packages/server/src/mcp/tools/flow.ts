@@ -5,7 +5,7 @@
  */
 import { isClaimStale, replayComments, type CommentThread, type StoredSpec } from '@mandate/shared';
 import { z } from 'zod';
-import { ANY, assignedSummary, deliverAssigned, mayStart } from '../../flow/assign.js';
+import { ANY, assignedSummary, deliverAssigned, mayStart, wakeableAny } from '../../flow/assign.js';
 import { requestAssignInputSchema, requestPlanApproveInputSchema } from '@mandate/shared';
 import { flowAll, flowFor, type FlowItem, type FlowSnapshot } from '../../flow/next.js';
 import { clientIdentity } from '../../projects/settings.js';
@@ -129,7 +129,7 @@ Example: {"ref":"fb-0007","assignee":"any"}`,
         return ctx.storage.feedbackService.assign(id, assignee, { agent: c.agent, trailers: { ...c.trailers }, onCommit: (sha: string) => commits.push(sha) });
       });
       const delivered = news ? await deliverAssigned(news, f, 'reassigned') : [];
-      return { ref: `mandate://requests/${id}`, commit: commits.at(-1) ?? null, commits, warnings: [], assignee, queued: assignee !== ANY && !news?.presence.isOnline(assignee), delivered };
+      return { ref: `mandate://requests/${id}`, commit: commits.at(-1) ?? null, commits, warnings: [], assignee, queued: assignee !== ANY && !news?.presence.isOnline(assignee), wakeable: wakeableAny(news, assignee, delivered), delivered };
     },
   }),
   defineTool({
