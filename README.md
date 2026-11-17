@@ -81,8 +81,8 @@ it, the standards it follows and the code it owns.
 
 The Overview answers "how far along are we, and what is waiting on me?". The maturity bar shows every spec on the ladder
 *Draft → Specified → In progress → Implemented → Verified → Audited*, with overlays for **failing**, **drifted**,
-**blocked** and **stale**. **Action needed** collects every human decision in one list: open questions from agents, feedback
-to accept or reject, waivers, stale claims, drifted done specs, contradicted audits and integrity issues. **In progress**
+**blocked** and **stale**. **Action needed** collects every human decision in one list: open questions from agents,
+legacy waivers, draft standards, stale claims, drifted done specs, contradicted audits and integrity issues. **In progress**
 shows claimed work orders with their branches and heartbeats; **Health** shows verification and audit coverage.
 
 Agents ask you questions **asynchronously** (`question_ask`): they keep working on what doesn't depend on the answer, and
@@ -117,14 +117,14 @@ and the agent reconciles the spec and components with what was actually built.
 
 ### Audits and lineage
 
-<img src="docs/media/lineage.gif" alt="An audit with failing findings, then its lineage: findings, the fix work order and the feedback it produced, and the story timeline" />
+<img src="docs/media/lineage.gif" alt="An audit with failing findings, then its lineage: findings, the fix work order and the request it produced, and the story timeline" />
 
 An **audit** checks a spec (or a standard) against the code, item by item, with evidence. Findings that are code deviations
 become **fix work orders** (`audit_findings_to_work_orders`); findings that show the spec itself is ambiguous become
-feedback on the spec.
+requests on the spec.
 
 **Lineage** answers "why does this exist?" and "what did it lead to?" for any element: specs, sections, standards,
-components, work orders, feedback, audits and findings, verifications, commits, PRs and code. Every MCP write accepts a
+components, work orders, requests, audits and findings, verifications, commits, PRs and code. Every MCP write accepts a
 `cause`, recorded in commit trailers and a `caused_by` graph edge, so the chain is captured at write time, not
 reconstructed later. The Lineage page draws it as a graph (causes above, effects below) or as a timeline, with time travel
 to any commit or date. Before a change, `blast_radius` lists what it would hit: dependent specs, followers of a standard,
@@ -259,17 +259,21 @@ accounts (`mandate key create <project> --service <name>`).
 Ask your agent for what you want, e.g. *"add remember-me to login"*. One **master skill** (installed for every agent; the
 MCP server's instructions carry the same rules for agents without it) runs the flow:
 
-- **Intake.** The request is recorded as feedback. `spec_match` finds where it fits (already covered, extend a section, a
-  new section or spec, or a cross-cutting rule for a standard). The agent shows you the plan and waits for your go, updates
-  the spec with acceptance criteria for every changed section, and opens a work order.
-- **Delivery.** The agent claims the work order, marks sections done as they land, records a verification per criterion,
-  reconciles the spec and components with what was built, and completes it through the done gate. If the spec is unclear,
-  it asks you (in chat or as a Mandate question) instead of guessing.
-- **`/mandate-flow on|off|status`** (and `approval on|off`) turns the flow on or off for your agent client, within the
-  project policy an admin sets in Settings → Agent flow (*required*, *optional* or *off*; approval *required* or
-  *optional*). Only the agent changes it (Settings shows it read-only). With the flow off, the server refuses that
-  agent's write tools (`flow_off`) and Mandate is read-only context; the agent saves the returned instructions to its
-  memory.
+- **Request.** Every instruction you give is recorded as a **request** (it needs no approval from you). `spec_match` finds
+  where it fits (already covered, extend a section, a new section or spec, or a cross-cutting rule for a standard). The
+  agent updates the spec (an acceptance criterion for every changed section) and the standards, then opens a **work order
+  that carries the full plan**: steps, files to change, the tests it will write (each mapped to the acceptance criteria it
+  proves) and risks. Only questions the agent raises itself (`question_ask`: standards, waivers, doubts) wait for your
+  answer, and it keeps working on whatever does not depend on it.
+- **Delivery.** The agent claims the work order, marks sections done as they land (the code it touched is copied onto the
+  spec section, which then reads "Implemented by" that work order), and records a passing verification per criterion that
+  names its test (the spec then reads "Proved by" that test). `work_order_complete` refuses until every acceptance
+  criterion the work order covers has a test-linked pass; completing it closes the request. If the spec is unclear, the
+  agent asks you instead of guessing.
+- **`/mandate-flow on|off|status`** (and `questions mandate|chat`) turns the flow on or off for your agent client, within
+  the project policy an admin sets in Settings → Agent flow (*required*, *optional* or *off*). Only the agent changes it
+  (Settings shows it read-only). With the flow off, the server refuses that agent's write tools (`flow_off`) and Mandate
+  is read-only context; the agent saves the returned instructions to its memory.
 - **`/mandate-bootstrap`** reverse-engineers an existing codebase into Mandate in three stages, each by a fresh agent:
   **extract** typed notes (kept in `~/.mandate/bootstrap/`, never in the repo), **distill** them into components, standards
   and specs (with your confirmation for every standard), and **review** the result against the code. Everything it writes
@@ -343,16 +347,18 @@ in memory only, so no SSH key is needed. `git.auth.method: "ssh"` uses `sshKeyPa
 
 ## Architecture
 
-- **Git is the database.** Every write is a commit with `Agent:`, `Mandate-User:` and `Work-Order:` trailers. Mandate pushes
+- **Git is the database.** Every write is a commit with `Agent:`, `Mandate-User:`, `Request:` and `Work-Order:` trailers. Mandate pushes
   in the background and never force-pushes.
 - **MCP is the only interface**, for agents and for the web UI, which is itself an MCP client. The UI session is
-  read-only except for human decisions (answering questions, accepting feedback, waivers, releasing stale claims), which
+  read-only except for human decisions (answering questions, rejecting requests, releasing stale claims), which
   go through the same write tools with the same gates and are attributed to you.
-- **Few tools by default.** Agents see the ~30 `core` tools (project info, `search` / `get` / `list`, the work-order
-  steps, feedback, verification, questions, `status_set`). `tools_enable { sets }` adds `intake`, `bootstrap`,
-  `review`, `lineage` or `admin` (the server sends `tools/list_changed`); clients that don't refresh their list can
-  use `…/p/<project>/mcp?tools=core,intake` or `?tools=all`. Any tool can be called by name even when it is not listed,
-  and the older per-type names (`spec_get`, `spec_status_set`, ...) still work.
+- **The request flow by default.** Agents see the ~47 `core` tools: project info, `search` / `get` / `list`, the request
+  tools (`request_create` ...), `spec_match`, the document edits (`create`, `section_insert`, links), the work-order
+  steps, verification, questions, `status_set`. `tools_enable { sets }` adds `bootstrap`, `review`, `lineage` or `admin`
+  (the server sends `tools/list_changed`); clients that don't refresh their list can use `…/p/<project>/mcp?tools=core,review`
+  or `?tools=all`. Any tool can be called by name even when it is not listed,
+  and the older names (`spec_get`, `spec_status_set`, `feedback_create` ...) still work. Requests were called feedback
+  before: `mandate://feedback/<id>` refs, `of: "feedback"`, `Feedback:` commit trailers and `feedback.jsonl` are still read.
 - **Strict by design.** Every call is validated: status transitions, the done gate on acceptance criteria, claim
   conflicts, link direction rules, append-only verifications. Errors carry codes an agent can act on.
 - **Indexes stay current.** Full-text, symbol and graph indexes update on every commit; embeddings are computed in the

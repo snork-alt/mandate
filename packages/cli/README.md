@@ -1,6 +1,6 @@
 # Mandate
 
-A local specification system for coding agents: specs, standards, work orders and feedback in git, served to your
+A local specification system for coding agents: specs, standards, work orders and requests in git, served to your
 coding agents over MCP, with a web UI.
 
 ```sh

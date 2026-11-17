@@ -207,25 +207,25 @@ exports[`opencode install / connect / uninstall > writes exactly these files, id
 
 exports[`skills and command templates > each command renders per agent format > claude-code 1`] = `
 "---
-description: "Turn the Mandate flow (or its approval checkpoint) on or off for this agent client, or show it. The project policy can override it."
-argument-hint: "on | off | status | approval on|off | questions mandate|chat"
+description: "Turn the Mandate flow on or off for this agent client, or show it. The project policy can override it."
+argument-hint: "on | off | status | questions mandate|chat"
 ---
 <!-- managed by mandate -->
-Load the current instructions for this command from Mandate: \`instructions_get {"name":"flow","args":"$ARGUMENTS","stubVersion":1}\`. Follow the returned \`text\`.
+Load the current instructions for this command from Mandate: \`instructions_get {"name":"flow","args":"$ARGUMENTS","stubVersion":2}\`. Follow the returned \`text\`.
 If that tool is missing or the Mandate server cannot be reached: stop and tell the user that Mandate is unreachable. Do not work from memory or from an older copy of these instructions.
-<!-- mandate-stub v1 -->
+<!-- mandate-stub v2 -->
 "
 `;
 
 exports[`skills and command templates > each command renders per agent format > codex 1`] = `
 "---
-description: "Turn the Mandate flow (or its approval checkpoint) on or off for this agent client, or show it. The project policy can override it."
-argument-hint: "on | off | status | approval on|off | questions mandate|chat"
+description: "Turn the Mandate flow on or off for this agent client, or show it. The project policy can override it."
+argument-hint: "on | off | status | questions mandate|chat"
 ---
 <!-- managed by mandate -->
-Load the current instructions for this command from Mandate: \`instructions_get {"name":"flow","args":"$ARGUMENTS","stubVersion":1}\`. Follow the returned \`text\`.
+Load the current instructions for this command from Mandate: \`instructions_get {"name":"flow","args":"$ARGUMENTS","stubVersion":2}\`. Follow the returned \`text\`.
 If that tool is missing or the Mandate server cannot be reached: stop and tell the user that Mandate is unreachable. Do not work from memory or from an older copy of these instructions.
-<!-- mandate-stub v1 -->
+<!-- mandate-stub v2 -->
 "
 `;
 
@@ -233,78 +233,78 @@ exports[`skills and command templates > each command renders per agent format > 
 "<!-- managed by mandate -->
 # Mandate flow on / off
 
-Load the current instructions for this command from Mandate: \`instructions_get {"name":"flow","args":"(the text after the command)","stubVersion":1}\`. Follow the returned \`text\`.
+Load the current instructions for this command from Mandate: \`instructions_get {"name":"flow","args":"(the text after the command)","stubVersion":2}\`. Follow the returned \`text\`.
 If that tool is missing or the Mandate server cannot be reached: stop and tell the user that Mandate is unreachable. Do not work from memory or from an older copy of these instructions.
-<!-- mandate-stub v1 -->
+<!-- mandate-stub v2 -->
 "
 `;
 
 exports[`skills and command templates > each command renders per agent format > gemini 1`] = `
 "# managed by mandate
-description = "Turn the Mandate flow (or its approval checkpoint) on or off for this agent client, or show it. The project policy can override it."
+description = "Turn the Mandate flow on or off for this agent client, or show it. The project policy can override it."
 prompt = """
-Load the current instructions for this command from Mandate: \`instructions_get {"name":"flow","args":"{{args}}","stubVersion":1}\`. Follow the returned \`text\`.
+Load the current instructions for this command from Mandate: \`instructions_get {"name":"flow","args":"{{args}}","stubVersion":2}\`. Follow the returned \`text\`.
 If that tool is missing or the Mandate server cannot be reached: stop and tell the user that Mandate is unreachable. Do not work from memory or from an older copy of these instructions.
-<!-- mandate-stub v1 -->
+<!-- mandate-stub v2 -->
 """
 "
 `;
 
 exports[`skills and command templates > each command renders per agent format > junie 1`] = `
 "---
-description: "Turn the Mandate flow (or its approval checkpoint) on or off for this agent client, or show it. The project policy can override it."
-argument-hint: "on | off | status | approval on|off | questions mandate|chat"
+description: "Turn the Mandate flow on or off for this agent client, or show it. The project policy can override it."
+argument-hint: "on | off | status | questions mandate|chat"
 ---
 <!-- managed by mandate -->
-Load the current instructions for this command from Mandate: \`instructions_get {"name":"flow","args":"$ARGUMENTS","stubVersion":1}\`. Follow the returned \`text\`.
+Load the current instructions for this command from Mandate: \`instructions_get {"name":"flow","args":"$ARGUMENTS","stubVersion":2}\`. Follow the returned \`text\`.
 If that tool is missing or the Mandate server cannot be reached: stop and tell the user that Mandate is unreachable. Do not work from memory or from an older copy of these instructions.
-<!-- mandate-stub v1 -->
+<!-- mandate-stub v2 -->
 "
 `;
 
 exports[`skills and command templates > each command renders per agent format > opencode 1`] = `
 "---
-description: "Turn the Mandate flow (or its approval checkpoint) on or off for this agent client, or show it. The project policy can override it."
-argument-hint: "on | off | status | approval on|off | questions mandate|chat"
+description: "Turn the Mandate flow on or off for this agent client, or show it. The project policy can override it."
+argument-hint: "on | off | status | questions mandate|chat"
 ---
 <!-- managed by mandate -->
-Load the current instructions for this command from Mandate: \`instructions_get {"name":"flow","args":"$ARGUMENTS","stubVersion":1}\`. Follow the returned \`text\`.
+Load the current instructions for this command from Mandate: \`instructions_get {"name":"flow","args":"$ARGUMENTS","stubVersion":2}\`. Follow the returned \`text\`.
 If that tool is missing or the Mandate server cannot be reached: stop and tell the user that Mandate is unreachable. Do not work from memory or from an older copy of these instructions.
-<!-- mandate-stub v1 -->
+<!-- mandate-stub v2 -->
 "
 `;
 
 exports[`skills and command templates > each command renders per agent format > vscode 1`] = `
 "---
-description: "Turn the Mandate flow (or its approval checkpoint) on or off for this agent client, or show it. The project policy can override it."
-argument-hint: "on | off | status | approval on|off | questions mandate|chat"
+description: "Turn the Mandate flow on or off for this agent client, or show it. The project policy can override it."
+argument-hint: "on | off | status | questions mandate|chat"
 ---
 <!-- managed by mandate -->
-Load the current instructions for this command from Mandate: \`instructions_get {"name":"flow","args":"\${input:args}","stubVersion":1}\`. Follow the returned \`text\`.
+Load the current instructions for this command from Mandate: \`instructions_get {"name":"flow","args":"\${input:args}","stubVersion":2}\`. Follow the returned \`text\`.
 If that tool is missing or the Mandate server cannot be reached: stop and tell the user that Mandate is unreachable. Do not work from memory or from an older copy of these instructions.
-<!-- mandate-stub v1 -->
+<!-- mandate-stub v2 -->
 "
 `;
 
 exports[`skills and command templates > each command renders per agent format 1`] = `
 [
   "---
-description: "Turn the Mandate flow (or its approval checkpoint) on or off for this agent client, or show it. The project policy can override it."
-argument-hint: "on | off | status | approval on|off | questions mandate|chat"
+description: "Turn the Mandate flow on or off for this agent client, or show it. The project policy can override it."
+argument-hint: "on | off | status | questions mandate|chat"
 ---
 <!-- managed by mandate -->
-Load the current instructions for this command from Mandate: \`instructions_get {"name":"flow","args":"$ARGUMENTS","stubVersion":1}\`. Follow the returned \`text\`.
+Load the current instructions for this command from Mandate: \`instructions_get {"name":"flow","args":"$ARGUMENTS","stubVersion":2}\`. Follow the returned \`text\`.
 If that tool is missing or the Mandate server cannot be reached: stop and tell the user that Mandate is unreachable. Do not work from memory or from an older copy of these instructions.
-<!-- mandate-stub v1 -->
+<!-- mandate-stub v2 -->
 ",
   "---
 description: "Reverse-engineer this codebase into Mandate (extract → distill → review). Forms: (none) · extract|distill|review [--run id] [--area path] · --resume · scope."
 argument-hint: "[extract|distill|review] [--run <id>] [--area <path>] [--resume] [scope…]"
 ---
 <!-- managed by mandate -->
-Load the current instructions for this command from Mandate: \`instructions_get {"name":"bootstrap","args":"$ARGUMENTS","stubVersion":1}\`. Follow the returned \`command\`, then \`text\` (the bootstrap procedure).
+Load the current instructions for this command from Mandate: \`instructions_get {"name":"bootstrap","args":"$ARGUMENTS","stubVersion":2}\`. Follow the returned \`command\`, then \`text\` (the bootstrap procedure).
 If that tool is missing or the Mandate server cannot be reached: stop and tell the user that Mandate is unreachable. Do not work from memory or from an older copy of these instructions.
-<!-- mandate-stub v1 -->
+<!-- mandate-stub v2 -->
 ",
 ]
 `;
@@ -312,7 +312,7 @@ If that tool is missing or the Mandate server cannot be reached: stop and tell t
 exports[`skills and command templates > two skills, open-format front matter, one source each 1`] = `
 "---
 name: mandate
-description: "Mandate working agreement. Use for EVERY feature request, change, bug fix or work order in a repository connected to Mandate: record the request as feedback, match it to specs, get approval if on, update specs, standards (with user confirmation) and components, create work orders, then implement, verify and reconcile."
+description: "Mandate working agreement. Use for EVERY feature request, change, bug fix or work order in a repository connected to Mandate: record it as a request (no approval), match it to specs, update specs, standards (with user confirmation) and components, create work orders, then implement, verify and reconcile."
 metadata:
   managed-by: mandate
 ---
@@ -321,17 +321,17 @@ metadata:
 
 # Mandate
 
-Mandate (MCP server \`mandate-<project>\`) holds this project's specs, standards, components, work orders and feedback.
+Mandate (MCP server \`mandate-<project>\`) holds this project's specs, standards, components, work orders and requests.
 Every feature request, change, bug fix or work order in a repository connected to Mandate follows its working agreement.
 
 **First, every task:** load the current working agreement from Mandate and follow it. It replaces any earlier copy,
 including notes in your memory:
 
-\`instructions_get {"name":"core","stubVersion":1}\`
+\`instructions_get {"name":"core","stubVersion":2}\`
 
 If that tool is missing or the Mandate server cannot be reached: stop and tell the user that Mandate is unreachable. Do not work from memory or from an older copy of these instructions.
 
-<!-- mandate-stub v1 -->
+<!-- mandate-stub v2 -->
 "
 `;
 
