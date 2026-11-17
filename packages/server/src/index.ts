@@ -250,6 +250,12 @@ process.on('SIGTERM', () => void shutdown());
 // Production: the built web UI on the same port (SPA fallback); dev has no web dir (Vite serves the UI).
 const webDir = resolveWebDir();
 if (webDir) registerStaticUi(app, webDir);
+else {
+  // Dev: Vite serves the UI on its own port. Browser pages the CLI opens on this server (the channel login approval)
+  // are sent there: the first configured UI origin, else MANDATE_UI_URL, else Vite's default.
+  const uiBase = (config.uiOrigins[0] ?? process.env.MANDATE_UI_URL ?? 'http://localhost:5173').replace(/\/+$/, '');
+  app.get('/cli-login', async (req, reply) => reply.redirect(`${uiBase}${req.url}`, 302));
+}
 await app.listen({ port: config.port, host: config.host });
 app.log.info(`projects: ${config.projects.map((p) => `${p.id} (${p.dataDir})`).join(', ')}; registry: ${config.projectsPath}; config: ${config.configPath}`);
 // The default project opens eagerly (index sync starts now); the others on first use.
