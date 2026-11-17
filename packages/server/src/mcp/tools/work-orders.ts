@@ -208,6 +208,10 @@ Example: {"id":"c-01jc..."}`,
 Example: {"target":"mandate://work-orders/wo-01jc..."}`,
     input: commentsListInputSchema,
     run: async (a, ctx) => {
+      if (!a.target) {
+        const mine = await ctx.storage.commentService.openAddressedTo(a.addressedTo!);
+        return { target: null, addressedTo: a.addressedTo, counts: { open: mine.length, openBlocking: mine.filter((t) => t.blocking).length, resolved: 0 }, threads: mine };
+      }
       const target = ctx.storage.commentService.canonical(a.target);
       const all = await ctx.storage.commentService.threads(target);
       const threads = a.includeResolved ? all : all.filter((t) => t.status === 'open');

@@ -160,7 +160,10 @@ export const commentReopenInputSchema = z.object({ id: commentRef }).strict();
 export const commentsListInputSchema = z
   .object({
     /** A work order (all its threads, section ones included) or one section. */
-    target: z.string().trim().min(1).max(400),
+    target: z.string().trim().min(1).max(400).optional(),
     includeResolved: z.boolean().default(false),
+    /** Without target: the open threads across the project addressed to this login (`to` or an @mention): the web "Waiting for you" inbox. */
+    addressedTo: z.string().trim().min(1).max(200).optional(),
   })
-  .strict();
+  .strict()
+  .refine((v) => !!v.target || !!v.addressedTo, 'give target (an object) or addressedTo (a login)');

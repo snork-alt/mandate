@@ -17,7 +17,6 @@ import { IntegrityPage } from './pages/IntegrityPage';
 import { QuestionPage } from './pages/QuestionPage';
 import { QuestionsListPage } from './pages/QuestionsListPage';
 import { WaitingPage } from './pages/WaitingPage';
-import { ActionsPage } from './pages/ActionsPage';
 
 /**
  * `/specs/<id>@<sha>#<section>` (a pasted versioned reference) opens that version read-only;
@@ -54,6 +53,15 @@ export function RequestsRedirect() {
   const { id } = useParams();
   const { search, hash } = useLocation();
   return <Navigate to={`/requests${id ? `/${id}` : ''}${search}${hash}`} replace />;
+}
+
+/** The old Actions page is part of Waiting for you: ?tab= / ?focus= deep links keep working (questions / waivers / drafts are the "Only you can do this" part, the rest is "Project health"). */
+export function ActionsRedirect() {
+  const { search } = useLocation();
+  const p = new URLSearchParams(search);
+  if (['questions', 'waivers', 'drafts'].includes(p.get('tab') ?? '')) p.delete('tab');
+  const q = p.toString();
+  return <Navigate to={`/waiting${q ? `?${q}` : ''}`} replace />;
 }
 
 /** The old Questions list: the inbox (`/waiting`); a filtered / answered view (any query) lands on the history list. */
@@ -127,7 +135,7 @@ export const projectRoutes: RouteObject[] = [
       { path: 'feedback/:id', element: <RequestsRedirect /> },
       { path: 'lineage', element: <LineagePage /> },
       { path: 'integrity', element: <IntegrityPage /> },
-      { path: 'actions', element: <ActionsPage /> },
+      { path: 'actions', element: <ActionsRedirect /> },
       { path: 'waiting', element: <WaitingPage /> },
       { path: 'waiting/history', element: <QuestionsListPage /> },
       { path: 'questions', element: <QuestionsRedirect /> },

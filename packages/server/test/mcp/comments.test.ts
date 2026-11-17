@@ -87,6 +87,17 @@ describe('routing', () => {
     expect(none.warnings.join()).toContain('not routed');
   });
 
+  it('comments_list { addressedTo }: the open threads across the project addressed to a login (the web Waiting for you inbox)', async () => {
+    const spec = `me-${Date.now().toString(36)}`;
+    await ok(null, 'spec_create', { id: spec, title: 'Inbox', summary: 's', sections: [{ id: 'a', title: 'A', summary: 's', body: 'b' }] });
+    const c = await ok(null, 'comment_add', { target: `mandate://specs/${spec}/sections/a`, body: 'Is this right, @zoe-reviewer?', to: '@zoe-reviewer' });
+    const r = await ok(null, 'comments_list', { addressedTo: 'zoe-reviewer' });
+    expect(r.threads.map((t: { id: string }) => t.id)).toContain(c.comment.id);
+    expect((await ok(null, 'comments_list', { addressedTo: 'nobody-here' })).threads).toEqual([]);
+    await ok(null, 'comment_resolve', { id: c.comment.id });
+    expect((await ok(null, 'comments_list', { addressedTo: 'zoe-reviewer' })).threads.map((t: { id: string }) => t.id)).not.toContain(c.comment.id);
+  });
+
   it('the responsible agent: claim holder of the work order; the request\'s agent', async () => {
     const spec = `rt-${Date.now().toString(36)}`;
     await ok(null, 'spec_create', { id: spec, title: 'Routing', summary: 's', sections: [{ id: 'a', title: 'A', summary: 's', body: 'b' }] });

@@ -350,7 +350,7 @@ export function Stuck({ o, now }: { o: ProjectOverview; now: number }) {
           />
           {extra > 0 && (
             <div className="ov-foot">
-              <Link to="/actions?focus=blocked">{plural(extra, 'more blocked item')}</Link>
+              <Link to="/waiting?focus=blocked">{plural(extra, 'more blocked item')}</Link>
             </div>
           )}
         </>

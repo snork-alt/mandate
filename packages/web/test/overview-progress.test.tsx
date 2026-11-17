@@ -159,7 +159,7 @@ describe('In progress tab', () => {
     expect(within(groups[0]!).getAllByTestId('pg-wo')).toHaveLength(2);
     expect(within(groups[0]!).getByText('3/7 sections done')).toBeTruthy();
     expect(within(groups[0]!).getByText('Write the coupon validation tests')).toBeTruthy();
-    expect(within(groups[0]!).getByText('Plan · 3 steps')).toBeTruthy();
+    expect(within(groups[0]!).getByText('Plan · 3 tasks')).toBeTruthy();
     expect(groups[0]!.textContent).toContain('feat/wo-118');
     // The stale claim row is flagged and offers Release claim.
     const stale = within(groups[1]!).getByTestId('pg-wo');

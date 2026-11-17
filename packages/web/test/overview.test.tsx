@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildRef, type DecisionsList, type ProjectOverview } from '@mandate/shared';
 import { installDom } from './dom';
 import { OverviewPage } from '../src/pages/OverviewPage';
-import { ActionsPage } from '../src/pages/ActionsPage';
+import { WaitingPage } from '../src/pages/WaitingPage';
 import { actionCount, groupRecent, pickTab } from '../src/lib/overview';
 import { eventTitle, groupEvents, groupTitle } from '../src/lib/activity';
 import { decisionPrompt, decisionsPrompt, itemPrompt } from '../src/lib/prompts';
@@ -106,7 +106,7 @@ function R({ path = '/', scheme = 'light' as 'light' | 'dark' }: { path?: string
         <MemoryRouter initialEntries={[path]}>
           <Routes>
             <Route path="/" element={<OverviewPage />} />
-            <Route path="/actions" element={<ActionsPage />} />
+            <Route path="/waiting" element={<WaitingPage />} />
           </Routes>
           <Loc />
         </MemoryRouter>
@@ -229,9 +229,9 @@ describe.each(['light', 'dark'] as const)('overview page (%s)', (scheme) => {
     expect(screen.getByTestId('tab-progress').textContent).toContain('1');
     expect(screen.queryByTestId('ov-decisions')).toBeNull();
     cleanup();
-    render(<R scheme={scheme} path="/actions" />);
+    render(<R scheme={scheme} path="/waiting" />);
     expect(await screen.findByTestId('apanel-waivers')).toBeTruthy();
-    expect(screen.getByText('5 pending')).toBeTruthy();
+    expect(screen.getByTestId('only-you')).toBeTruthy();
     fireEvent.click(screen.getByTestId('resolve-with-agent'));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(decisionsPrompt('')));
   });
@@ -244,17 +244,17 @@ describe.each(['light', 'dark'] as const)('overview page (%s)', (scheme) => {
     fireEvent.click(screen.getByTestId('tab-progress'));
     await waitFor(() => expect(localStorage.getItem('mandate.overview.tab.')).toBe('progress'));
     fireEvent.click(within(screen.getByTestId('ov-chips')).getByText('failing'));
-    await waitFor(() => expect(loc).toBe('/actions?focus=failing'));
+    await waitFor(() => expect(loc).toBe('/waiting?focus=failing'));
     expect(await screen.findByText(/Specs needing attention: failing/)).toBeTruthy();
     cleanup();
     render(<R scheme={scheme} path="/?tab=action&focus=stale" />);
-    await waitFor(() => expect(loc).toBe('/actions?focus=stale'));
+    await waitFor(() => expect(loc).toBe('/waiting?focus=stale'));
     await waitFor(() => expect(screen.getByTestId('atab-attention').getAttribute('aria-selected')).toBe('true'));
     expect(await screen.findByText(/Specs needing attention: stale/)).toBeTruthy();
   });
 
   it('item menu copies a one-item prompt; waivers have no direct action (approved by answering the approval question)', async () => {
-    render(<R scheme={scheme} path="/actions?tab=waivers" />);
+    render(<R scheme={scheme} path="/waiting?tab=waivers" />);
     const card = await screen.findByTestId('apanel-waivers');
     await within(card).findByText('Login with SSO (waiver)');
     expect(within(card).queryByTestId('item-primary')).toBeNull();
@@ -268,7 +268,7 @@ describe.each(['light', 'dark'] as const)('overview page (%s)', (scheme) => {
   it('server mode without write access: direct decisions are disabled, prompts still copy', async () => {
     data.canDecide = false;
     data.decisions = { items: [{ ref: buildRef({ kind: 'work-orders', id: 'q-0001' }), kind: 'stale_claim', title: 'q-0001', question: 'Release the claim?', options: [], context: 'claimed by codex; last heartbeat 3 h ago' }], total: 1, counts: { ...decisions().counts, waiver_pending: 0, stale_claim: 1 } };
-    render(<R scheme={scheme} path="/actions?tab=claims" />);
+    render(<R scheme={scheme} path="/waiting?tab=claims" />);
     const card = await screen.findByTestId('apanel-claims');
     await within(card).findByText('q-0001');
     await waitFor(() => expect((within(card).getByTestId('item-primary') as HTMLButtonElement).disabled).toBe(true));
@@ -315,13 +315,13 @@ describe.each(['light', 'dark'] as const)('overview page (%s)', (scheme) => {
     expect(await screen.findByText('No open integrity warnings ✓')).toBeTruthy();
     expect(screen.getByText('All criteria verified ✓')).toBeTruthy();
     cleanup();
-    render(<R scheme={scheme} path="/actions" />);
-    // Nothing pending: only the Questions tab, with its empty state.
-    expect(await screen.findByText('All questions answered')).toBeTruthy();
-    expect(screen.getByTestId('show-answered').getAttribute('href')).toBe('/waiting/history?tab=answered');
-    expect(screen.getAllByRole('tab').map((t) => t.getAttribute('data-testid'))).toEqual(['atab-questions']);
+    render(<R scheme={scheme} path="/waiting" />);
+    // Nothing pending: the "Only you can do this" part is empty; Project health is collapsed (no tabs).
+    expect(await screen.findByText('Nothing is waiting for you')).toBeTruthy();
+    expect(screen.queryByTestId('project-health')).toBeNull();
+    expect(screen.queryAllByRole('tab')).toHaveLength(0);
     cleanup();
-    render(<R scheme={scheme} path="/actions?tab=blocked" />);
+    render(<R scheme={scheme} path="/waiting?tab=blocked" />);
     expect(await screen.findByText('Nothing is blocked')).toBeTruthy();
     expect(screen.getAllByRole('tab')).toHaveLength(1);
   });
@@ -337,50 +337,42 @@ describe('Actions page tabs', () => {
   };
 
   it('one tab per kind with counts, empty tabs hidden, first with items selected; tab clicks and ?tab= / ?focus= deep links', async () => {
-    render(<R path="/actions" />);
+    render(<R path="/waiting" />);
+    // Waivers are approvals: they belong to "Only you can do this"; Project health is collapsed until opened (and not counted).
+    expect(await screen.findByTestId('apanel-waivers')).toBeTruthy();
+    expect(screen.queryByTestId('project-health')).toBeNull();
+    fireEvent.click(screen.getByTestId('health-toggle'));
     await waitFor(() => expect(screen.getByTestId('atab-blocked').getAttribute('aria-selected')).toBe('true'));
-    // Empty tabs are hidden (unless active); there is no Feedback or Overrides tab any more.
-    expect(screen.getAllByRole('tab').map((t) => t.getAttribute('data-testid'))).toEqual(['atab-blocked', 'atab-findings', 'atab-waivers', 'atab-attention']);
+    // Empty tabs are hidden (unless active); only health tabs are listed.
+    expect(screen.getAllByRole('tab').map((t) => t.getAttribute('data-testid'))).toEqual(['atab-blocked', 'atab-findings', 'atab-attention']);
     expect(screen.getByTestId('atab-findings').textContent).toContain('2');
-    expect(screen.getByTestId('atab-waivers').textContent).toContain('1');
+    expect(screen.queryByTestId('atab-waivers')).toBeNull();
     expect(screen.queryByTestId('atab-questions')).toBeNull();
     fireEvent.click(screen.getByTestId('atab-blocked'));
-    await waitFor(() => expect(loc).toBe('/actions?tab=blocked'));
+    await waitFor(() => expect(loc).toBe('/waiting?tab=blocked'));
     expect(await screen.findByText('Fix callback')).toBeTruthy();
     // The Blocked tab keeps its "Copy prompt for all"; the footer opens the other attention tabs.
     expect(within(screen.getByTestId('apanel-blocked')).getByTestId('copy-all')).toBeTruthy();
     fireEvent.click(screen.getByTestId('bk-other-drift'));
-    await waitFor(() => expect(loc).toBe('/actions?tab=drift'));
+    await waitFor(() => expect(loc).toBe('/waiting?tab=drift'));
     expect(await screen.findByTestId('act-empty-drift')).toBeTruthy();
     // An empty tab stays visible while active.
     expect(screen.getByTestId('atab-drift').getAttribute('aria-selected')).toBe('true');
     cleanup();
-    render(<R path="/actions?focus=blocked" />);
+    render(<R path="/waiting?focus=blocked" />);
     await waitFor(() => expect(screen.getByTestId('atab-blocked').getAttribute('aria-selected')).toBe('true'));
     cleanup();
-    render(<R path="/actions?tab=claims" />);
+    render(<R path="/waiting?tab=claims" />);
     expect(await screen.findByTestId('act-empty-claims')).toBeTruthy();
     expect(screen.getByTestId('atab-claims').getAttribute('aria-selected')).toBe('true');
     cleanup();
-    render(<R path="/actions?focus=findings" />);
+    render(<R path="/waiting?focus=findings" />);
     await waitFor(() => expect(screen.getByTestId('atab-findings').getAttribute('aria-selected')).toBe('true'));
-  });
-
-  it('Questions tab: first when there are questions, grouped answer cards with the summary and Answer all recommended', async () => {
-    data.decisions = withKinds([{ ref: ask.uri, kind: 'question', title: 'Auth method', question: 'Which login method?', options: [], ask }, ...decisions().items]);
-    render(<R path="/actions" />);
-    await waitFor(() => expect(screen.getByTestId('atab-questions').getAttribute('aria-selected')).toBe('true'));
-    const panel = screen.getByTestId('apanel-questions');
-    expect(within(panel).getByTestId('q-open-groups')).toBeTruthy();
-    expect(within(panel).getByTestId('question-ask-0001')).toBeTruthy();
-    expect(within(panel).getByTestId('q-summary').textContent).toBe('1 request from 1 agent · 1 blocking');
-    expect(within(panel).getAllByTestId('q-answer-all').length).toBeGreaterThan(0);
-    expect(panel.querySelector('.ov-card')).toBeNull();
   });
 
   it('Blocked tab: grouped by blocker by default (unblock count, start-work prompt), by spec on request, remembered', async () => {
     window.localStorage.clear();
-    render(<R path="/actions?tab=blocked" />);
+    render(<R path="/waiting?tab=blocked" />);
     const panel = await screen.findByTestId('apanel-blocked');
     expect(within(panel).getByTestId('bk-by-blocker')).toBeTruthy();
     expect(within(panel).getByTestId('bk-unblocks').textContent).toContain('unblocks 1');
@@ -391,7 +383,7 @@ describe('Actions page tabs', () => {
     expect(within(panel).getByTestId('bk-sgroup').textContent).toContain('Login with SSO');
     expect(window.localStorage.getItem('mandate.actions.blockedGrouping')).toBe('spec');
     cleanup();
-    render(<R path="/actions?tab=blocked" />);
+    render(<R path="/waiting?tab=blocked" />);
     expect(await screen.findByTestId('bk-by-spec')).toBeTruthy();
     window.localStorage.clear();
   });
@@ -401,7 +393,7 @@ describe('Actions page tabs', () => {
     const F = `${buildRef({ kind: 'audits', id: 'a-1' })}/findings/f1`;
     o.mustFindingSpecs = [{ ...o.mustFindingSpecs[0]!, auditTitle: 'Security audit', auditor: { agent: 'codex' }, auditAt: new Date().toISOString(), findings: [{ uri: F, title: 'Webhooks are not signature-checked', description: 'POST /webhooks accepts any body.', ref: buildRef({ kind: 'specs', id: 'login-sso', sectionId: 'callback' }), codeRefs: [] }] }];
     data.overview = o;
-    render(<R path="/actions?tab=findings" />);
+    render(<R path="/waiting?tab=findings" />);
     const panel = await screen.findByTestId('apanel-findings');
     const row = await within(panel).findByTestId('fd-row');
     expect(row.textContent).toContain('Webhooks are not signature-checked');
@@ -411,14 +403,14 @@ describe('Actions page tabs', () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(expect.stringContaining('audit_findings_to_work_orders')));
     cleanup();
     data.overview = { ...fullOverview(), mustFindingSpecs: [], attention: { ...fullOverview().attention, mustFindings: 0 } };
-    render(<R path="/actions?tab=findings" />);
+    render(<R path="/waiting?tab=findings" />);
     expect(await screen.findByText('No open must findings')).toBeTruthy();
     expect(screen.getByTestId('open-audits').getAttribute('href')).toBe('/audits');
   });
 
   it('Claims tab: Release claim on a stale claim row records it through work_order_release', async () => {
     data.decisions = withKinds([{ ref: WO, kind: 'stale_claim', title: 'q-0001 Implement Login', question: 'Release?', options: [], context: 'claimed by claude-code@mbp; last heartbeat 2h ago' }]);
-    render(<R path="/actions?focus=claims" />);
+    render(<R path="/waiting?focus=claims" />);
     const panel = await screen.findByTestId('apanel-claims');
     const row = await within(panel).findByTestId('act-row-stale_claim');
     fireEvent.click(within(row).getByTestId('item-primary'));

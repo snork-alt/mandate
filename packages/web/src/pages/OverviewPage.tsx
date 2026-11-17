@@ -113,7 +113,7 @@ function OverviewSkeleton() {
 /**
  * Project landing: a compact header (name, maturity bar, attention chips) and two tabs: "In progress" (default) and
  * "Health". The tab lives in `?tab=` and is remembered per project. What the user has to act on is the Actions page
- * (/actions; the old `?tab=action` redirects there, attention chips open it).
+ * (/waiting, "Project health"; the old `?tab=action` redirects there, attention chips open it).
  */
 export function OverviewPage() {
   const now = useNow();
@@ -175,7 +175,7 @@ export function OverviewPage() {
   }, [focus, tab]);
 
   // Old links to the "Action needed" tab.
-  if (legacyAction) return <Navigate to={`/actions${focus ? `?focus=${focus}` : ''}`} replace />;
+  if (legacyAction) return <Navigate to={`/waiting${focus ? `?focus=${focus}` : ''}`} replace />;
   if (q.isPending) {
     return (
       <>
@@ -222,7 +222,7 @@ export function OverviewPage() {
             onPick={(key) => {
               const t = CHIP_TARGET[key];
               if (!t) return;
-              if (t.tab === 'actions') void navigate(`/actions?focus=${t.focus}`);
+              if (t.tab === 'actions') void navigate(`/waiting?focus=${t.focus}`);
               else select(t.tab, t.focus);
             }}
           />

@@ -77,6 +77,13 @@ export class CommentService {
     return p.sectionId || p.step ? all.filter((x) => targetBase(x.target) === t) : all.filter((x) => targetsDoc(x.target, t));
   }
 
+  /** Open threads anywhere in the project addressed to a login (`to`, with or without @) or @mentioning it. */
+  async openAddressedTo(login: string): Promise<CommentThread[]> {
+    const me = login.replace(/^@/, '').toLowerCase();
+    const hit = (m: { to?: string; mentions?: string[] }) => (m.to && m.to.replace(/^@/, '').toLowerCase() === me) || (m.mentions ?? []).some((x) => x.replace(/^@/, '').toLowerCase() === me);
+    return replayComments(await this.lines()).filter((t) => t.status === 'open' && [t, ...t.replies].some(hit));
+  }
+
   /** The work order (id) a target belongs to, if any. */
   private workOrderOf(target: string): string | null {
     const r = parseCommentTarget(target);

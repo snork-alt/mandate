@@ -298,7 +298,7 @@ function QuestionsTab({ items }: { items: Decision[] }) {
   );
 }
 
-function DecisionTab({ t, items, counts }: { t: TabDef; items: Decision[]; counts: DecisionsList["counts"] }) {
+export function DecisionTab({ t, items, counts }: { t: TabDef; items: Decision[]; counts: DecisionsList["counts"] }) {
   const groups = (t.kinds ?? []).map((k) => ({ k, items: items.filter((d) => d.kind === k) })).filter((g) => g.items.length);
   const listed = groups.reduce((n, g) => n + g.items.length, 0);
   const total = (t.kinds ?? []).reduce((n, k) => n + (counts[k] ?? 0), 0);
@@ -346,15 +346,21 @@ export function ActionTabs({
   o,
   q,
   projectId,
+  only,
 }: {
   o: ProjectOverview;
   q: { data?: DecisionsList; isPending: boolean; error: unknown };
   projectId: string;
+  /** Show only these tabs (the "Project health" part of Waiting for you); default all. */
+  only?: ActionTabKey[];
 }) {
   const [params, setParams] = useSearchParams();
   const focus = (params.get("focus") ?? undefined) as AttentionFocus | undefined;
   const counts = tabCounts(o, q.data);
-  const tab = pickActionTab(params.get("tab"), focus, counts);
+  const allowed = (k: ActionTabKey) => !only || only.includes(k);
+  const urlTab = params.get("tab");
+  const picked = pickActionTab(urlTab, focus, only ? (Object.fromEntries(Object.entries(counts).map(([k, n]) => [k, allowed(k as ActionTabKey) ? n : 0])) as typeof counts) : counts);
+  const tab = allowed(picked) ? picked : (only![0] as ActionTabKey);
   const select = (t: ActionTabKey) =>
     setParams(
       (p) => {
@@ -365,7 +371,7 @@ export function ActionTabs({
       { replace: true },
     );
   const items = q.data?.items ?? [];
-  const shown = ACTION_TABS.filter((t) => counts[t.key] > 0 || t.key === tab);
+  const shown = ACTION_TABS.filter((t) => allowed(t.key) && (counts[t.key] > 0 || t.key === tab));
   // Blocked footer: the tabs holding a spec's other reasons for attention (failing / stale specs only when listed).
   const otherTabs = (["findings", "drift", "claims", "attention"] as const)
     .filter((k) => k !== "attention" || counts.attention > 0)
@@ -561,7 +567,7 @@ export function AttentionSpecs({
       action={
         <>
           {filter && (
-            <Link to="/actions?tab=attention" className="ov-more" replace>
+            <Link to="/waiting?tab=attention" className="ov-more" replace>
               Show all
             </Link>
           )}

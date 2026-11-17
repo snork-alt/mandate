@@ -316,7 +316,7 @@ describe('questions in the Ask pane', () => {
 });
 
 describe('sidebar', () => {
-  it('Waiting for you: open-questions badge, links to /waiting; Actions: open decisions; Overview: no badge', async () => {
+  it('Waiting for you: badge of what only you can do, links to /waiting; no Actions item; Overview: no badge', async () => {
     openCount = 3;
     render(
       <MantineProvider>
@@ -337,10 +337,8 @@ describe('sidebar', () => {
     await waitFor(() => expect(calls.some((c) => c.name === 'list' && c.args.of === 'decisions')).toBe(true));
     expect((await within(item).findByTestId('nav-waiting')).textContent).toBe('3');
     expect(within(screen.getByTestId('nav-overview')).queryByTestId('nav-waiting')).toBeNull();
-    // Actions (right below Overview): the open decisions total; Overview has no badge.
-    const actions = screen.getByTestId('nav-actions-item');
-    expect(actions.previousElementSibling).toBe(screen.getByTestId('nav-overview'));
-    expect((await within(actions).findByTestId('nav-actions')).textContent).toBe('3');
+    // The Actions page was merged into Waiting for you: no Actions item; Overview has no badge.
+    expect(screen.queryByTestId('nav-actions-item')).toBeNull();
     expect(screen.getByTestId('nav-overview').querySelector('.nav-count-alert')).toBeNull();
     fireEvent.click(item);
     expect(await screen.findByTestId('questions-route')).toBeTruthy();

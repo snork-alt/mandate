@@ -123,11 +123,11 @@ const fb = (o: Partial<Feedback> = {}): Feedback => ({ id: 'fb-0042', kind: 'imp
 describe('Request page: live progress', () => {
   it('stages derive from the request and flow_next', () => {
     const f = fb({ specMatch: { at: 'x', by: 'a', refs: [] }, changes: [{ commit: 'c' } as never] });
-    const flow: FlowState = { state: 'steps', next: null, done: false, progress: { workOrder: 'wo-1', kind: 'implement', status: 'in_progress', steps: [{ id: 's1', text: 'a', status: 'done' }, { id: 's2', text: 'b', status: 'in_progress' }, { id: 's3', text: 'c', status: 'pending' }], sections: { total: 2, done: 0 }, criteria: { total: 2, proved: 0 } } };
+    const flow: FlowState = { state: 'steps', next: null, done: false, progress: { workOrder: 'wo-1', kind: 'implement', status: 'in_progress', tasks: [{ id: 's1', text: 'a', status: 'done' }, { id: 's2', text: 'b', status: 'in_progress' }, { id: 's3', text: 'c', status: 'pending' }], sections: { total: 2, done: 0 }, criteria: { total: 2, proved: 0 } } };
     const s = requestStages(f, flow);
     expect(s.map((x) => x.status)).toEqual(['done', 'done', 'done', 'done', 'active', 'todo']);
-    expect(s[3]!.detail).toBe('3 steps');
-    expect(s[4]!.detail).toBe('step 2 of 3');
+    expect(s[3]!.detail).toBe('3 tasks');
+    expect(s[4]!.detail).toBe('task 2 of 3');
     expect(s[5]!.detail).toBe('0 of 2 criteria');
     expect(requestStages(fb({ status: 'closed' }), undefined).every((x) => x.status === 'done')).toBe(true);
     expect(requestStages(fb(), undefined).map((x) => x.status)).toEqual(['done', 'active', 'todo', 'todo', 'todo', 'todo']);
@@ -143,7 +143,7 @@ describe('Request page: live progress', () => {
   });
 
   it('plan ready: Approve plan & implement is the only action and calls request_plan_approve', async () => {
-    FLOW = { state: 'plan_ready', next: null, done: true, progress: { workOrder: 'wo-1', kind: 'implement', status: 'pending', steps: [{ id: 's1', text: 'Write it', status: 'pending' }], sections: { total: 1, done: 0 }, criteria: { total: 1, proved: 0 } } };
+    FLOW = { state: 'plan_ready', next: null, done: true, progress: { workOrder: 'wo-1', kind: 'implement', status: 'pending', tasks: [{ id: 's1', text: 'Write it', status: 'pending' }], sections: { total: 1, done: 0 }, criteria: { total: 1, proved: 0 } } };
     wrap(<RequestProgress f={fb({ planOnly: true, startedBy: 'ada/claude-code', assignee: 'ada/claude-code', changes: [{ commit: 'c' } as never], specMatch: { at: 'x', by: 'a', refs: [] } })} workOrderIds={['wo-1']} />);
     const btn = await screen.findByTestId('rq-approve-plan');
     expect(screen.getByText('Plan ready — review')).toBeTruthy();

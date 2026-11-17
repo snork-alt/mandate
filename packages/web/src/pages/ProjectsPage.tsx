@@ -193,7 +193,7 @@ function ProjectCard({ p, isDefault, isLast, canAddRepos }: { p: ProjectSummary;
               data-testid={`actions-${p.id}`}
               onClick={(e) => {
                 stop(e);
-                goTo(`${projectBase(p.id)}/actions`);
+                goTo(`${projectBase(p.id)}/waiting`);
               }}
             >
               <IconAlertTriangle size={12} /> {actions} open action{actions === 1 ? '' : 's'}

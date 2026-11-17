@@ -75,7 +75,7 @@ describe('pure helpers', () => {
   it('blockTarget names what is blocked', () => {
     expect(blockTarget('mandate://requests/fb-0003')).toMatchObject({ kind: 'request', href: '/requests/fb-0003', label: 'fb-0003' });
     expect(blockTarget('mandate://work-orders/wo-1')).toMatchObject({ kind: 'work-order', href: '/work-orders/wo-1' });
-    expect(blockTarget('mandate://work-orders/wo-1/steps/s2')).toMatchObject({ kind: 'step', href: '/work-orders/wo-1', label: 'step s2 of wo-1' });
+    expect(blockTarget('mandate://work-orders/wo-1/steps/s2')).toMatchObject({ kind: 'step', href: '/work-orders/wo-1', label: 'task s2 of wo-1' });
     expect(blockTarget('mandate://specs/login/sections/session')).toMatchObject({ kind: 'section', href: '/specs/login' });
   });
   it('questions are grouped by request; waiting / blocked sets are derived from open questions only', () => {
@@ -125,7 +125,7 @@ describe('Waiting for you inbox', () => {
     mount();
     const groups = await screen.findAllByTestId('waiting-group');
     expect(groups.map((g) => g.getAttribute('data-request'))).toEqual(['fb-0001', 'fb-0002', '~none']);
-    expect(within(groups[1]!).getByTestId('q-blocks').textContent).toMatch(/step s1 of wo-3/);
+    expect(within(groups[1]!).getByTestId('q-blocks').textContent).toMatch(/task s1 of wo-3/);
     expect(within(groups[2]!).getByTestId('q-blocks').textContent).toMatch(/Blocks nothing/);
     // Inline answer: the recommended option is preselected; submit records it.
     const card = within(groups[0]!).getByTestId('waiting-question');

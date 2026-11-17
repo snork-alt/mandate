@@ -2,7 +2,7 @@ import { ActionIcon, AppShell, Box, Burger, Group, ScrollArea, Text, Tooltip, Un
 import { useEffect } from 'react';
 import { useDisclosure, useMediaQuery } from '@mantine/hooks';
 import { installCopyHotkeys } from './copy';
-import { IconChecklist, IconGitMerge, IconLayoutDashboard, IconMessageQuestion, IconMoon, IconPlugConnected, IconSearch, IconSun } from '@tabler/icons-react';
+import { IconGitMerge, IconLayoutDashboard, IconMessageQuestion, IconMoon, IconPlugConnected, IconSearch, IconSun } from '@tabler/icons-react';
 import { NavLink, Outlet } from 'react-router';
 import { useEntityList } from '../lib/queries';
 import { SECTIONS, type SectionDef } from '../sections';
@@ -21,8 +21,7 @@ import { AccessBadge } from '../connect/AccessBadge';
 import { useProjects } from '../connect/projects';
 import { ConnectAgentModal, registerConnectAgentOpener } from '../connect/ConnectAgentModal';
 import { UserFooter } from '../connect/UserFooter';
-import { useDecisions } from '../lib/decisions';
-import { actionCount, useOverview } from '../lib/overview';
+import { useWaitingCounts } from '../lib/waiting';
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
 
@@ -38,29 +37,14 @@ function NavItem({ section, onClick }: { section: SectionDef; onClick: () => voi
   );
 }
 
-/** Open decisions (everything on the Actions page's decisions card), on the Actions item. */
-function ActionsCount() {
-  const decisions = useDecisions(50).data?.total ?? 0;
-  const o = useOverview().data;
-  // The Actions page total (every tab: decisions, blocked, must findings, specs); decisions alone until the overview loads.
-  const n = o ? actionCount(o, decisions) : decisions;
-  if (!n) return <span className="nav-count" />;
-  return (
-    <Tooltip label={`${n} item${n === 1 ? '' : 's'} waiting for you`} openDelay={300} withinPortal>
-      <span className="nav-count nav-count-alert" data-testid="nav-actions" aria-label={`${n} open action${n === 1 ? '' : 's'}`}>
-        {n}
-      </span>
-    </Tooltip>
-  );
-}
-
-/** Open questions from coding agents, on the "Waiting for you" item (same query as the Overview's decisions card). */
+/** What only the user can do (questions, approvals, plans to approve, comments to them), on the "Waiting for you" item; project health is not counted. */
 function WaitingCount() {
-  const n = useDecisions(50).data?.counts.question ?? 0;
+  const c = useWaitingCounts();
+  const n = c.total;
   if (!n) return <span className="nav-count" />;
   return (
-    <Tooltip label={`${n} open question${n === 1 ? '' : 's'} from coding agents`} openDelay={300} withinPortal>
-      <span className="nav-count nav-count-alert" data-testid="nav-waiting" aria-label={`${n} open question${n === 1 ? '' : 's'}`}>
+    <Tooltip label={`${n} thing${n === 1 ? '' : 's'} only you can do (questions, approvals, plans, comments)`} openDelay={300} withinPortal>
+      <span className="nav-count nav-count-alert" data-testid="nav-waiting" aria-label={`${n} item${n === 1 ? '' : 's'} waiting for you`}>
         {n}
       </span>
     </Tooltip>
@@ -132,11 +116,6 @@ function AppLayoutShell() {
               <IconLayoutDashboard size={16} stroke={1.7} className="nav-icon" />
               <span>Overview</span>
               <span className="nav-count" />
-            </NavLink>
-            <NavLink to="/actions" onClick={close} className="nav-item" data-testid="nav-actions-item">
-              <IconChecklist size={16} stroke={1.7} className="nav-icon" />
-              <span>Actions</span>
-              <ActionsCount />
             </NavLink>
             {SECTIONS.map((section) => (
               <NavItem key={section.kind} section={section} onClick={close} />

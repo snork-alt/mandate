@@ -166,3 +166,4 @@
 .w-decisions { margin: 6px 0 0; padding-left: 18px; color: var(--app-text-muted); font-size: var(--mantine-font-size-sm); }
 .w-marker { display: inline-flex; align-items: center; gap: 4px; padding: 0 6px; border-radius: 6px; line-height: 18px; font-size: var(--mantine-font-size-xs); font-weight: 500; color: var(--mantine-color-orange-8); background: var(--mantine-color-orange-light); }
 [data-mantine-color-scheme='dark'] .w-marker { color: var(--mantine-color-orange-4); }
+.w-health-toggle { display: flex; align-items: center; gap: 6px; margin: 24px 0 8px; padding: 6px 0; background: none; border: 0; color: inherit; font: inherit; font-weight: 600; cursor: pointer; }
