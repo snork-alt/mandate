@@ -107,3 +107,14 @@ describe('audit_request', () => {
     expect(await queueAuditAfterWorkOrder(agent('ada', memorySettings({ auditAfterWorkOrder: 'on' })), wo.id, {})).toBeNull();
   });
 });
+
+describe('policy patch', () => {
+  it('accepts auditAfterWorkOrder off | on and rejects anything else', async () => {
+    const { policyPatchSchema } = await import('../../src/projects/settings.js');
+    expect(policyPatchSchema.parse({ auditAfterWorkOrder: 'on' })).toEqual({ auditAfterWorkOrder: 'on' });
+    expect(() => policyPatchSchema.parse({ auditAfterWorkOrder: 'sometimes' })).toThrow();
+    const s = memorySettings();
+    await s.setPolicy({ auditAfterWorkOrder: 'on' });
+    expect(s.policy().auditAfterWorkOrder).toBe('on');
+  });
+});

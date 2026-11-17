@@ -7,6 +7,7 @@ import { Link, useNavigate, useParams } from 'react-router';
 import { FeedbackBadge } from '../components/FeedbackBadge';
 import { VerificationMatrix } from '../components/VerificationMatrix';
 import { AuditsPanel, ComplianceView, LastAuditLine } from '../components/audits/panels';
+import { AuditProgressLine, AuditRequestButton } from '../components/audits/AuditRequest';
 import { FeedbackList } from '../components/FeedbackParts';
 import { DocPage, Pill, TagPill, TldrCard } from '../components/doc';
 import { EmptyView, ErrorState } from '../components/ListStates';
@@ -107,6 +108,10 @@ export function StandardDetailPage() {
         />
       </div>
       {std.lastAudit !== undefined && <LastAuditLine last={std.lastAudit} />}
+      <span className="audit-actions">
+        <AuditRequestButton target={buildRef({ kind: 'standards', id: std.id })} title={std.title} />
+      </span>
+      <AuditProgressLine target={buildRef({ kind: 'standards', id: std.id })} />
     </>
   );
 

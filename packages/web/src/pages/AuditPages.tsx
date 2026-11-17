@@ -87,6 +87,16 @@ function AuditHeader({ doc, view }: { doc: AuditDoc; view?: Audit }) {
         </span>
       </div>
       {doc.abandonReason && <p className="faint small">Abandoned: {doc.abandonReason}</p>}
+      {view && (doc.status === 'requested' || doc.status === 'in_progress') && (
+        <div className="audit-progress" data-status={doc.status} data-testid="audit-header-progress">
+          <span className="audit-progress-text">
+            {doc.status === 'requested' ? 'Queued: waiting for the agent to start' : `Checking: ${view.progress.items.done}/${view.progress.items.total} items${view.progress.sections.total ? ` · ${view.progress.sections.done}/${view.progress.sections.total} sections` : ''}`}
+          </span>
+          <span className="audit-progress-bar" role="progressbar" aria-valuenow={view.progress.items.done} aria-valuemin={0} aria-valuemax={view.progress.items.total}>
+            <span style={{ width: `${view.progress.items.total ? Math.round((view.progress.items.done / view.progress.items.total) * 100) : 0}%` }} />
+          </span>
+        </div>
+      )}
     </>
   );
 }
@@ -163,7 +173,7 @@ function AuditPanels({ doc, view }: { doc: AuditDoc; view?: Audit }) {
 /** One audit report, shown like a spec: overview + one section per checklist item (history, versions, copy refs). */
 export function AuditDetailPage() {
   const { id = '' } = useParams<{ id: string }>();
-  const query = useQuery({ queryKey: ['audits', id], queryFn: () => api.get('audits', id) as unknown as Promise<AuditDoc> });
+  const query = useQuery({ queryKey: ['audits', id], queryFn: () => api.get('audits', id) as unknown as Promise<AuditDoc>, refetchInterval: (q) => (['requested', 'in_progress'].includes((q.state.data as AuditDoc | undefined)?.status ?? '') ? 3000 : false) });
   const history = useHistory('audits', id);
   const tracked = useTrackedChanges('audits', id);
   const now = useNow();

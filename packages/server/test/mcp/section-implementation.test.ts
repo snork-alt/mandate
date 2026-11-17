@@ -156,3 +156,29 @@ describe('change summaries and accepting changes', () => {
     expect(g.body.sections.find((x: any) => x.id === 'design').meta.links[0].seenAt).toMatch(/^[0-9a-f]{40}$/);
   });
 });
+
+describe('a clean audit confirms the sections it covers', () => {
+  it('moves the implemented marker (clears Outdated) and acknowledges upstream links; findings keep the badge', async () => {
+    const { spec, sec } = await implemented();
+    await ok('section_update', { ref: sec, verifiedBy: ['ac-works'] });
+    const up = uid('up');
+    await ok('spec_create', { id: up, title: 'Upstream', summary: 's', sections: [{ id: 'core', title: 'Core', summary: 's', body: 'v1' }] });
+    await ok('spec_section_link_add', { ref: sec, to: `mandate://specs/${up}/sections/core`, rel: 'depends_on' });
+    await ok('spec_section_update', { ref: `mandate://specs/${up}/sections/core`, body: 'v2', changeSummary: 'Core says v2 now.' });
+    await ok('section_update', { ref: sec, body: 'The design, v2.', changeSummary: 'Reworded the design.' });
+    expect((await state(spec)).outdated).toBe(true);
+    // an audit with a finding confirms nothing on its criteria; the badge stays
+    const bad = await ok('audit_start', { target: `mandate://specs/${spec}`, code: { repo: 'app', commit: 'abcdef1' } });
+    await ok('audit_record_item', { auditId: bad.audit.id, ref: `mandate://specs/${spec}/sections/ac-works`, result: 'fail', notes: 'No test.', findings: [{ title: 'x', description: 'd', suggestedFix: 'f', classification: 'code_deviates' }] });
+    await ok('audit_complete', { auditId: bad.audit.id, summary: 'findings', overview: 'See findings.' });
+    expect((await state(spec)).outdated).toBe(true);
+    // a clean audit
+    const good = await ok('audit_start', { target: `mandate://specs/${spec}`, code: { repo: 'app', commit: 'abcdef1' } });
+    await ok('audit_record_item', { auditId: good.audit.id, ref: `mandate://specs/${spec}/sections/ac-works`, result: 'pass', notes: 'Covered.' });
+    const done = await ok('audit_complete', { auditId: good.audit.id, summary: 'clean', overview: 'All good.' });
+    expect(done.flow.confirmed).toContain('design');
+    expect((await state(spec)).outdated).toBe(false);
+    const g = await fx.call('spec_get', { ref: spec });
+    expect(g.body.sections.find((x: any) => x.id === 'design').meta.links[0].seenAt).toMatch(/^[0-9a-f]{40}$/);
+  });
+});

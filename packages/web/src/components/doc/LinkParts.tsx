@@ -7,7 +7,8 @@ import { Link } from 'react-router';
 import { REL_BACK, REL_META, sectionHref } from '../../lib/links';
 import { uriTarget } from '../../lib/refs';
 import { ChipCopy } from '../copy';
-import { refLabel } from '@mandate/shared/refs';
+import { ChangePopover } from './ChangeActions';
+import { buildRef, refLabel } from '@mandate/shared/refs';
 
 /** Link information of the document on screen (from the spec / standard GET). */
 export const DocLinksContext = createContext<DocLinks | undefined>(undefined);
@@ -119,11 +120,21 @@ export function LinkBadges({ sectionId }: { sectionId: string }) {
         </Tooltip>
       )}
       {info.upstreamChanged && (
-        <Tooltip label={`Changed upstream since implemented: ${info.outgoing.filter((o) => o.upstreamChanged).map((o) => `${o.docTitle} › ${o.sectionTitle}`).join(', ')}`}>
-          <span className="link-badge" data-tone="warn">
-            <IconAlertTriangle size={12} /> Upstream changed
-          </span>
-        </Tooltip>
+        <ChangePopover
+          kind="upstream"
+          sectionId={sectionId}
+          changes={info.outgoing.filter((o) => o.upstreamChanged).flatMap((o) => o.changes ?? [])}
+          upstream={(() => {
+            const o = info.outgoing.find((x) => x.upstreamChanged)!;
+            return { to: buildRef({ kind: o.kind, id: o.docId, ...(o.sectionId ? { sectionId: o.sectionId } : {}) }), title: `${o.docTitle} › ${o.sectionTitle}` };
+          })()}
+        >
+          <Tooltip label={`Changed upstream since implemented: ${info.outgoing.filter((o) => o.upstreamChanged).map((o) => `${o.docTitle} › ${o.sectionTitle}`).join(', ')}. Click for what changed and what to do.`}>
+            <span className="link-badge" data-tone="warn" data-testid="upstream-badge">
+              <IconAlertTriangle size={12} /> Upstream changed
+            </span>
+          </Tooltip>
+        </ChangePopover>
       )}
       {conflicts && (
         <span className="link-badge" data-tone="warn">

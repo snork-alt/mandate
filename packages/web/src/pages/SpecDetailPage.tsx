@@ -37,6 +37,8 @@ import { deletedDoc, withFrontmatter, blockingDeps, categoryLabel, isReopened, i
 import { relativeTime } from '../lib/time';
 import { KIND_LABEL } from '../lib/specs';
 import { AuditsPanel, LastAuditLine } from '../components/audits/panels';
+import { ChangePopover, SectionChangeContext } from '../components/doc/ChangeActions';
+import { AuditProgressLine, AuditRequestButton } from '../components/audits/AuditRequest';
 import { MaturityBadge, MaturityDot } from '../components/maturity/MaturityBadge';
 
 function SpecLink({ id, spec }: { id: string; spec?: Spec }) {
@@ -51,7 +53,7 @@ function SpecLink({ id, spec }: { id: string; spec?: Spec }) {
 }
 
 /** "Implemented @abc1234" / "Outdated" / "Not implemented", plus links to open work orders for the section. */
-export function ImplementationBadge({ state, openItems, by, spec }: { state?: SectionImplementation[string]; openItems: WorkOrder[]; /** Work order that delivered the implementation (`implementedBy`). */ by?: string; /** Spec id: the Outdated badge links to the diff of the change. */ spec?: string }) {
+export function ImplementationBadge({ state, openItems, by, spec, sectionId, sectionTitle }: { state?: SectionImplementation[string]; openItems: WorkOrder[]; sectionId?: string; sectionTitle?: string; /** Work order that delivered the implementation (`implementedBy`). */ by?: string; /** Spec id: the Outdated badge links to the diff of the change. */ spec?: string }) {
   const implBy = by ?? state?.implementedBy;
   return (
     <span className="impl-badges">
@@ -60,21 +62,13 @@ export function ImplementationBadge({ state, openItems, by, spec }: { state?: Se
           Not implemented
         </span>
       ) : state.outdated ? (
-        <Tooltip
-          multiline
-          w={300}
-          label={`Changed since implemented commit ${state.implementedCommit?.slice(0, 7) ?? ''}${state.changedBy ? ` (by ${state.changedBy}${state.changedAt ? `, ${relativeTime(state.changedAt)}` : ''})` : ''}.${implBy ? ` Implemented by ${implBy}.` : ''}${spec && state.changedCommit ? ' Click for the diff.' : ''} Wording only: the agent marks the edit editorial; otherwise it re-verifies or updates the code.`}
-        >
-          {spec && state.changedCommit ? (
-            <Link to={`/specs/${spec}/history/${state.changedCommit}`} className="impl-badge" data-state="outdated" data-testid="outdated-diff-link">
-              <IconAlertTriangle size={12} /> Outdated
-            </Link>
-          ) : (
-            <span className="impl-badge" data-state="outdated">
+        <ChangePopover kind="outdated" sectionId={sectionId ?? ''} {...(sectionTitle ? { sectionTitle } : {})} {...(state.changes ? { changes: state.changes } : {})}>
+          <Tooltip multiline w={300} label={`Changed since implemented commit ${state.implementedCommit?.slice(0, 7) ?? ''}${state.changedBy ? ` (by ${state.changedBy}${state.changedAt ? `, ${relativeTime(state.changedAt)}` : ''})` : ''}.${implBy ? ` Implemented by ${implBy}.` : ''} Click for what changed and what to do.`}>
+            <span className="impl-badge" data-state="outdated" data-testid="outdated-badge">
               <IconAlertTriangle size={12} /> Outdated
             </span>
-          )}
-        </Tooltip>
+          </Tooltip>
+        </ChangePopover>
       ) : (
         <span className="impl-badge" data-state="done">
           <IconCircleCheckFilled size={12} /> Implemented {state.implementedCommit && <CommitHash sha={state.implementedCommit} className="impl-commit" />}
@@ -245,6 +239,10 @@ export function SpecDetailPage() {
         )}
       </div>
       {spec.lastAudit !== undefined && <LastAuditLine last={spec.lastAudit} />}
+      <span className="audit-actions">
+        <AuditRequestButton target={buildRef({ kind: 'specs', id: spec.id })} title={spec.title} />
+      </span>
+      <AuditProgressLine target={buildRef({ kind: 'specs', id: spec.id })} />
     </>
   );
 
@@ -475,7 +473,7 @@ export function SpecDetailPage() {
   );
 
   return (
-    <>
+    <SectionChangeContext.Provider value={{ specId: spec.id, specTitle: spec.title }}>
       <TopBar crumbs={crumbs} />
       <DocPage
         doc={{ kind: 'specs', id: spec.id, title: spec.title }}
@@ -554,6 +552,8 @@ export function SpecDetailPage() {
               state={implementation.data?.[section.id]}
               by={section.implementedBy}
               spec={id}
+              sectionId={section.id}
+              sectionTitle={section.title}
               openItems={openItems.filter((q) => q.sections.some((x) => x.id === section.id))}
             />
           </>
@@ -563,6 +563,6 @@ export function SpecDetailPage() {
           .flatMap((f) => f.sections.map((sid) => ({ id: f.id, sectionId: sid, quote: f.quote! })))}
         onQuoteClick={(fid) => navigate(`/requests/${fid}`)}
       />
-    </>
+    </SectionChangeContext.Provider>
   );
 }

@@ -40,7 +40,7 @@ describe('Settings → Agent flow', () => {
     expect(screen.queryByLabelText(/Approval for/)).toBeNull();
     expect(screen.queryByText(/Approval/)).toBeNull();
     // No per-client switches (only the admin's project-level strict flow one).
-    const notStrict = (el: Element) => !el.closest('[data-testid^="flow-strict-"]');
+    const notStrict = (el: Element) => !el.closest('[data-testid^="flow-strict-"], [data-testid^="flow-audit-"]');
     expect(screen.queryAllByRole('switch').filter(notStrict)).toEqual([]);
     expect([...document.querySelectorAll('input[type="checkbox"]')].filter(notStrict)).toEqual([]);
     fireEvent.click(st);
@@ -61,6 +61,21 @@ describe('Settings → Agent flow', () => {
     serve({ mode: 'server', admin: false, user: 'ada', projects: [{ id: 'web', name: 'Web', policy: { flowPolicy: 'optional', strictFlow: true }, mine: [client({})] }] });
     mount();
     expect(((await screen.findByLabelText('Strict flow')) as HTMLInputElement).disabled).toBe(true);
+  });
+
+  it('audit after work orders: an admin switch (PUT auditAfterWorkOrder), off by default; read-only for others', async () => {
+    const calls = serve({ mode: 'server', admin: true, user: 'ada', projects: [{ id: 'web', name: 'Web', policy: { flowPolicy: 'optional' }, mine: [client({})] }] });
+    mount();
+    const sw = (await screen.findByLabelText('Audit after work orders')) as HTMLInputElement;
+    expect(sw.checked).toBe(false);
+    fireEvent.click(sw);
+    await vi.waitFor(() => expect(calls.some((c) => c.method === 'PUT' && c.url.includes('/policy') && JSON.stringify(c.body) === '{"auditAfterWorkOrder":"on"}')).toBe(true));
+    cleanup();
+    serve({ mode: 'server', admin: false, user: 'ada', projects: [{ id: 'web', name: 'Web', policy: { flowPolicy: 'optional', auditAfterWorkOrder: 'on' }, mine: [client({})] }] });
+    mount();
+    const ro = (await screen.findByLabelText('Audit after work orders')) as HTMLInputElement;
+    expect(ro.checked).toBe(true);
+    expect(ro.disabled).toBe(true);
   });
 
   it('git: commit / branch / push switches (PUT patch); read-only for others', async () => {

@@ -14,7 +14,7 @@ import { useCreateRequest, type Priority } from '../../lib/requests';
 import '../comments/comments.css';
 import './requests.css';
 
-export function NewRequestModal({ opened, onClose }: { opened: boolean; onClose: () => void }) {
+export function NewRequestModal({ opened, onClose, initialBody }: { opened: boolean; onClose: () => void; /** Prefilled text (an @-reference and a change summary). */ initialBody?: string }) {
   const navigate = useNavigate();
   const presence = useAgentsPresence(undefined);
   const [body, setBody] = useState('');
@@ -27,13 +27,16 @@ export function NewRequestModal({ opened, onClose }: { opened: boolean; onClose:
     navigate(`/requests/${id}`);
   });
   useEffect(() => {
-    if (opened) return;
+    if (opened) {
+      if (initialBody) setBody(initialBody);
+      return;
+    }
     setBody('');
     setPick(undefined);
     setPriority('normal');
     setPlanOnly(false);
     setTouched(false);
-  }, [opened]);
+  }, [opened, initialBody]);
 
   const p = presence.data;
   const assignee = pick && activeAgents(p).some((a) => a.handle === pick) ? pick : defaultAgent(p);
