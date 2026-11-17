@@ -6,7 +6,7 @@
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { mcpFixture, type McpFixture } from './fixture.js';
+import { finishAllSteps, mcpFixture, type McpFixture } from './fixture.js';
 import { callTool, type ToolContext } from '../../src/mcp/define.js';
 import { TOOLS } from '../../src/mcp/server.js';
 import { MemoryClientStore, memorySettings } from '../../src/projects/settings.js';
@@ -42,6 +42,7 @@ const as = (login: string | null, mode: 'team' | 'me' = 'team'): ToolContext =>
     ...(login ? { principal: { kind: 'user', login, project: 'test', via: 'oauth', tokenId: 't', tokenName: 'cli' } as Principal } : {}),
   }) as ToolContext;
 async function call(ctx: ToolContext, name: string, args: Record<string, unknown>) {
+  if (name === 'work_order_complete') await finishAllSteps(fx.storage, String(args.ref));
   const r = await callTool(TOOLS.find((t) => t.name === name)!, args, ctx);
   const body = r.structuredContent as Record<string, any>;
   if (r.isError) throw new Error(`${name}: ${JSON.stringify(body.error)}`);

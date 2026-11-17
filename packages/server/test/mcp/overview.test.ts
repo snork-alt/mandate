@@ -88,8 +88,8 @@ describe('project_overview', () => {
     await call('spec_create', { id, title: 'Progress spec', summary: 'Overview progress.', sections: [{ id: 'one', title: 'One', summary: 'One.', body: 'Body.' }, { id: 'two', title: 'Two', summary: 'Two.', body: 'Body.' }] });
     const wo = await call('work_order_create', { spec: id, sections: ['one'], kind: 'implement', plan: { steps: ['Read the spec', 'Write the tests', 'Ship it'] } });
     await call('work_order_claim', { ref: wo.ref });
-    // The agent ticks the steps it has done (the plan is a checklist).
-    await call('work_order_plan_set', { ref: wo.ref, plan: '**Steps**\n- [x] Read the spec\n- [ ] Write the tests\n- [ ] Ship it\n\n**Files to change**\n- src/a.ts' });
+    // The agent sets the steps it has done (steps are data: work_order_step_set).
+    await call('work_order_step_set', { ref: wo.ref, step: 's1', status: 'done' });
     const fix = await call('work_order_create', { spec: id, sections: ['two'], kind: 'fix', fastPath: true, title: 'Quick fix' });
     await call('work_order_claim', { ref: fix.ref });
     await call('work_order_complete', { ref: fix.ref, outcome: 'Fixed.' });
@@ -98,7 +98,8 @@ describe('project_overview', () => {
     const woId = String(wo.ref).split('/').pop();
     const fixId = String(fix.ref).split('/').pop();
     const w = body.inProgress.find((x: any) => x.id === woId);
-    expect(w.plan).toEqual({ total: 3, done: 1, current: { index: 2, text: 'Write the tests' } });
+    expect(w.plan).toMatchObject({ total: 3, done: 1, current: { index: 2, text: 'Write the tests', id: 's2' } });
+    expect(w.plan.steps.map((x: any) => x.status)).toEqual(['done', 'pending', 'pending']);
     const ps = body.progressSpecs.find((x: any) => x.id === id);
     expect(ps.title).toBe('Progress spec');
     expect(ps.maturity.sections.total).toBe(2);

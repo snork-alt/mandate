@@ -41,6 +41,7 @@ export const ACTIVITY_TYPES = [
   'work_order.status_changed',
   'work_order.deleted',
   'work_order.plan_set',
+  'work_order.step_set',
   'work_order.touched',
   'work_order.git_updated',
   'comment.added',

@@ -579,6 +579,8 @@ const workOrderTools: AnyToolDef[] = [
         metaOf(ctx, commits),
       );
       const warnings: string[] = [...checkCodeRepos(ctx, (a.git ?? []).map((g) => g.repo), 'git'), ...stamped.warnings];
+      const open = (w.planSteps ?? []).filter((s) => s.status === 'pending' || s.status === 'in_progress');
+      if (w.sections.every((s) => s.status !== 'pending') && open.length) warnings.push(`${open.length} plan step(s) still unfinished (${open.map((s) => s.id).join(', ')}): work_order_complete refuses until each is done or skipped with a note (work_order_step_set)`);
       if (w.sections.every((s) => s.status !== 'pending')) warnings.push('every section is finished and your claim was released automatically: reconcile specs / components with the code, then call work_order_complete with the outcome (no claim needed)');
       // Implementation <-> work order: implement / update / fix sections copy their code refs into the spec section. Without any, say why it matters.
       if (a.status === 'done' && (w.kind === 'implement' || w.kind === 'update' || w.kind === 'fix') && !a.codeRefs?.length && !a.touched?.length) {

@@ -9,6 +9,8 @@ import {
   MATURITY_STEPS,
   OPEN_WORK_ORDER_STATUSES,
   planProgress,
+  stepsOf,
+  stepsPlanProgress,
   WO_PLAN,
   type OverviewCompleted,
   type OverviewSession,
@@ -160,7 +162,8 @@ export async function projectOverview(storage: Storage, input: ProjectOverviewIn
   for (const v of active.slice(0, limit)) {
     if (!v.hasPlan) continue;
     const d = await storage.workOrderService.doc(v.id).catch(() => null);
-    const p = planProgress(d?.sections.find((x) => x.id === WO_PLAN)?.body ?? '');
+    const body = d?.sections.find((x) => x.id === WO_PLAN)?.body ?? '';
+    const p = (d ? stepsPlanProgress(stepsOf(d, body)) : null) ?? planProgress(body);
     if (p) v.plan = p;
   }
   const progressSpecs = [...new Set(active.map((w) => w.spec))].map((id) => ({ id, title: specTitle.get(id) ?? id, maturity: maturity.get(id) })).filter((x): x is { id: string; title: string; maturity: SpecMaturity } => !!x.maturity);

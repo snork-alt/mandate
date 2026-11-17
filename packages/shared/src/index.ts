@@ -1,6 +1,7 @@
 import { parseNodeUri, parseRef } from './refs.js';
 import { auditCodeRefSchema, findingUriSchema, type LastAudit, type SpecAudits, type StandardAudits } from './audits.js';
 import type { SpecMaturity } from './maturity.js';
+import { planStepSchema } from './plan-steps.js';
 import { gitContextSchema, pastClaimSchema, planTestSchema, touchedFileSchema, type CommentCounts, type CommentThread, type GitContext, type PastClaim, type TouchedFile } from './work-orders.js';
 import { codeLinkSchema } from './code-context.js';
 import { z } from 'zod';
@@ -739,6 +740,8 @@ export const workOrderSchema = z.object({
   hasPlan: z.boolean().optional(),
   /** Tests promised by the plan, each with the acceptance criteria it proves. */
   planTests: z.array(planTestSchema).optional(),
+  /** The plan's steps (stored, or parsed from the plan's checkboxes on older work orders). */
+  planSteps: z.array(planStepSchema).optional(),
 });
 export type WorkOrder = z.infer<typeof workOrderSchema>;
 
@@ -1483,6 +1486,7 @@ export * from './ask.js';
 export * from './write-schemas.js';
 export * from './audits.js';
 export * from './maturity.js';
+export * from './plan-steps.js';
 export * from './work-orders.js';
 export * from './comments.js';
 export * from './questions.js';

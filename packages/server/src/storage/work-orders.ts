@@ -7,7 +7,16 @@ import {
   isFastPath,
   mergeGit,
   mergeTouched,
+  nextStepSeq,
   OPEN_WORK_ORDER_STATUSES,
+  parseStepLines,
+  reconcileSteps,
+  renderStepLine,
+  replaceStepLines,
+  stepsOf,
+  syncStepLines,
+  toDesired,
+  unfinishedSteps,
   touchedFromInput,
   WO_HISTORY,
   WO_OUTCOME,
@@ -23,7 +32,11 @@ import {
   type CreateWorkOrderInput,
   type DependencyTree,
   type GitContextPatch,
+  type DesiredStep,
   type GitFieldsInput,
+  type PlanStep,
+  type PlanStepInput,
+  type PlanStepStatus,
   type ResolvedWorkOrder,
   type Section,
   type SectionImplementation,
@@ -50,7 +63,7 @@ import type { HistoryService } from './history.js';
 import { newId } from './ids.js';
 import type { MarkdownDirRepository } from './MarkdownDirRepository.js';
 import { openChangingOrders } from './model.js';
-import { applyCodeToSection, checkPlanTests, coveredCriteria, renderPlan } from './work-order-plan.js';
+import { applyCodeToSection, checkPlanTests, checkStepLinks, coveredCriteria, renderPlan } from './work-order-plan.js';
 import type { Mutex } from './Mutex.js';
 import {
   defaultTitle,
@@ -348,11 +361,16 @@ export class WorkOrderService {
     // A structured plan: rendered to the plan section; its tests must prove every acceptance criterion the work order covers.
     let planText = typeof input.plan === 'string' ? input.plan : '';
     let planTests: WorkOrderPlanInput['tests'] | undefined;
+    let planSteps: PlanStep[] | undefined;
     if (input.plan && typeof input.plan === 'object') {
       const criteria = coveredCriteria(at, input.sections.map((s) => s.id));
-      const problems = checkPlanTests(input.plan.tests ?? [], criteria);
+      const desired = input.plan.steps.map(toDesired);
+      const problems = [...checkPlanTests(input.plan.tests ?? [], criteria), ...checkStepLinks(desired, input.sections.map((s) => s.id), criteria)];
+      const made = reconcileSteps([], desired.map(({ id: _id, ...d }) => d), 0, { now: (meta.date ?? new Date()).toISOString(), by: input.createdBy ?? meta.agent ?? 'agent' });
+      problems.push(...made.problems);
       if (problems.length) throw new WorkOrderError('plan_invalid', `plan_invalid: ${problems.join('; ')}`, { kind: 'plan', problems, criteria: criteria.map((c) => c.id) }, 400);
-      planText = renderPlan(input.plan);
+      planSteps = made.steps;
+      planText = renderPlan({ ...input.plan, steps: made.steps });
       planTests = input.plan.tests;
     }
     const now = (meta.date ?? new Date()).toISOString();
@@ -371,6 +389,8 @@ export class WorkOrderService {
       note: input.note,
       dependencies: input.dependencies,
       planTests: planTests?.length ? planTests : undefined,
+      planSteps: planSteps?.length ? planSteps : undefined,
+      planStepSeq: planSteps?.length ? planSteps.length : undefined,
       reason: input.reason ?? [],
       findings: input.findings,
       createdBy: input.createdBy,
@@ -509,20 +529,105 @@ export class WorkOrderService {
     return this.project(d);
   }
 
-  /** Write / replace the implementation plan (open work orders; holder or unclaimed). Versioned by git. */
-  async planSet(id: string, agent: string, plan: string, meta: CommitMeta = {}): Promise<WorkOrder> {
+  /**
+   * Write / replace the implementation plan (open work orders; holder or unclaimed). Versioned by git. Steps are data: the
+   * checkbox lines of the text (or `steps`) are matched to the existing steps by id (else by identical text), keeping id,
+   * status, note and code refs; new steps get new ids (never reused). A done step cannot be removed (`plan_invalid`).
+   */
+  async planSet(id: string, agent: string, plan: string | undefined, meta: CommitMeta = {}, stepsInput?: PlanStepInput[]): Promise<WorkOrder> {
     const w = await this.requireHolder(id, agent);
     if (!isOpen(w)) throw this.frozenError(w);
+    const probe = await this.doc(id);
+    const desiredInput = stepsInput?.map(toDesired);
+    let links: { targets: string[]; criteria: { id: string }[] } | null = null;
+    if (desiredInput?.some((d) => d.sections?.length || d.proves?.length)) {
+      const at = await this.specAt(probe.spec, probe.specCommit);
+      const targets = probe.sections.filter(isWoSection).map(targetSection);
+      links = { targets, criteria: coveredCriteria(at, targets) };
+    }
+    const now = (meta.date ?? new Date()).toISOString();
     const d = await this.modify(
       id,
       (cur) => {
+        const body = sectionBody(cur, WO_PLAN);
         // MW-13: a claimed (in progress) work order keeps a plan: it cannot be emptied after claiming.
-        if (cur.claim && !plan.trim() && sectionBody(cur, WO_PLAN).trim()) throw new ValidationError(`work order ${id} is claimed: its plan cannot be emptied`);
-        return { ...cur, sections: cur.sections.map((s) => (s.id === WO_PLAN ? { ...s, body: plan.trim() } : s)) };
+        if (cur.claim && plan !== undefined && !plan.trim() && !desiredInput && body.trim()) throw new ValidationError(`work order ${id} is claimed: its plan cannot be emptied`);
+        let text = plan !== undefined ? plan.trim() : body;
+        const existing = stepsOf(cur, body);
+        const parsed = parseStepLines(text);
+        const desired: DesiredStep[] = desiredInput ?? parsed.map((p) => ({ ...(p.id ? { id: p.id } : {}), text: p.text, ...(p.status === 'skipped' ? {} : { status: p.status }) }));
+        const r = reconcileSteps(existing, desired, cur.planStepSeq ?? 0, { now, by: meta.agent ?? agent });
+        const problems = [...r.problems, ...(links ? checkStepLinks(desired, links.targets, links.criteria) : [])];
+        if (problems.length) throw new WorkOrderError('plan_invalid', `plan_invalid: ${problems.join('; ')}`, { kind: 'plan', problems }, 400);
+        // New steps never start in progress twice.
+        let seen = existing.some((s) => s.status === 'in_progress');
+        const steps = r.steps.map((s) => (s.status === 'in_progress' && !existing.some((e) => e.id === s.id) ? (seen ? { ...s, status: 'pending' as const } : ((seen = true), s)) : s));
+        if (desiredInput) text = replaceStepLines(text, steps);
+        else if (parsed.length) {
+          const lines = text.split(/\r?\n/);
+          parsed.forEach((p, k) => (lines[p.line] = renderStepLine(steps[k]!)));
+          text = lines.join('\n');
+        }
+        const persist = steps.length || cur.planSteps ? { planSteps: steps, planStepSeq: r.seq } : {};
+        return { ...cur, ...persist, sections: cur.sections.map((s) => (s.id === WO_PLAN ? { ...s, body: text } : s)) };
       },
       { ...meta, message: meta.message ?? `work order: plan of ${id}` },
     );
     return this.project(d);
+  }
+
+  /**
+   * Set the status of plan steps (holder of the claim, or any agent when nobody holds it and every section is done).
+   * skipped needs a note; one in_progress at a time (a new one moves the previous back to pending); codeRefs are kept on
+   * the step and merged into the work order's touched. Older work orders get their steps persisted by the first call.
+   */
+  async stepSet(
+    id: string,
+    agent: string,
+    changes: { step: string; status: PlanStepStatus; note?: string; codeRefs?: TouchedInput[] }[],
+    meta: CommitMeta = {},
+  ): Promise<{ workOrder: WorkOrder; warnings: string[] }> {
+    const code = changes.map((c) => (c.codeRefs ?? []).map(touchedFromInput));
+    return this.locked(async () => {
+      const doc = await this.doc(id);
+      if (!isOpen(doc)) throw this.frozenError(doc);
+      if (!(!doc.claim && allSectionsDone(doc))) this.requireClaim(doc, agent);
+      const now = (meta.date ?? new Date()).toISOString();
+      const by = meta.agent ?? agent;
+      const steps = stepsOf(doc, sectionBody(doc, WO_PLAN)).map((s) => ({ ...s }));
+      if (!steps.length) throw new WorkOrderError('no_steps', `work order ${id} has no plan steps: write them with work_order_plan_set (steps) first`, { kind: 'work_order', id }, 400);
+      const ids = steps.map((s) => s.id).join(', ');
+      if (new Set(changes.filter((c) => c.status === 'in_progress').map((c) => c.step)).size > 1) throw new ValidationError('only one step can be in_progress at a time');
+      let touched = doc.touched ?? [];
+      const log: string[] = [];
+      changes.forEach((c, k) => {
+        const s = steps.find((x) => x.id === c.step);
+        if (!s) throw new ValidationError(`unknown step ${c.step} (steps: ${ids})`);
+        const note = c.note?.trim();
+        if (c.status === 'skipped' && !note) throw new WorkOrderError('note_required', `step ${c.step}: skipped needs a note (why it is not needed)`, { kind: 'step', step: c.step }, 400);
+        if (c.status === 'in_progress') for (const o of steps) if (o !== s && o.status === 'in_progress' && !changes.some((x) => x.step === o.id)) Object.assign(o, { status: 'pending', updatedAt: now, by });
+        Object.assign(s, { status: c.status, updatedAt: now, by, ...(note ? { note } : {}) });
+        if (code[k]!.length) {
+          s.codeRefs = mergeTouched(s.codeRefs ?? [], code[k]!);
+          touched = mergeTouched(touched, code[k]!);
+        }
+        log.push(`${c.step} ${c.status.replace('_', ' ')}`);
+      });
+      const d = await this.modify(
+        id,
+        (cur) => ({
+          ...cur,
+          planSteps: steps,
+          planStepSeq: nextStepSeq(steps, cur.planStepSeq),
+          ...(touched.length ? { touched } : {}),
+          sections: cur.sections.map((x) => (x.id === WO_PLAN ? { ...x, body: syncStepLines(x.body, steps) } : x)),
+        }),
+        { ...meta, message: meta.message ?? `work order: step ${log.join(', ')} in ${id}${changes.length === 1 ? ` (${steps.find((x) => x.id === changes[0]!.step)!.text.slice(0, 60)})` : ''}` },
+      );
+      const warnings: string[] = [];
+      if (!unfinishedSteps(steps).length && !allSectionsDone(d)) warnings.push('every plan step is finished: mark the sections done (work_order_section_done with codeRefs)');
+      return { workOrder: this.project(d), warnings };
+    });
   }
 
   /** The wo-section for a key: spec section id, wo-section id or a section reference. */
@@ -734,6 +839,14 @@ export class WorkOrderService {
           kind: 'comments',
           threads: blocking.map((t) => ({ id: t.id, uri: t.uri, target: t.target, author: t.author.agent, body: t.body.slice(0, 300) })),
         });
+      }
+      const unfinished = unfinishedSteps(stepsOf(doc, sectionBody(doc, WO_PLAN)));
+      if (unfinished.length) {
+        throw new WorkOrderError(
+          'steps_unfinished',
+          `steps_unfinished: work order ${id} cannot complete: ${unfinished.length} plan step(s) not finished: ${unfinished.map((s) => `${s.id} (${s.status.replace('_', ' ')}) ${s.text.slice(0, 60)}`).join('; ')}`,
+          { kind: 'steps', steps: unfinished.map((s) => ({ id: s.id, text: s.text, status: s.status })) },
+        );
       }
       await this.requireProvenCriteria(doc);
       if (open.length) warnings.push(`${open.length} open non-blocking comment thread(s): ${open.map((t) => t.uri).join(', ')}`);

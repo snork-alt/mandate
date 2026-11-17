@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { TLDR_MAX_CHARS, appliesToSchema, exemptionSchema, FEEDBACK_KINDS, FEEDBACK_RESOLUTIONS, PRIORITIES, STORED_SPEC_STATUSES, VERIFICATION_METHODS, VERIFICATION_RESULTS, WORK_ORDER_KINDS, STANDARD_STATUSES } from './base.js';
 import { docRefSchema, sectionRefSchema } from './read-schemas.js';
 import { parseNodeUri, parseRef, type RefKind } from './refs.js';
+import { planStepInputSchema } from './plan-steps.js';
 import { planTestSchema, woDeliveryExtras } from './work-orders.js';
 import { auditCodeRefSchema } from './audits.js';
 import { codeClaimSchema } from './code-context.js';
@@ -183,8 +184,8 @@ const relatedRef = z.string().trim().min(1).max(400).refine((v) => /^[a-z0-9][a-
 /** The structured plan of a work order (rendered to the plan section; `tests` are checked at work_order_complete). */
 export const workOrderPlanInputSchema = z
   .object({
-    /** What you will do, in order. */
-    steps: z.array(line(2000)).min(1).max(50),
+    /** What you will do, in order: a line, or { text, sections: [targeted spec section ids], proves: [criterion ids] } to link the step. Each gets a stable id (s1, s2, ...). */
+    steps: z.array(planStepInputSchema).min(1).max(50),
     /** Files to change or add (`path`, or `repo:path` / `path: why`). */
     files: z.array(line(500)).max(200).default([]),
     /** Tests to write: name, where (optional), and the acceptance criteria (section ids of the spec) each proves. */

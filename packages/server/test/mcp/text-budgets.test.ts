@@ -14,15 +14,15 @@ const tok = (s: string) => Math.ceil(s.length / 4);
 
 describe('working agreement budgets', () => {
   it('master skill (was ~3250 tokens before the lifecycle registry, 2055 before the prompts review)', () => {
-    expect(tok(SKILL_BODY)).toBeLessThanOrEqual(2330); // +105: request flow (no approval, full plan, criteria -> tests, implemented-by), -15 approval; +15: last section done frees the claim; +55: tldr guidance; +9: instructions_get pointer; +50: tool sets (tools_enable)
+    expect(tok(SKILL_BODY)).toBeLessThanOrEqual(2380); // +37: plan steps (work_order_step_set); +105: request flow (no approval, full plan, criteria -> tests, implemented-by), -15 approval; +15: last section done frees the claim; +55: tldr guidance; +9: instructions_get pointer; +50: tool sets (tools_enable)
     expect(SKILL_BODY.split('\n').length).toBeLessThanOrEqual(113);
     expect(tok(SKILL_DESCRIPTION)).toBeLessThanOrEqual(87);
     expect(SKILL_BODY).toContain('lifecycle_get');
   });
 
   it('server instructions (CORE_RULES mirror)', () => {
-    expect(tok(CORE_RULES)).toBeLessThanOrEqual(1140); // +30: requests, full plan, test proof; +55: tldr guidance; +46: CURRENT TEXT (instructions_get beats local copies); +15: TOOLS (tool sets)
-    expect(tok(INSTRUCTIONS)).toBeLessThanOrEqual(1390);
+    expect(tok(CORE_RULES)).toBeLessThanOrEqual(1170); // +16: plan steps; +30: requests, full plan, test proof; +55: tldr guidance; +46: CURRENT TEXT (instructions_get beats local copies); +15: TOOLS (tool sets)
+    expect(tok(INSTRUCTIONS)).toBeLessThanOrEqual(1430);
     expect(INSTRUCTIONS).toContain('lifecycle_get');
   });
 
@@ -52,7 +52,7 @@ describe('total tool descriptions', () => {
     // 5,883 description and 16,137 schema tokens over the 47 core tools (the whole request flow: the former intake set moved into core;
     // before that 3,624 / 9,335 over 29 tools; every tool: ~11,221 / ~26,870).
     expect(core.reduce((n, t) => n + tok(t.description as string), 0)).toBeLessThanOrEqual(6200);
-    expect(core.reduce((n, t) => n + tok(JSON.stringify(toolJsonSchema(t))), 0)).toBeLessThanOrEqual(16900);
+    expect(core.reduce((n, t) => n + tok(JSON.stringify(toolJsonSchema(t))), 0)).toBeLessThanOrEqual(17200);
   });
 
   it('input schemas served to agents stay within budget (edge kinds as strings, per-kind section fields and link rels)', () => {
@@ -60,7 +60,7 @@ describe('total tool descriptions', () => {
     for (const t of AGENT_TOOLS) total += tok(JSON.stringify(toolJsonSchema(t)));
     // 28,865 over 143 tools before the prompts review; 26,870 over the 132 agent tools after it (incl. the 5 question tools);
     // 22,513 over the 98 tools of all sets after merging per-type tools (tool-sets.ts).
-    expect(total).toBeLessThanOrEqual(23200);
+    expect(total).toBeLessThanOrEqual(23500);
     const gn = AGENT_TOOLS.find((t) => t.name === 'graph_neighbors')!;
     expect(JSON.stringify(toolJsonSchema(gn))).not.toContain('duplicate_finding_of');
   });

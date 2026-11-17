@@ -13,6 +13,7 @@ import {
   parseRef,
   workOrderGitUpdateInputSchema,
   workOrderPlanSetInputSchema,
+  workOrderStepSetInputSchema,
   workOrderSectionGetInputSchema,
   workOrderTouchFromCommitsInputSchema,
   workOrderTouchInputSchema,
@@ -48,14 +49,29 @@ export const workOrderDocTools: AnyToolDef[] = [
     name: 'work_order_plan_set',
     title: 'Write the work-order plan',
     kind: 'write',
-    description: `Write (replace) the implementation plan of an open work order: the plan section of work-orders/<id>.md (markdown; every version is kept in git). Required before claiming (except fast-path fixes). Keep it updated while you work; this is THE plan: do not keep implementation plans in local files when the Mandate flow is on.${COMMON}
-Example: {"ref":"mandate://work-orders/wo-01jc...","plan":"1. Add the callback route...\\n2. ..."}`,
+    description: `Write (replace) the plan of an open work order (plan markdown, versions kept in git). This is THE plan: no local plan files when the flow is on. Steps are data with stable ids (s1, s2, ...): step lines "- [ ] **s1** text" keep their ids, a line without id is a new step; steps: [text | {id?, text, sections, proves}] sets the step list directly (matched by id, new ones get ids). A done step cannot be removed. Status changes go through work_order_step_set, not checkboxes.${COMMON}
+Example: {"ref":"mandate://work-orders/wo-01jc...","plan":"**Steps**\\n- [ ] **s1** Add the callback route\\n- [ ] Write the tests"}`,
     input: workOrderPlanSetInputSchema,
     run: async (a, ctx) => {
       const commits: string[] = [];
       const id = idOf(a.ref);
-      await ctx.storage.workOrderService.planSet(id, ctx.commit!.agent, a.plan, metaOf(ctx, commits));
+      await ctx.storage.workOrderService.planSet(id, ctx.commit!.agent, a.plan, metaOf(ctx, commits), a.steps);
       return woResult(ctx, id, commits);
+    },
+  }),
+  defineTool({
+    name: 'work_order_step_set',
+    title: 'Set plan step status',
+    kind: 'write',
+    description: `Set the status of plan steps: pending | in_progress | done | skipped. Set a step in_progress when you start it and done when finished (with codeRefs: they go on the step and into touched); skipped needs a note (why). One step in_progress at a time (a new one moves the previous back to pending). Needs the claim (or no claim with every section done). Several: steps: [{step, status, note?, codeRefs?}]. work_order_complete refuses while a step is pending or in progress.${COMMON}
+Example: {"ref":"wo-01jc...","step":"s2","status":"done","codeRefs":["app:src/auth/callback.ts#L40-L80"]}`,
+    input: workOrderStepSetInputSchema,
+    run: async (a, ctx) => {
+      const commits: string[] = [];
+      const id = idOf(a.ref);
+      const changes = a.steps ?? [{ step: a.step!, status: a.status!, note: a.note, codeRefs: a.codeRefs }];
+      const { warnings } = await ctx.storage.workOrderService.stepSet(id, ctx.commit!.agent, changes, metaOf(ctx, commits));
+      return woResult(ctx, id, commits, {}, warnings);
     },
   }),
   defineTool({

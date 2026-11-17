@@ -16,3 +16,17 @@
   .wo-strip-git { margin-left: 0; }
 }
 .q-note .markdown > :first-child { margin-top: 0; } .q-note .markdown > :last-child { margin-bottom: 0; }
+.wo-steps { margin-top: 14px; }
+.wo-steps-title { margin: 0 0 6px; font-size: var(--mantine-font-size-sm); font-weight: 600; }
+.wo-steps-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.wo-step { display: flex; gap: 8px; align-items: flex-start; padding: 6px 8px; border-radius: 8px; font-size: var(--mantine-font-size-sm); }
+.wo-step.is-current { background: var(--mantine-color-blue-light); }
+.wo-step-icon { display: inline-flex; padding-top: 2px; }
+.wo-step-body { flex: 1; min-width: 0; }
+.wo-step-skipped { text-decoration: line-through; color: var(--app-text-faint); }
+.wo-step.is-done .wo-step-text { color: var(--app-text-muted); }
+.wo-step-note { margin-top: 2px; }
+.wo-step-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.wo-step-chip { font-size: 11.5px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--app-border-strong); color: var(--app-text-muted); text-decoration: none; }
+.wo-step-who { white-space: nowrap; }
+@media (max-width: 760px) { .wo-step { flex-wrap: wrap; } }

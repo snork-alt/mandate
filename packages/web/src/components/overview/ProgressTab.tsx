@@ -79,15 +79,17 @@ function PlanStep({ w }: { w: OverviewWorkOrder }) {
   const p = w.plan;
   if (!w.hasPlan) return <span className="ov-muted">No plan yet</span>;
   if (!p) return <span className="ov-muted">Plan written</span>;
-  if (p.current)
+  if (p.current) {
+    const active = p.steps?.find((x) => x.id === p.current!.id)?.status === 'in_progress';
     return (
-      <span className="pg-step" title={`Plan step ${p.current.index} of ${p.total}`}>
+      <span className="pg-step" title={`Plan step ${p.current.index} of ${p.total}${active ? ' (in progress)' : ''}`} data-step-status={active ? 'in_progress' : 'pending'}>
         <b>
           {p.current.index}/{p.total}
         </b>{' '}
         {p.current.text}
       </span>
     );
+  }
   if (p.done !== undefined) return <span className="pg-step">Plan done · {p.total}/{p.total}</span>;
   return <span className="ov-muted">Plan · {plural(p.total, 'step')}</span>;
 }

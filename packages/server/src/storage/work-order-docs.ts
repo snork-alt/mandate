@@ -9,6 +9,7 @@ import path from 'node:path';
 import {
   buildRef,
   parseRef,
+  stepsOf,
   WO_HISTORY,
   WO_OUTCOME,
   WO_PLAN,
@@ -66,6 +67,7 @@ export function defaultTitle(kind: string, specTitle: string, sectionTitles: str
 /** The flat projection of a work order document (claim heartbeat from the runtime state). */
 export function projectWorkOrder(d: StoredWorkOrderDoc, heartbeat: (claim: NonNullable<StoredWorkOrderDoc['claim']>) => string = (c) => c.startedAt): WorkOrder {
   const sections = d.sections.filter(isWoSection).map((s) => ({ id: targetSection(s), status: s.status ?? 'pending' }));
+  const planSteps = stepsOf(d, sectionBody(d, WO_PLAN));
   const out: WorkOrder = {
     id: d.id,
     spec: d.spec,
@@ -91,6 +93,7 @@ export function projectWorkOrder(d: StoredWorkOrderDoc, heartbeat: (claim: NonNu
     ...(d.codeLinks?.length ? { codeLinks: d.codeLinks } : {}),
     hasPlan: sectionBody(d, WO_PLAN).trim().length > 0,
     ...(d.planTests?.length ? { planTests: d.planTests } : {}),
+    ...(planSteps.length ? { planSteps } : {}),
   } as WorkOrder;
   return out;
 }

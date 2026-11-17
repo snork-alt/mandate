@@ -221,9 +221,21 @@ function workOrderEvents(before: Map<string, Record<string, any>>, after: Map<st
       specific = true;
     }
     // Document fields with their own events (plan, touched, git) or derived ones (claims, completedAt, hasPlan).
-    const own = ['claim', 'sections', 'status', 'claims', 'completedAt', 'hasPlan', 'touched', 'git', 'plan', 'outcome'];
+    const own = ['claim', 'sections', 'status', 'claims', 'completedAt', 'hasPlan', 'touched', 'git', 'plan', 'outcome', 'planSteps', 'planStepSeq'];
     if (a.plan !== b.plan) {
       out.push({ type: 'work_order.plan_set', refs, summary: `${who} ${b.plan ? 'updated' : 'wrote'} the plan of ${label(a)}`, details: { kind: a.kind, progress: progress(a), ...(a.plan ? { preview: [{ op: 'insert' as const, text: String(a.plan).slice(0, 200) }] } : {}) } });
+      specific = true;
+    }
+    const stepsBefore = new Map(((b.planSteps ?? []) as { id: string; status: string }[]).map((s) => [s.id, s]));
+    for (const s of (a.planSteps ?? []) as { id: string; text: string; status: string; note?: string }[]) {
+      const prev = stepsBefore.get(s.id);
+      if (!prev || prev.status === s.status) continue;
+      out.push({
+        type: 'work_order.step_set',
+        refs,
+        summary: `${claimer} set step ${s.id} of ${label(a)} to ${s.status.replace('_', ' ')}: ${s.text.slice(0, 100)}`,
+        details: { kind: a.kind, progress: progress(a), step: { id: s.id, text: s.text, status: s.status, from: prev.status, ...(s.note ? { note: s.note } : {}) } },
+      });
       specific = true;
     }
     if (JSON.stringify(a.touched ?? []) !== JSON.stringify(b.touched ?? [])) {

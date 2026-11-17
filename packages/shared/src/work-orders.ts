@@ -17,6 +17,7 @@ import { idSchema, PRIORITIES, WORK_ORDER_KINDS, WORK_ORDER_STATUSES } from './b
 import { docRefSchema, sectionRefSchema } from './read-schemas.js';
 import { parseNodeUri, parseRef } from './refs.js';
 import { codeClaimSchema, codeLinkSchema } from './code-context.js';
+import { PLAN_STEP_STATUSES, planStepInputSchema, planStepSchema } from './plan-steps.js';
 
 export { touchedFileSchema, TOUCH_CHANGES, type TouchedFile };
 
@@ -98,6 +99,9 @@ export const workOrderFrontmatterSchema = z.object({
   fastPath: z.boolean().optional(),
   /** Tests promised by the plan, each mapped to the acceptance criteria it proves (checked at work_order_complete). */
   planTests: z.array(planTestSchema).optional(),
+  /** The plan's steps as data (ids s1.. never reused; `planStepSeq` is the last id number given). Absent on older work orders: parsed from the plan text on read. */
+  planSteps: z.array(planStepSchema).optional(),
+  planStepSeq: z.number().int().optional(),
   /** Why the work order exists (free text; the plan lives in the `plan` section). */
   note: z.string().optional(),
   /** Work orders that must be done first (ids). */
@@ -291,7 +295,36 @@ export const woDeliveryExtras = {
   touched: z.array(touchedInputSchema).max(500).optional(),
 };
 
-export const workOrderPlanSetInputSchema = z.object({ ref: woRef, plan: z.string().max(100_000) }).strict();
+export const workOrderPlanSetInputSchema = z
+  .object({
+    ref: woRef,
+    /** The plan (markdown). Step lines `- [ ] **s1** text` keep their ids; a line without id is a new step (or matches a step with the same text). */
+    plan: z.string().max(100_000).optional(),
+    /** The steps as data (replaces the step lines of the plan): matched by id, new ones get ids; sections / proves link a step to the targets / criteria. */
+    steps: z.array(planStepInputSchema).min(1).max(50).optional(),
+  })
+  .strict()
+  .refine((v) => v.plan !== undefined || v.steps !== undefined, 'give plan and / or steps');
+export const workOrderStepSetInputSchema = z
+  .object({
+    ref: woRef,
+    /** One step id (`s2`), or several changes in one call. */
+    step: z.string().regex(/^s\d+$/).optional(),
+    status: z.enum(PLAN_STEP_STATUSES).optional(),
+    note: z.string().trim().min(1).max(2000).optional(),
+    codeRefs: z.array(touchedInputSchema).max(200).optional(),
+    steps: z
+      .array(
+        z
+          .object({ step: z.string().regex(/^s\d+$/), status: z.enum(PLAN_STEP_STATUSES), note: z.string().trim().min(1).max(2000).optional(), codeRefs: z.array(touchedInputSchema).max(200).optional() })
+          .strict(),
+      )
+      .min(1)
+      .max(50)
+      .optional(),
+  })
+  .strict()
+  .refine((v) => (v.steps ? !v.step && !v.status : !!v.step && !!v.status), 'give step + status, or steps: [{ step, status }]');
 export const workOrderTouchInputSchema = z
   .object({
     ref: woRef,

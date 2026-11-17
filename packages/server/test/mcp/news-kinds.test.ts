@@ -9,7 +9,7 @@ import { callTool, type SessionState, type ToolContext } from '../../src/mcp/def
 import { TOOLS } from '../../src/mcp/server.js';
 import { memorySettings } from '../../src/projects/settings.js';
 import { MemoryNewsStore, NewsService } from '../../src/news/index.js';
-import { mcpFixture, type McpFixture } from './fixture.js';
+import { finishAllSteps, mcpFixture, type McpFixture } from './fixture.js';
 
 let fx: McpFixture;
 let news: NewsService;
@@ -35,6 +35,7 @@ async function call(ctx: ToolContext, name: string, args: Record<string, unknown
   return { isError: !!r.isError, body: r.structuredContent as Record<string, any> };
 }
 async function ok(ctx: ToolContext, name: string, args: Record<string, unknown> = {}) {
+  if (name === 'work_order_complete') await finishAllSteps(fx.storage, String(args.ref));
   const r = await call(ctx, name, args);
   expect(r.isError, `${name}: ${JSON.stringify(r.body)}`).toBe(false);
   return r.body;

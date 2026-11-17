@@ -143,9 +143,10 @@ describe('the work order carries the full plan', () => {
   });
 
   it('the plan helpers: render, criteria coverage, progress counts steps only', () => {
-    const md = renderPlan(PLAN as never);
-    expect(md).toContain('- [ ] Write the code');
-    expect(planProgress(md)).toEqual({ total: 2, done: 0, current: { index: 1, text: 'Write the code' } });
+    const steps = PLAN.steps.map((text, i) => ({ id: `s${i + 1}`, text, status: 'pending' as const, updatedAt: 't', by: 'a' }));
+    const md = renderPlan({ ...PLAN, steps } as never);
+    expect(md).toContain('- [ ] **s1** Write the code');
+    expect(planProgress(md)).toMatchObject({ total: 2, done: 0, current: { index: 1 } });
     const spec = { sections: [{ id: 's', type: 'markdown', verifiedBy: ['ac'] }, { id: 'ac', type: 'acceptance', title: 'AC' }, { id: 'old', type: 'acceptance', archived: true, title: 'Old' }] } as never;
     expect(coveredCriteria(spec, ['s']).map((c) => c.id)).toEqual(['ac']);
     expect(coveredCriteria(spec, ['ac']).map((c) => c.id)).toEqual(['ac']);

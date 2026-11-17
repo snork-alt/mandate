@@ -26,6 +26,7 @@ import { FeedbackList } from '../components/FeedbackParts';
 import { useFeedback, useHistory, useSpec, useStandards } from '../lib/queries';
 import { categoryLabel, isStale, KIND_LABEL, PRIORITY_META, useNow, withFrontmatter } from '../lib/specs';
 import { CodeTouched, CommentCount, CommentList, GitPanel, SectionProgress, WorkOrderGitSummary, WorkOrderViewContext } from '../components/work-orders/parts';
+import { PlanSteps } from '../components/work-orders/PlanSteps';
 import { WoSectionBadge } from '../components/work-orders/WoSection';
 import { plural } from '../lib/audits';
 import { SpecMaturityDot } from '../components/maturity/SpecMaturity';
@@ -197,6 +198,7 @@ export function WorkOrderPage() {
           <Markdown>{item.note}</Markdown>
         </blockquote>
       )}
+      {!!item.planSteps?.length && <PlanSteps steps={item.planSteps} spec={item.spec} />}
       {missing.includes('Plan') && !tracked.commit && (
         <div className="wo-plan-missing" data-testid="wo-plan-missing">
           <strong>Plan</strong>

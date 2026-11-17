@@ -69,7 +69,7 @@ Call \`project_info\`; follow \`effective\` (\`reason\` says why).
 1. \`work_order_next\` (picks and claims; then \`work_order_git_update\`) or \`work_order_claim { ref, git: [{ repo, branch,
    baseBranch, baseCommit, worktree: { path } }] }\`. Read it (\`get\`) and its comments (\`list\`). \`rules_for_code\` before
    editing a file: MUST is mandatory, SHOULD needs a stated reason to deviate.
-2. As you go: \`work_order_section_done\` per section (notes, codeRefs: files / lines / symbols are copied to the spec section, marked implemented by this work order; deviations), \`work_order_touch\` (files),
+2. As you go: \`work_order_step_set\` per plan step (\`in_progress\` when you start it, \`done\` when finished with codeRefs, \`skipped\` with a note; \`work_order_complete\` refuses with \`steps_unfinished\` otherwise), \`work_order_section_done\` per section (notes, codeRefs: files / lines / symbols are copied to the spec section, marked implemented by this work order; deviations), \`work_order_touch\` (files),
    \`work_order_git_update\` (commits, PR), \`work_order_heartbeat\` on long work.
 3. \`verification_record\` per acceptance criterion (pass, \`evidence.test\` = the test's name or \`repo:path#Lx-Ly\`, codeRefs). \`work_order_complete\` refuses (\`criteria_unproven\`) while a criterion it covers has no passing, test-linked result.
 4. Reconcile (\`section_update\`) spec and component text, code refs and symbols, owns globs with what was built (state deviations).

@@ -20,6 +20,8 @@ import { simpleModel } from './mock-model.js';
 import { createStorage, migrateWorkOrders, type Storage } from '../../src/storage/index.js';
 import { DocReadService } from '../../src/storage/read.js';
 import { DocViewService } from '../../src/storage/views.js';
+import { stepsOf } from '@mandate/shared';
+import { sectionBody } from '../../src/storage/work-order-docs.js';
 import { cleanupTempDirs, tempDir } from '../helpers.js';
 
 const SOURCE = process.env.MANDATE_FIXTURE_REPO ?? path.resolve(__dirname, '../../../../data/repo');
@@ -36,6 +38,8 @@ export interface McpFixture {
   served: ServedProjects;
   url: URL;
   client: Client;
+  /** Older tests complete work orders without caring about plan steps: finish them first (work-order-steps.test.ts turns this off). */
+  finishSteps: boolean;
   /** Full sha of HEAD and of an older commit that changed specs/login-sso.md. */
   head: string;
   older: string;
@@ -123,7 +127,7 @@ export async function mcpFixture(extra: Partial<ToolContext> = {}): Promise<McpF
   const history = await storage.history.log('specs/login-sso.md');
   const head = (await git.head())!;
   const older = history[Math.min(2, history.length - 1)]!.commit;
-  return {
+  const fixture: McpFixture = {
     dir,
     git,
     storage,
@@ -137,7 +141,9 @@ export async function mcpFixture(extra: Partial<ToolContext> = {}): Promise<McpF
     client,
     head,
     older,
+    finishSteps: true,
     async call(name, args) {
+      if (name === 'work_order_complete' && fixture.finishSteps) await finishAllSteps(storage, String((args as { ref?: string }).ref ?? ''), (args as { agent?: string }).agent);
       const r = await client.callTool({ name, arguments: args as Record<string, unknown> });
       return { isError: !!r.isError, body: (r.structuredContent ?? {}) as Record<string, any> };
     },
@@ -149,4 +155,13 @@ export async function mcpFixture(extra: Partial<ToolContext> = {}): Promise<McpF
       await cleanupTempDirs();
     },
   };
+  return fixture;
+}
+
+/** Older tests complete work orders without caring about plan steps: set the unfinished ones done (as the claim holder). */
+export async function finishAllSteps(storage: Storage, ref: string, agent?: string): Promise<void> {
+  const id = ref.split('/').pop()!;
+  const doc = await storage.workOrderService.doc(id).catch(() => null);
+  const open = doc ? stepsOf(doc, sectionBody(doc, 'plan')).filter((x) => x.status === 'pending' || x.status === 'in_progress') : [];
+  if (doc && open.length) await storage.workOrderService.stepSet(id, doc.claim?.agent ?? agent ?? 'agent', open.map((x) => ({ step: x.id, status: 'done' as const }))).catch(() => undefined);
 }

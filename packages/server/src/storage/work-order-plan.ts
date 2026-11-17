@@ -4,11 +4,11 @@
  * - `coveredCriteria` / `checkPlanTests`: the acceptance criteria a work order covers and the tests->criteria mapping;
  * - `applyCodeToSection`: copy the code a work order touched into a spec section's refs / symbols.
  */
-import type { CodeRef, PlanTest, Section, StoredSpec, TouchedFile, WorkOrderPlanInput } from '@mandate/shared';
+import { renderSteps, type CodeRef, type DesiredStep, type PlanStep, type PlanTest, type Section, type StoredSpec, type TouchedFile, type WorkOrderPlanInput } from '@mandate/shared';
 
 /** The plan as markdown (bold labels, no headings: the plan is one section of the work-order document). */
-export function renderPlan(plan: WorkOrderPlanInput): string {
-  const out: string[] = ['**Steps**', ...plan.steps.map((s) => `- [ ] ${s}`)];
+export function renderPlan(plan: Omit<WorkOrderPlanInput, 'steps'> & { steps: PlanStep[] }): string {
+  const out: string[] = ['**Steps**', ...renderSteps(plan.steps)];
   if (plan.files?.length) out.push('', '**Files to change**', ...plan.files.map((f) => `- ${f}`));
   if (plan.tests?.length) out.push('', '**Tests**', ...plan.tests.map((t) => `- ${t.name}${t.ref ? ` (\`${t.ref}\`)` : ''} proves: ${t.proves.join(', ')}`));
   if (plan.risks?.length) out.push('', '**Risks**', ...plan.risks.map((r) => `- ${r}`));
@@ -75,4 +75,19 @@ export function applyCodeToSection(section: Pick<Section, 'refs' | 'symbols'>, c
   }
   refs.sort((a, b) => a.repo.localeCompare(b.repo) || a.path.localeCompare(b.path) || String(a.lines ?? '').localeCompare(String(b.lines ?? ''), undefined, { numeric: true }));
   return { refs, symbols: [...symbols].sort() };
+}
+
+/** Problems of the links of steps: `sections` must be targets of the work order, `proves` acceptance criteria it covers. */
+export function checkStepLinks(steps: DesiredStep[], targets: string[], criteria: { id: string }[]): string[] {
+  const problems: string[] = [];
+  const t = new Set(targets);
+  const c = new Set(criteria.map((x) => x.id));
+  for (const s of steps) {
+    const label = `step "${s.text.slice(0, 50)}"`;
+    const badS = (s.sections ?? []).filter((x) => !t.has(x));
+    if (badS.length) problems.push(`${label} covers ${badS.join(', ')}: not a section of this work order (sections: ${targets.join(', ')})`);
+    const badP = (s.proves ?? []).filter((x) => !c.has(x));
+    if (badP.length) problems.push(`${label} proves ${badP.join(', ')}: not an acceptance criterion of the targeted sections (criteria: ${criteria.map((x) => x.id).join(', ') || 'none'})`);
+  }
+  return problems;
 }

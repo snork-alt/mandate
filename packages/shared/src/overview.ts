@@ -6,6 +6,7 @@
 import { z } from 'zod';
 import type { MaturityStep, SpecMaturity } from './maturity.js';
 import type { GitContext } from './work-orders.js';
+import { stepsProgress, type PlanStep } from './plan-steps.js';
 
 export const projectOverviewInputSchema = z
   .object({
@@ -51,8 +52,17 @@ export interface PlanProgress {
   total: number;
   /** Checked items (only when the plan uses checkboxes). */
   done?: number;
-  /** The first unchecked step (1-based index and text), when the plan uses checkboxes. */
-  current?: { index: number; text: string };
+  /** The current step (1-based index and text): the in-progress one, else the first unfinished; when the plan has steps. */
+  current?: { index: number; text: string; id?: string };
+  /** Structured steps (id, text, status, note) when the work order has them. */
+  steps?: { id: string; text: string; status: 'pending' | 'in_progress' | 'done' | 'skipped'; note?: string }[];
+}
+
+/** Progress from structured steps (finished = done or skipped; current = the in-progress step, else the first pending). */
+export function stepsPlanProgress(steps: PlanStep[]): PlanProgress | null {
+  if (!steps.length) return null;
+  const p = stepsProgress(steps);
+  return { total: p.total, done: p.done, ...(p.current ? { current: p.current } : {}), steps: steps.map((s) => ({ id: s.id, text: s.text, status: s.status, ...(s.note ? { note: s.note } : {}) })) };
 }
 
 /** Parse a plan's steps (pure). Null when the plan has no list. */
@@ -65,9 +75,9 @@ export function planProgress(md: string): PlanProgress | null {
   for (const line of md.split(/\r?\n/)) {
     if (/^\s*(```|~~~)/.test(line)) fence = !fence;
     if (fence) continue;
-    const m = /^(?:[-*+]|\d+[.)])\s+(?:\[([ xX])\]\s+)?(.*\S)\s*$/.exec(line);
+    const m = /^(?:[-*+]|\d+[.)])\s+(?:\[([ xX~-])\]\s+)?(.*\S)\s*$/.exec(line);
     if (!m) continue;
-    items.push({ text: m[2]!.replace(/[*_`]/g, ''), box: m[1] !== undefined, checked: m[1] === 'x' || m[1] === 'X' });
+    items.push({ text: m[2]!.replace(/[*_`]/g, ''), box: m[1] !== undefined, checked: m[1] === 'x' || m[1] === 'X' || m[1] === '-' });
   }
   if (!items.length) return null;
   if (!items.some((i) => i.box)) return { total: items.length };
