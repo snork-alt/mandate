@@ -11,6 +11,7 @@ const KINDS: Record<string, { ref: RefKind; kind: AskChip['kind'] }> = {
   standards: { ref: 'standards', kind: 'standard' },
   'work-orders': { ref: 'work-orders', kind: 'work_order' },
   feedback: { ref: 'feedback', kind: 'feedback' },
+  requests: { ref: 'feedback', kind: 'feedback' },
 };
 
 /**
@@ -25,7 +26,7 @@ export function chipsFromLocation(loc: { pathname: string; search: string; hash:
     const id = decodeURIComponent(qm[1]!);
     return [{ uri: buildQuestionRef(id), kind: 'question', label: id }];
   }
-  const m = /^\/(specs|standards|work-orders|feedback)\/([^/@]+)/.exec(loc.pathname);
+  const m = /^\/(specs|standards|work-orders|requests|feedback)\/([^/@]+)/.exec(loc.pathname);
   if (!m) return [];
   const { ref, kind } = KINDS[m[1]!]!;
   const id = decodeURIComponent(m[2]!);

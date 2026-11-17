@@ -25,7 +25,7 @@ describe('chipsFromLocation', () => {
   });
   it('covers work orders and feedback; lists have none', () => {
     expect(chipsFromLocation({ pathname: '/work-orders/q-0001', search: '', hash: '' })[0]!.kind).toBe('work_order');
-    expect(chipsFromLocation({ pathname: '/feedback/f-1', search: '', hash: '' })[0]!.kind).toBe('feedback');
+    expect(chipsFromLocation({ pathname: '/requests/f-1', search: '', hash: '' })[0]!.kind).toBe('feedback');
     expect(chipsFromLocation({ pathname: '/specs', search: '', hash: '' })).toEqual([]);
   });
 });

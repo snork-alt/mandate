@@ -11,18 +11,19 @@ import { api } from '../api';
 import { parseRef, refLabel } from '@mandate/shared/refs';
 import { DocPage, Pill, SectionBlock } from '../components/doc';
 import { TrackedSection } from '../components/doc/tracked';
-import { ActionBadge, FeedbackKindIcon, FeedbackStatus, TargetChip } from '../components/FeedbackParts';
+import { ActionBadge, FeedbackKindIcon, FeedbackStatus, QuestionChip, TargetChip, WorkOrderChip } from '../components/FeedbackParts';
 import { CommitHash } from '../components/copy';
 import { Alert } from '@mantine/core';
 import { IconAlertTriangle, IconLock } from '@tabler/icons-react';
 import { EmptyView, ErrorState } from '../components/ListStates';
 import { Markdown } from '../components/Markdown';
 import { Prop, PropGroup } from '../components/PropertyList';
-import { QuestionsPanel } from '../components/questions/QuestionsPanel';
 import { TimeAgo } from '../components/TimeAgo';
 import { TopBar } from '../components/TopBar';
 import { FEEDBACK_KIND_META, firstLine } from '../lib/feedback';
-import { useStandards } from '../lib/queries';
+import { useStandards, useWorkOrders } from '../lib/queries';
+import { useAllQuestions } from '../lib/questions';
+import { questionTitle, questionsByRequest, workOrdersByRequest } from '../lib/requestLinks';
 import { sectionTarget } from '../lib/refs';
 import { refHref } from '../components/refs/kinds';
 import { useNow, shortSubject } from '../lib/specs';
@@ -57,7 +58,7 @@ function TargetBlock({ t, standardTitles }: { t: ResolvedFeedbackTarget; standar
   );
 }
 
-/** Documents changed by commits carrying this item's `Feedback:` trailer. */
+/** Documents changed by commits carrying this request's `Request:` trailer. */
 function ResultingChanges({ changes }: { changes: FeedbackChange[] }) {
   return (
     <div className="fb-changes">
@@ -101,8 +102,10 @@ export function FeedbackItemPage() {
   const resolved = useQuery({ queryKey: ['feedback', id], queryFn: () => api.feedbackItem(id) });
   const history = useQuery({ queryKey: ['feedback', id, 'history'], queryFn: () => api.feedbackHistory(id) });
   const standards = useStandards();
+  const workOrders = useWorkOrders();
+  const questions = useAllQuestions();
   const standardTitles = useMemo(() => new Map((standards.data ?? []).map((s) => [s.id, s.title])), [standards.data]);
-  const crumbs = [{ label: 'Feedbacks', to: '/feedback' }, { label: <span className="mono">{id}</span>, kind: 'feedback' as const }];
+  const crumbs = [{ label: 'Requests', to: '/requests' }, { label: <span className="mono">{id}</span>, kind: 'feedback' as const }];
   const r = resolved.data;
   const sections = useMemo(() => (r?.targets ?? []).map((t) => t.section).filter((s): s is Section => !!s), [r]);
 
@@ -122,7 +125,7 @@ export function FeedbackItemPage() {
       <>
         <TopBar crumbs={crumbs} />
         {/not found/i.test(resolved.error?.message ?? '') ? (
-          <EmptyView icon={<IconFileOff size={22} stroke={1.5} />} title="Feedback not found" description={`There is no feedback "${id}".`} />
+          <EmptyView icon={<IconFileOff size={22} stroke={1.5} />} title="Request not found" description={`There is no request "${id}".`} />
         ) : (
           <ErrorState error={resolved.error ?? new Error('Unknown error')} onRetry={() => void resolved.refetch()} />
         )}
@@ -131,6 +134,8 @@ export function FeedbackItemPage() {
   }
 
   const { feedback: f } = r;
+  const myWorkOrders = workOrdersByRequest(workOrders.data ?? []).get(f.id) ?? [];
+  const myQuestions = questionsByRequest(questions.data?.items ?? []).get(f.id) ?? [];
   const header = (
     <>
       <div className="doc-kicker inline-icon">
@@ -150,8 +155,8 @@ export function FeedbackItemPage() {
       </div>
       {f.status !== 'closed' && (
         <div className="fb-decide" data-testid="fb-decide">
-          <span className="faint small">{f.status === 'open' ? 'Needs triage:' : 'Accepted; a coding agent acts on it.'}</span>
-          <ItemMenu label={f.id} prompt={decisionPrompt({ ref: buildRef({ kind: 'feedback', id: f.id }), question: f.status === 'open' ? `Accept, reject or mark as duplicate: "${firstLine(f.body)}"?` : `Act on accepted feedback ${f.id}: create a work order, or apply it and close it as applied?`, options: [], suggested: undefined })} actions={feedbackActions(buildRef({ kind: 'feedback', id: f.id }), f.id, { status: f.status === 'open' ? 'open' : 'accepted' })} />
+          <span className="faint small">No approval needed: a coding agent acts on it.</span>
+          <ItemMenu label={f.id} prompt={decisionPrompt({ ref: buildRef({ kind: 'feedback', id: f.id }), question: `Act on request ${f.id}: create a work order, or apply it and close it as applied?`, options: [], suggested: undefined })} actions={feedbackActions(buildRef({ kind: 'feedback', id: f.id }), f.id)} />
         </div>
       )}
     </>
@@ -166,7 +171,7 @@ export function FeedbackItemPage() {
       )}
       {f.targets.some((t) => !parseRef(t)?.sectionId) && (
         <Alert color="gray" variant="light" radius="md" mb="sm" title="Legacy target">
-          This closed item targets a whole document (before feedback had to target sections). Closed items are immutable, so it stays as is.
+          This closed request targets a whole document (before requests had to target sections). Closed items are immutable, so it stays as is.
         </Alert>
       )}
       {f.warnings.map((w) => (
@@ -181,7 +186,7 @@ export function FeedbackItemPage() {
           <div className="prop-group-title">Resolution · {f.resolution}</div>
           {f.resolution === 'duplicate' && f.duplicateOf && (
             <div>
-              Duplicate of <Link to={`/feedback/${f.duplicateOf}`} className="mono">{f.duplicateOf}</Link>
+              Duplicate of <Link to={`/requests/${f.duplicateOf}`} className="mono">{f.duplicateOf}</Link>
             </div>
           )}
           {f.resolutionNote && <div>{f.resolutionNote}</div>}
@@ -194,7 +199,7 @@ export function FeedbackItemPage() {
         <div className="fb-related">
           Related:{' '}
           {f.relatedTo.map((x) => (
-            <Link key={x} to={parseRef(x) ? (refHref(x) ?? '#') : `/feedback/${x}`} className="mono">
+            <Link key={x} to={parseRef(x) ? (refHref(x) ?? '#') : `/requests/${x}`} className="mono">
               {parseRef(x)?.id ?? x}
             </Link>
           ))}
@@ -202,8 +207,34 @@ export function FeedbackItemPage() {
       )}
       {f.changes.length > 0 && (
         <>
-          <h2 className="fb-h2">Resulting changes · {f.changes.length}</h2>
+          <h2 className="fb-h2">Spec changes · {f.changes.length}</h2>
           <ResultingChanges changes={f.changes} />
+        </>
+      )}
+      {myWorkOrders.length > 0 && (
+        <>
+          <h2 className="fb-h2">Work orders · {myWorkOrders.length}</h2>
+          <div className="fb-links" data-testid="fb-work-orders">
+            {myWorkOrders.map((w) => (
+              <span key={w.id} className="fb-link-row">
+                <WorkOrderChip w={w} />
+                <span className="faint small">{w.status.replace('_', ' ')}{w.title ? ` · ${w.title}` : ''}</span>
+              </span>
+            ))}
+          </div>
+        </>
+      )}
+      {myQuestions.length > 0 && (
+        <>
+          <h2 className="fb-h2">Questions · {myQuestions.length}</h2>
+          <div className="fb-links" data-testid="fb-questions">
+            {myQuestions.map((x) => (
+              <span key={x.id} className="fb-link-row">
+                <QuestionChip q={x} />
+                <span className="faint small">{x.status}{` · ${questionTitle(x)}`}</span>
+              </span>
+            ))}
+          </div>
         </>
       )}
       <h2 className="fb-h2">Targets</h2>
@@ -215,9 +246,8 @@ export function FeedbackItemPage() {
 
   const panels = (
     <>
-      <QuestionsPanel refUri={buildRef({ kind: 'feedback', id: f.id })} />
       <PropGroup title="Properties">
-        <Prop label="Status" to={`/feedback?status=${f.status}`}>
+        <Prop label="Status" to={`/requests?status=${f.status}`}>
           <FeedbackStatus status={f.status} resolution={f.resolution} />
         </Prop>
         {f.status === 'closed' && (
@@ -232,7 +262,7 @@ export function FeedbackItemPage() {
             <TimeAgo iso={f.closedAt} />
           </Prop>
         )}
-        <Prop label="Kind" to={`/feedback?kind=${f.kind}`}>
+        <Prop label="Kind" to={`/requests?kind=${f.kind}`}>
           <span className="inline-icon">
             <FeedbackKindIcon kind={f.kind} size={14} />
             {FEEDBACK_KIND_META[f.kind].label}
@@ -258,7 +288,7 @@ export function FeedbackItemPage() {
         sections={sections}
         content={content}
         quotes={f.quote ? r.targets.filter((t) => t.sectionId).map((t) => ({ id: f.id, sectionId: t.sectionId!, quote: f.quote! })) : []}
-        onQuoteClick={() => navigate(`/feedback/${f.id}`)}
+        onQuoteClick={() => navigate(`/requests/${f.id}`)}
         history={{ entries: history.data, loading: history.isPending, now }}
         panels={panels}
       />
@@ -267,7 +297,7 @@ export function FeedbackItemPage() {
 }
 
 /**
- * Who filed and last changed a feedback item: `createdBy` is the coding agent, `createdByUser` the user (server-set); the last edit comes from the newest history entry (its user / agent trailers).
+ * Who filed and last changed a request: `createdBy` is the coding agent, `createdByUser` the user (server-set); the last edit comes from the newest history entry (its user / agent trailers).
  */
 export function feedbackAttribution(
   f: { createdAt: string; createdBy?: string; createdByUser?: string },

@@ -9,7 +9,7 @@ import { dayKey, eventTarget, eventTitle } from './activity';
 
 export const RECENT_DAYS = 7;
 /** What "Recently changed" shows: content edits, completed work orders, closed feedback, audits. */
-export const RECENT_TYPES = ['spec.*', 'standard.*', 'component.*', 'work_order.completed', 'feedback.closed', 'audit.completed', 'audit.abandoned', 'audit.started'];
+export const RECENT_TYPES = ['spec.*', 'standard.*', 'component.*', 'work_order.completed', 'request.closed', 'audit.completed', 'audit.abandoned', 'audit.started'];
 
 export function useOverview() {
   return useQuery({ queryKey: ['overview'], queryFn: ({ signal }) => callTool<ProjectOverview>('project_overview', {}, signal), staleTime: 10_000 });
@@ -49,7 +49,7 @@ export interface RecentDay {
   items: RecentItem[];
 }
 
-const categoryOf = (t: string): RecentCategory => (t.startsWith('work_order.') ? 'work_order' : t.startsWith('feedback.') ? 'feedback' : t.startsWith('audit.') ? 'audit' : 'edit');
+const categoryOf = (t: string): RecentCategory => (t.startsWith('work_order.') ? 'work_order' : t.startsWith('request.') ? 'feedback' : t.startsWith('audit.') ? 'audit' : 'edit');
 const CONTENT = /^mandate:\/\/(specs|standards|components)\/[^/]+$/;
 
 /** Events (newest first) → days (newest first) → one item per (category, target), newest first. */

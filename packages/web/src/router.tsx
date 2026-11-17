@@ -48,6 +48,13 @@ function QueueRedirect() {
   return <Navigate to={`/work-orders${rest ? `/${rest}` : ''}${search}${hash}`} replace />;
 }
 
+/** Legacy `/feedback[/:id]` links (the feedback pages are now requests). */
+export function RequestsRedirect() {
+  const { id } = useParams();
+  const { search, hash } = useLocation();
+  return <Navigate to={`/requests${id ? `/${id}` : ''}${search}${hash}`} replace />;
+}
+
 /** Project pages (rendered under the `/p/<projectId>` basename). */
 export const projectRoutes: RouteObject[] = [
   {
@@ -107,8 +114,10 @@ export const projectRoutes: RouteObject[] = [
       },
       { path: 'work-orders/:id/history/:commit', element: version('work-orders') },
       { path: 'queue/*', element: <QueueRedirect /> },
-      { path: 'feedback', element: <FeedbackListPage /> },
-      { path: 'feedback/:id', element: <FeedbackItemPage /> },
+      { path: 'requests', element: <FeedbackListPage /> },
+      { path: 'requests/:id', element: <FeedbackItemPage /> },
+      { path: 'feedback', element: <RequestsRedirect /> },
+      { path: 'feedback/:id', element: <RequestsRedirect /> },
       { path: 'lineage', element: <LineagePage /> },
       { path: 'integrity', element: <IntegrityPage /> },
       { path: 'actions', element: <ActionsPage /> },

@@ -7,7 +7,7 @@ import { IconLock } from '@tabler/icons-react';
 import { relativeTime } from '../lib/time';
 import { StepIntro } from './widgets';
 import type { SectionProps } from './sections';
-import { AgentIcon, APPROVAL_TEXT, POLICY_TEXT, useFlowMutations, useFlowState, type FlowClient, type FlowProject, type FlowState, type Policy } from './flowApi';
+import { AgentIcon, POLICY_TEXT, useFlowMutations, useFlowState, type FlowClient, type FlowProject, type FlowState, type Policy } from './flowApi';
 
 function Locked({ children }: { children: React.ReactNode }) {
   return (
@@ -41,10 +41,10 @@ function ClientName({ c }: { c: FlowClient }) {
 }
 
 /** On / off state of one client setting (read-only: only the agent changes it, with /mandate-flow). */
-function State({ c, k }: { c: FlowClient; k: 'flow' | 'approval' }) {
+function State({ c, k }: { c: FlowClient; k: 'flow' }) {
   const on = c.effective[k] === 'on';
   const badge = (
-    <Badge size="sm" variant="light" color={on ? 'green' : 'gray'} aria-label={`${k === 'flow' ? 'Flow' : 'Approval'} for ${c.label}: ${on ? 'on' : 'off'}`} data-testid={`flow-${k}-${c.id}`}>
+    <Badge size="sm" variant="light" color={on ? 'green' : 'gray'} aria-label={`Flow for ${c.label}: ${on ? 'on' : 'off'}`} data-testid={`flow-${k}-${c.id}`}>
       {on ? 'On' : 'Off'}
     </Badge>
   );
@@ -56,12 +56,6 @@ function State({ c, k }: { c: FlowClient; k: 'flow' | 'approval' }) {
           <IconLock size={12} /> enforced by policy
         </Locked>
       </Group>
-    );
-  if (k === 'approval' && c.effective.flow === 'off')
-    return (
-      <Tooltip label="No effect while this agent's flow is off" withinPortal>
-        <span>{badge}</span>
-      </Tooltip>
     );
   return badge;
 }
@@ -81,7 +75,6 @@ function MyAgents({ p }: { p: FlowProject }) {
         <Table.Tr>
           <Table.Th>My agents</Table.Th>
           <Table.Th w={190}>Flow</Table.Th>
-          <Table.Th w={190}>Approval</Table.Th>
           {hasQuestions && (
             <Table.Th w={210}>
               <Tooltip label="Where the agent asks you questions: in the Mandate web UI (answer any time) or in the chat" withinPortal>
@@ -100,9 +93,6 @@ function MyAgents({ p }: { p: FlowProject }) {
             <Table.Td>
               <State c={c} k="flow" />
             </Table.Td>
-            <Table.Td>
-              <State c={c} k="approval" />
-            </Table.Td>
             {hasQuestions && (
               <Table.Td>
                 <Text size="sm" data-testid={`flow-questions-${c.id}`}>
@@ -115,7 +105,7 @@ function MyAgents({ p }: { p: FlowProject }) {
       </Table.Tbody>
       <Table.Caption>
         <Text size="xs" c="dimmed" data-testid={`flow-mine-hint-${p.id}`}>
-          Change it from the agent with <code>/mandate-flow on|off</code> (also <code>approval on|off</code>, <code>questions mandate|chat</code>).
+          Change it from the agent with <code>/mandate-flow on|off</code> (also <code>questions mandate|chat</code>).
         </Text>
       </Table.Caption>
     </Table>
@@ -151,7 +141,7 @@ function AllClients({ p }: { p: FlowProject }) {
             </Table.Td>
             <Table.Td>
               <Text size="sm">
-                flow {c.effective.flow} · approval {c.effective.approval}
+                flow {c.effective.flow}
                 {c.effective.questions && ` · questions ${c.effective.questions === 'chat' ? 'in chat' : 'via Mandate'}`}
               </Text>
             </Table.Td>
@@ -187,21 +177,6 @@ function PolicyControls({ p, admin }: { p: FlowProject; admin: boolean }) {
           {POLICY_TEXT[p.policy.flowPolicy].body}
         </Text>
       </div>
-      <div className="flow-policy-row">
-        <Text size="sm" fw={500}>
-          Approval policy
-        </Text>
-        <SegmentedControl
-          size="xs"
-          value={p.policy.approvalPolicy}
-          disabled={!admin || m.policy.isPending || p.policy.flowPolicy === 'off'}
-          onChange={(v) => set({ approvalPolicy: v as Policy['approvalPolicy'] })}
-          data={(['required', 'optional'] as const).map((v) => ({ value: v, label: APPROVAL_TEXT[v].label }))}
-        />
-        <Text size="xs" c="dimmed">
-          {APPROVAL_TEXT[p.policy.approvalPolicy].body}
-        </Text>
-      </div>
       {!admin && (
         <Text size="xs" c="dimmed">
           Only Mandate admins change the policy.
@@ -217,7 +192,7 @@ export function AgentFlowSection(_p: SectionProps) {
   return (
     <div className="su-section" data-testid="agent-flow">
       <StepIntro title="Agent flow">
-        With the flow on, coding agents record requests as feedback, update specs and components, and work through work orders; with approval on they show you the plan and wait for your go.
+        With the flow on, coding agents record your requests without asking for approval, update specs and components, and work through work orders; only their questions need you.
         Each agent client has its own setting, changed only from the agent with <code>/mandate-flow on|off</code>; with the flow off, Mandate refuses that agent&apos;s write requests. The
         project policy can require it or turn it off for everyone. Changes to standards always need your confirmation.
       </StepIntro>

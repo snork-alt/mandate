@@ -210,7 +210,7 @@ describe.each(['light', 'dark'] as const)('audits UI (%s)', (scheme) => {
     expect(groups).toEqual(['open', 'resolved']);
     expect(container.querySelector('#finding-f1 [data-severity="major"]')).toBeTruthy();
     expect(within(panel).getByText('wo-0042').closest('a')!.getAttribute('href')).toBe('/work-orders/wo-0042');
-    expect(within(panel).getByText('fb-0007').closest('a')!.getAttribute('href')).toBe('/feedback/fb-0007');
+    expect(within(panel).getByText('fb-0007').closest('a')!.getAttribute('href')).toBe('/requests/fb-0007');
     expect(within(panel).getByText('Re-checks')).toBeTruthy();
     // history + trend link to the audit pages
     expect(container.querySelectorAll('.audit-history a')).toHaveLength(2);

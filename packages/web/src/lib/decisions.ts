@@ -1,7 +1,7 @@
 /**
  * Human decisions from the web UI: the pending list (`decisions_list`, the same tool agents use), the caller's access
- * (`decision_access`), and the few `uiAllowed` write tools (accept / reject / duplicate feedback, release a stale claim,
- * snooze an integrity warning, confirm an approval override). Writes go through the same MCP tools as agents' (gates, commits, activity).
+ * (`decision_access`), and the few `uiAllowed` write tools (reject / duplicate requests, release a stale claim,
+ * snooze an integrity warning). Writes go through the same MCP tools as agents' (gates, commits, activity).
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { notifications } from '@mantine/notifications';
@@ -24,18 +24,14 @@ export function useDecisionAccess() {
 
 /** The UI-allowed write tools and their inputs. */
 export type DecisionAction =
-  | { tool: 'feedback_accept'; args: { ref: string; override?: boolean; overrideReason?: string } }
-  | { tool: 'feedback_close'; args: { ref: string; resolution: 'rejected' | 'duplicate'; resolutionNote?: string; duplicateOf?: string } }
+  | { tool: 'request_close'; args: { ref: string; resolution: 'rejected' | 'duplicate'; resolutionNote?: string; duplicateOf?: string } }
   | { tool: 'work_order_release'; args: { ref: string } }
-  | { tool: 'integrity_snooze'; args: { rule: string; uri: string; days: number; note: string } }
-  | { tool: 'approval_override_confirm'; args: { ref: string; note: string } };
+  | { tool: 'integrity_snooze'; args: { rule: string; uri: string; days: number; note: string } };
 
 export const ACTION_DONE: Record<DecisionAction['tool'], string> = {
-  feedback_accept: 'Feedback accepted',
-  feedback_close: 'Feedback closed',
+  request_close: 'Request closed',
   work_order_release: 'Claim released',
   integrity_snooze: 'Warning snoozed',
-  approval_override_confirm: 'Override confirmed',
 };
 
 /** Run one decision; toasts the result (and any integrity issue it introduced); the activity event refreshes the rest. */

@@ -173,8 +173,8 @@ function Resolution({ f }: { f: AuditFinding }) {
   if (r.feedback) {
     const id = refId(r.feedback);
     items.push(
-      <Link key="fb" to={`/feedback/${id}`} className="audit-link">
-        <IconMessageReport size={13} /> Feedback <span className="mono">{id}</span>
+      <Link key="fb" to={`/requests/${id}`} className="audit-link">
+        <IconMessageReport size={13} /> Request <span className="mono">{id}</span>
         {r.feedbackStatus && <span className="faint"> · {r.feedbackStatus.replace(/_/g, ' ')}</span>}
       </Link>,
     );

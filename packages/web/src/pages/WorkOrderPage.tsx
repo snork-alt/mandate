@@ -287,7 +287,7 @@ export function WorkOrderPage() {
           )}
         </PropGroup>
       )}
-      <PropGroup title={`Feedback · ${filed.length}`}>
+      <PropGroup title={`Requests · ${filed.length}`}>
         <FeedbackList items={filed} />
       </PropGroup>
       <QuestionsPanel refUri={uri} />

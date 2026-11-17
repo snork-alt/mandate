@@ -127,7 +127,7 @@ describe('AvatarStack', () => {
     const list = await screen.findByTestId('contributors-list');
     const heads = Array.from(list.querySelectorAll('.pp-list-head')).map((h) => h.textContent);
     expect(heads).toEqual(['Edited by', 'Contributed via Rotate tokens']);
-    expect(within(list).getByText('Rotate tokens').closest('a')!.getAttribute('href')).toBe('/feedback/fb-0007');
+    expect(within(list).getByText('Rotate tokens').closest('a')!.getAttribute('href')).toBe('/requests/fb-0007');
     expect(list.textContent).toContain('also via fb-0007');
   });
   it('fetches contributors in one batched call', async () => {

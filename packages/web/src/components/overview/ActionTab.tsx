@@ -1,6 +1,6 @@
 /**
- * The Actions page (was the Overview tab "Action needed"): one tab per kind (questions from agents, feedback, waivers,
- * standard drafts, stale claims, approval overrides, contradicted audits, drifted specs, integrity errors, then specs
+ * The Actions page (was the Overview tab "Action needed"): one tab per kind (questions from agents, waivers,
+ * standard drafts, stale claims, contradicted audits, drifted specs, integrity errors, then specs
  * needing attention, open must findings, blocked items) with flat rows and inline actions.
  */
 import { useMemo } from "react";
@@ -51,7 +51,6 @@ import { useSpecs, useStandards } from "../../lib/queries";
 import { Capped, Card, Empty, TabCount, When, plural } from "./parts";
 import { AnswerAllRecommended, NO_ACCESS } from "../questions/QuestionCard";
 import { OpenQuestionsGrouped } from "../questions/OpenQuestionsGrouped";
-import { FeedbackTab } from "./FeedbackTab";
 import { BlockedTab } from "./BlockedTab";
 import { FindingsTab } from "./FindingsTab";
 
@@ -61,10 +60,7 @@ const CAP = 5;
 
 export const DECISION_GROUP: Record<DecisionKind, string> = {
   integrity_error: "Integrity errors",
-  feedback_open: "Open feedback",
-  feedback_accepted: "Accepted feedback without a work order",
   waiver_pending: "Waivers not in effect",
-  approval_override: "Approval overrides to review",
   standard_draft: "Draft standards awaiting confirmation",
   stale_claim: "Stale claims",
   audit_contradicted: "Contradicted audit passes",
@@ -74,10 +70,6 @@ export const DECISION_GROUP: Record<DecisionKind, string> = {
 
 /** Direct decisions per kind (pure human decisions only); everything else goes through the agent prompt. */
 export function decisionActions(d: Decision): ItemAction[] {
-  if (d.kind === "feedback_open")
-    return feedbackActions(d.ref, d.title, { status: "open" }).map((a) => (a.id === "reject" ? { ...a, label: "Decline", inline: true } : a));
-  if (d.kind === "feedback_accepted")
-    return feedbackActions(d.ref, d.title, { status: "accepted" });
   if (d.kind === "stale_claim") {
     const m = /^claimed by (\S+); last heartbeat (.+)$/.exec(d.context ?? "");
     return [
@@ -94,39 +86,7 @@ export function decisionActions(d: Decision): ItemAction[] {
       },
     ];
   }
-  if (d.kind === "approval_override")
-    return [
-      {
-        id: "confirm",
-        label: "Confirm override",
-        primary: true,
-        dialog: { type: "confirm_override", ref: d.ref, title: d.ref.split("/").pop() ?? d.ref },
-      },
-    ];
-  if (d.kind === "waiver_pending" && d.feedback) {
-    const fb = buildRef({ kind: "feedback", id: d.feedback });
-    const title = `${d.feedback} (waiver of ${d.title})`;
-    return [
-      {
-        id: "approve",
-        label: d.selfApproval ? "Approve with override" : "Approve",
-        primary: true,
-        dialog: {
-          type: "accept",
-          ref: fb,
-          title,
-          selfApproval: d.selfApproval,
-        },
-      },
-      {
-        id: "decline",
-        label: "Decline",
-        danger: true,
-        inline: true,
-        dialog: { type: "reject", ref: fb, title },
-      },
-    ];
-  }
+  // Waivers have no direct action: the user approves them by answering the agent's approval question.
   return [];
 }
 
@@ -135,10 +95,7 @@ const FindingIcon = KIND_ICON.finding;
 /** Icon per decision kind (tinted in CSS by data-kind). */
 const GROUP_ICON: Partial<Record<DecisionKind, typeof IconGavel>> = {
   integrity_error: IconAlertTriangle,
-  feedback_open: KIND_ICON.feedback,
-  feedback_accepted: KIND_ICON.feedback,
   waiver_pending: IconShieldOff,
-  approval_override: IconUserCheck,
   standard_draft: KIND_ICON.standard,
   stale_claim: IconClockPause,
   audit_contradicted: KIND_ICON.audit,
@@ -147,7 +104,7 @@ const GROUP_ICON: Partial<Record<DecisionKind, typeof IconGavel>> = {
 
 /* ---------------------------------------------------------------- tabs */
 
-export type ActionTabKey = 'questions' | 'feedback' | 'waivers' | 'drafts' | 'claims' | 'overrides' | 'audits' | 'drift' | 'integrity' | 'attention' | 'findings' | 'blocked';
+export type ActionTabKey = 'questions' | 'waivers' | 'drafts' | 'claims' | 'audits' | 'drift' | 'integrity' | 'attention' | 'findings' | 'blocked';
 
 interface TabDef {
   key: ActionTabKey;
@@ -164,13 +121,11 @@ interface TabDef {
 /** Every decision kind has exactly one tab, plus the Overview lists (blocked, must findings, specs needing attention). */
 export const ACTION_TABS: TabDef[] = [
   { key: 'questions', label: 'Questions', icon: KIND_ICON.question, kinds: ['question'], empty: { title: 'All questions answered', text: 'Coding agents continue with your answers. New questions show up here, and in the sidebar count.' } },
-  { key: 'feedback', label: 'Feedback', icon: KIND_ICON.feedback, kinds: ['feedback_open', 'feedback_accepted'], hint: 'Accept to plan it, or decline with a reason', empty: { title: 'No open feedback', text: 'Feedback from people and coding agents waits here until you accept or decline it.' } },
   { key: 'blocked', label: 'Blocked', icon: IconLock, empty: { title: 'Nothing is blocked', text: 'Sections and work orders show up here when they depend on work that is not implemented yet.' } },
   { key: 'findings', label: 'Must findings', icon: KIND_ICON.finding, empty: { title: 'No open must findings', text: 'Must findings of the latest audits appear here until a fix work order resolves them.' } },
-  { key: 'waivers', label: 'Waivers', icon: IconShieldOff, kinds: ['waiver_pending'], hint: 'A waiver does not apply until you approve it', empty: { title: 'No waivers waiting', text: 'Requested exceptions to a standard wait here for your approval.' } },
+  { key: 'waivers', label: 'Waivers', icon: IconShieldOff, kinds: ['waiver_pending'], hint: 'A waiver does not apply until you approve it by answering the agent\'s approval question', empty: { title: 'No waivers waiting', text: 'Requested exceptions to a standard wait here until you approve them by answering an approval question.' } },
   { key: 'drafts', label: 'Standard drafts', icon: KIND_ICON.standard, kinds: ['standard_draft'], hint: 'Drafted from the code; confirm to make them binding', empty: { title: 'No standard drafts', text: 'Standards your coding agent drafts from the code wait here for your confirmation.' } },
   { key: 'claims', label: 'Claims', icon: IconClockPause, kinds: ['stale_claim'], hint: 'Work orders nobody is moving: release the claim so another agent can continue', empty: { title: 'No stale claims', text: 'Work orders whose coding agent stopped sending heartbeats show up here.' } },
-  { key: 'overrides', label: 'Overrides', icon: IconUserCheck, kinds: ['approval_override'], hint: 'Self-approved acceptances: a second person confirms them', empty: { title: 'No approval overrides to review', text: 'Acceptances someone approved for their own change show up here for a second review.' } },
   { key: 'audits', label: 'Audits', icon: KIND_ICON.audit, kinds: ['audit_contradicted'], hint: 'Audit passes that later evidence contradicts', empty: { title: 'No contradicted audits', text: 'Audit passes contradicted by later verification show up here.' } },
   { key: 'drift', label: 'Drift', icon: IconGitCompare, kinds: ['spec_drifted'], hint: 'Done specs whose code changed after they were verified', empty: { title: 'No drifted specs', text: 'Done specs whose code changed since they were verified show up here.' } },
   { key: 'integrity', label: 'Integrity', icon: IconAlertTriangle, kinds: ['integrity_error'], hint: 'Errors in the project records: fix them with your coding agent', empty: { title: 'No integrity errors', text: 'Broken references and invalid records show up here.' } },
@@ -213,9 +168,8 @@ export function pickActionTab(url: string | null, focus: AttentionFocus | undefi
 const shortId = (ref: string) => ref.split('/').pop() ?? ref;
 
 /** One decision as a flat row: icon, id + title (+ tags), one muted line of why and age, then inline actions and the "…" menu. */
-function DecisionRow({ d, overrideOk }: { d: Decision; overrideOk: boolean }) {
-  // Self-approvals are offered only to eligible users (admins / sole active user).
-  const actions = decisionActions(d).filter((a) => !(a.dialog.type === "accept" && a.dialog.selfApproval && !overrideOk));
+function DecisionRow({ d }: { d: Decision }) {
+  const actions = decisionActions(d);
   const suggested = d.suggested ? d.options.find((x) => x.id === d.suggested)?.label : undefined;
   const why = d.context ?? d.question;
   const prompt = decisionPrompt(d);
@@ -344,7 +298,7 @@ function QuestionsTab({ items }: { items: Decision[] }) {
   );
 }
 
-function DecisionTab({ t, items, counts, overrideOk }: { t: TabDef; items: Decision[]; counts: DecisionsList["counts"]; overrideOk: boolean }) {
+function DecisionTab({ t, items, counts }: { t: TabDef; items: Decision[]; counts: DecisionsList["counts"] }) {
   const groups = (t.kinds ?? []).map((k) => ({ k, items: items.filter((d) => d.kind === k) })).filter((g) => g.items.length);
   const listed = groups.reduce((n, g) => n + g.items.length, 0);
   const total = (t.kinds ?? []).reduce((n, k) => n + (counts[k] ?? 0), 0);
@@ -367,7 +321,7 @@ function DecisionTab({ t, items, counts, overrideOk }: { t: TabDef; items: Decis
           {groups.length > 1 && <SubHead title={DECISION_GROUP[g.k]} n={counts[g.k] ?? g.items.length} />}
           <ul className="act-rows">
             {g.items.map((d) => (
-              <DecisionRow key={`${d.kind}|${d.ref}`} d={d} overrideOk={overrideOk} />
+              <DecisionRow key={`${d.kind}|${d.ref}`} d={d} />
             ))}
           </ul>
         </div>
@@ -392,12 +346,10 @@ export function ActionTabs({
   o,
   q,
   projectId,
-  overrideOk,
 }: {
   o: ProjectOverview;
   q: { data?: DecisionsList; isPending: boolean; error: unknown };
   projectId: string;
-  overrideOk: boolean;
 }) {
   const [params, setParams] = useSearchParams();
   const focus = (params.get("focus") ?? undefined) as AttentionFocus | undefined;
@@ -439,8 +391,7 @@ export function ActionTabs({
     if (counts[t.key] === 0) return <TabEmpty t={t} />;
     if (t.key === "questions") return <QuestionsTab items={items.filter((d) => d.kind === "question")} />;
     if (t.key === "blocked") return <BlockedTab o={o} projectId={projectId} others={otherTabs} onOpen={(k) => select(k as ActionTabKey)} />;
-    if (t.key === "feedback") return <FeedbackTab items={items} counts={q.data!.counts} actionsOf={(d) => decisionActions(d).filter((a) => !(a.dialog.type === "accept" && a.dialog.selfApproval && !overrideOk))} />;
-    return <DecisionTab t={t} items={items} counts={q.data!.counts} overrideOk={overrideOk} />;
+    return <DecisionTab t={t} items={items} counts={q.data!.counts} />;
   };
   return (
     <Tabs value={tab} onChange={(v) => v && select(v as ActionTabKey)} keepMounted={false} className="ov-tabs act-tabs" activateTabWithKeyboard>

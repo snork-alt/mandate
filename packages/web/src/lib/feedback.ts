@@ -18,16 +18,20 @@ export const FEEDBACK_KIND_META: Record<FeedbackKind, { label: string; icon: typ
 
 export const FEEDBACK_STATUS_META: Record<FeedbackStatus, { label: string }> = {
   open: { label: 'Open' },
-  accepted: { label: 'Accepted' },
+  // Legacy: `accepted` behaves like open (requests need no approval).
+  accepted: { label: 'Open' },
   closed: { label: 'Closed' },
 };
-export const FEEDBACK_STATUS_ORDER: FeedbackStatus[] = ['open', 'accepted', 'closed'];
+export const FEEDBACK_STATUS_ORDER: FeedbackStatus[] = ['open', 'closed'];
 
 export const RESOLUTION_META: Record<FeedbackResolution, { label: string; glyph: string }> = {
   applied: { label: 'Applied', glyph: '✓' },
   rejected: { label: 'Rejected', glyph: '✕' },
   duplicate: { label: 'Duplicate', glyph: '⧉' },
 };
+
+/** Requests need no approval: the legacy `accepted` status is shown (and filtered) as `open`. */
+export const normalizeFeedback = <T extends { status: FeedbackStatus }>(f: T): T => (f.status === 'accepted' ? { ...f, status: 'open' } : f);
 
 export type FeedbackSort = 'created-desc' | 'created-asc' | 'updated' | 'closed' | 'kind';
 export const FEEDBACK_SORTS: { value: FeedbackSort; label: string }[] = [
@@ -66,10 +70,10 @@ export function targetLabel(target: string, titles?: Map<string, string>): { kin
   };
 }
 
-/** Agent-ready summary of a feedback item. */
+/** Agent-ready summary of a request. */
 export function feedbackMarkdown(f: Feedback): string {
   const lines = [
-    `# Feedback ${f.id} · ${f.kind} · ${f.status}${f.resolution ? ` (${f.resolution})` : ''}`,
+    `# Request ${f.id} · ${f.kind} · ${f.status}${f.resolution ? ` (${f.resolution})` : ''}`,
     refMention({ kind: 'feedback', id: f.id }),
     '',
     `Targets: ${f.targets.map(mentionOf).join(', ')}`,

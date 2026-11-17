@@ -15,6 +15,7 @@ export const FAMILY_ICON: Record<string, ReactNode> = {
   spec: famIcon('spec'),
   standard: famIcon('standard'),
   work_order: famIcon('work_order'),
+  request: famIcon('feedback'),
   feedback: famIcon('feedback'),
   verification: famIcon('verification'),
   audit: famIcon('audit'),

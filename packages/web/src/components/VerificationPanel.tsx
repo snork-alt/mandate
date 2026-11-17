@@ -18,7 +18,7 @@ function Row({ c, href }: { c: CriterionState; href: string }) {
   const tip = [
     c.waiver &&
       (c.waiver.effective
-        ? `Waived via feedback ${c.waiver.feedback} (deviation in § ${c.waiver.section}: ${c.waiver.note})`
+        ? `Waived via approval ${c.waiver.feedback} (deviation in § ${c.waiver.section}: ${c.waiver.note})`
         : `Deviation in § ${c.waiver.section} not in effect (${c.waiver.reason?.replace('_', ' ')}): ${c.waiver.note}`),
     c.staleReason,
     c.path?.length ? `Applies via ${c.path.join(' → ')}` : '',

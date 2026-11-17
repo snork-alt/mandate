@@ -13,8 +13,8 @@ afterEach(() => {
 });
 
 const client = (o: Partial<FlowClient>): FlowClient => ({
-  id: 'ada/claude-code', label: 'Claude Code', client: 'claude-code', user: 'ada', version: '2.1', flow: null, approval: null, updatedAt: null, updatedVia: null,
-  lastSeenAt: new Date().toISOString(), effective: { flow: 'on', approval: 'on' }, locked: { flow: false, approval: false }, ...o,
+  id: 'ada/claude-code', label: 'Claude Code', client: 'claude-code', user: 'ada', version: '2.1', flow: null, updatedAt: null, updatedVia: null,
+  lastSeenAt: new Date().toISOString(), effective: { flow: 'on' }, locked: { flow: false }, ...o,
 });
 
 function serve(state: FlowState) {
@@ -33,11 +33,12 @@ const mount = () => render(<AgentFlowSection state={{} as never} register={() =>
 
 describe('Settings → Agent flow', () => {
   it('my agents: read-only state (changed only from the agent); the policy is admin-only', async () => {
-    const calls = serve({ mode: 'server', admin: false, user: 'ada', projects: [{ id: 'web', name: 'Web', policy: { flowPolicy: 'optional', approvalPolicy: 'optional' }, mine: [client({ effective: { flow: 'off', approval: 'on' } })] }] });
+    const calls = serve({ mode: 'server', admin: false, user: 'ada', projects: [{ id: 'web', name: 'Web', policy: { flowPolicy: 'optional' }, mine: [client({ effective: { flow: 'off' } })] }] });
     mount();
     const st = await screen.findByLabelText('Flow for Claude Code: off');
     expect(st.textContent).toBe('Off');
-    expect(screen.getByLabelText('Approval for Claude Code: on')).toBeTruthy();
+    expect(screen.queryByLabelText(/Approval for/)).toBeNull();
+    expect(screen.queryByText(/Approval/)).toBeNull();
     expect(screen.queryByRole('switch')).toBeNull();
     expect(document.querySelector('input[type="checkbox"]')).toBeNull();
     fireEvent.click(st);
@@ -50,7 +51,7 @@ describe('Settings → Agent flow', () => {
   it('locked by policy: state with "enforced by policy"; admins see all clients', async () => {
     serve({
       mode: 'server', admin: true, user: 'ada',
-      projects: [{ id: 'web', name: 'Web', policy: { flowPolicy: 'required', approvalPolicy: 'optional' }, mine: [client({ locked: { flow: true, approval: false } })], all: [client({}), client({ id: 'bob/codex', label: 'Codex', client: 'codex', user: 'bob' })] }],
+      projects: [{ id: 'web', name: 'Web', policy: { flowPolicy: 'required' }, mine: [client({ locked: { flow: true } })], all: [client({}), client({ id: 'bob/codex', label: 'Codex', client: 'codex', user: 'bob' })] }],
     });
     mount();
     expect((await screen.findByLabelText('Flow for Claude Code: on')).textContent).toBe('On');
@@ -59,9 +60,24 @@ describe('Settings → Agent flow', () => {
   });
 });
 
+describe('Settings → Agent flow: no approval', () => {
+  it('no Approval column or policy; the policy PUT carries only flowPolicy', async () => {
+    const calls = serve({ mode: 'server', admin: true, user: 'ada', projects: [{ id: 'web', name: 'Web', policy: { flowPolicy: 'optional' }, mine: [client({})], all: [client({})] }] });
+    mount();
+    await screen.findByTestId('flow-mine-web');
+    expect(screen.queryByText(/^Approval/)).toBeNull();
+    expect(screen.queryByLabelText(/Approval/)).toBeNull();
+    expect(screen.getByTestId('flow-mine-hint-web').textContent).toContain('questions mandate|chat');
+    expect(screen.getByTestId('flow-all-web').textContent).toContain('flow on');
+    fireEvent.click(screen.getByText('Required'));
+    await vi.waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true));
+    expect(calls.find((c) => c.method === 'PUT')!.body).toEqual({ flowPolicy: 'required' });
+  });
+});
+
 describe('Settings → Agent flow: questions', () => {
   it('per client: via Mandate (default) | in chat, shown read-only', async () => {
-    serve({ mode: 'server', admin: false, user: 'ada', projects: [{ id: 'web', name: 'Web', policy: { flowPolicy: 'optional', approvalPolicy: 'optional' }, mine: [client({ questions: null, effective: { flow: 'on', approval: 'on', questions: 'mandate' } }), client({ id: 'ada/codex', label: 'Codex', client: 'codex', questions: 'chat', effective: { flow: 'on', approval: 'on', questions: 'chat' } })] }] });
+    serve({ mode: 'server', admin: false, user: 'ada', projects: [{ id: 'web', name: 'Web', policy: { flowPolicy: 'optional' }, mine: [client({ questions: null, effective: { flow: 'on', questions: 'mandate' } }), client({ id: 'ada/codex', label: 'Codex', client: 'codex', questions: 'chat', effective: { flow: 'on', questions: 'chat' } })] }] });
     mount();
     expect((await screen.findByTestId('flow-questions-ada/claude-code')).textContent).toBe('Via Mandate');
     expect(screen.getByTestId('flow-questions-ada/codex').textContent).toBe('In chat');
@@ -69,7 +85,7 @@ describe('Settings → Agent flow: questions', () => {
   });
 
   it('older servers without the field: no questions column', async () => {
-    serve({ mode: 'server', admin: false, user: 'ada', projects: [{ id: 'web', name: 'Web', policy: { flowPolicy: 'optional', approvalPolicy: 'optional' }, mine: [client({})] }] });
+    serve({ mode: 'server', admin: false, user: 'ada', projects: [{ id: 'web', name: 'Web', policy: { flowPolicy: 'optional' }, mine: [client({})] }] });
     mount();
     await screen.findByLabelText('Flow for Claude Code: on');
     expect(screen.queryByTestId('flow-questions-ada/claude-code')).toBeNull();
@@ -78,12 +94,12 @@ describe('Settings → Agent flow: questions', () => {
 });
 
 describe('badge summary', () => {
-  const p = (o: Partial<FlowProject>): FlowProject => ({ id: 'web', name: 'Web', policy: { flowPolicy: 'optional', approvalPolicy: 'optional' }, mine: [], ...o });
+  const p = (o: Partial<FlowProject>): FlowProject => ({ id: 'web', name: 'Web', policy: { flowPolicy: 'optional' }, mine: [], ...o });
   it('shows my effective state', () => {
-    expect(flowSummary(p({ policy: { flowPolicy: 'required', approvalPolicy: 'optional' } })).label).toBe('Flow: required');
-    expect(flowSummary(p({ policy: { flowPolicy: 'off', approvalPolicy: 'optional' } })).label).toBe('Flow: off');
+    expect(flowSummary(p({ policy: { flowPolicy: 'required' } })).label).toBe('Flow: required');
+    expect(flowSummary(p({ policy: { flowPolicy: 'off' } })).label).toBe('Flow: off');
     expect(flowSummary(p({ mine: [client({}), client({ id: 'x' })] })).label).toBe('Flow on · 2 agents');
-    expect(flowSummary(p({ mine: [client({}), client({ id: 'x', effective: { flow: 'off', approval: 'on' } })] }))).toEqual({ label: 'Flow 1/2 on', tone: 'mixed' });
+    expect(flowSummary(p({ mine: [client({}), client({ id: 'x', effective: { flow: 'off' } })] }))).toEqual({ label: 'Flow 1/2 on', tone: 'mixed' });
     expect(flowSummary(p({})).label).toBe('Flow on');
   });
 });

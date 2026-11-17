@@ -90,7 +90,7 @@ export function VersionBanner({ tracked, missing }: { tracked: TrackedState; /**
             </Tooltip>
             <span className="version-banner-subject">“{shortSubject(m.subject)}”</span>
             {m.trailers.Feedback && (
-              <Link to={`/feedback/${m.trailers.Feedback}`} className="fb-target">
+              <Link to={`/requests/${m.trailers.Feedback}`} className="fb-target">
                 applies {m.trailers.Feedback}
               </Link>
             )}

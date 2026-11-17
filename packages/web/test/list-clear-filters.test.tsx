@@ -50,7 +50,7 @@ const where = () => screen.getByTestId('where').textContent ?? '';
 
 describe('list "Clear" removes every filter in one URL update', () => {
   it('Feedback list: kind, status, resolution and target all cleared; grouping kept', async () => {
-    mount(<FeedbackListPage />, '/feedback?kind=bug&status=closed&resolution=applied&target=specs&group=none', { feedback: [], 'work-orders': [], specs: [], standards: [] });
+    mount(<FeedbackListPage />, '/requests?kind=bug&status=closed&resolution=applied&target=specs&group=none', { feedback: [], 'work-orders': [], specs: [], standards: [] });
     fireEvent.click(await screen.findByText('Clear'));
     await waitFor(() => expect(where()).toBe('?group=none'));
   });

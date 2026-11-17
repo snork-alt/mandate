@@ -5,7 +5,7 @@
  * and the top bar a "Getting started" button to reopen it.
  */
 import { ActionIcon, Button, Checkbox, Modal, UnstyledButton } from '@mantine/core';
-import { IconArrowRight, IconCheck, IconCode, IconFileText, IconPlugConnected, IconShieldCheck, IconSparkles, IconX } from '@tabler/icons-react';
+import { IconArrowRight, IconCheck, IconCode, IconFileText, IconPlugConnected, IconSparkles, IconX } from '@tabler/icons-react';
 import { useState, type ReactNode } from 'react';
 import { useAuth } from '../auth';
 import { AgentMark } from './AgentMark';
@@ -237,19 +237,15 @@ export function GettingStartedModal({
                 </div>
               </PathCard>
               <PathCard selected={path === 'new'} onSelect={() => setPath('new')} icon={<IconSparkles size={22} stroke={1.7} />} title="New project" testId="gs-new">
-                <div className="gs-pd">Describe what you want to build to your coding agent. Mandate turns it into a plan you approve.</div>
+                <div className="gs-pd">Describe what you want to build to your coding agent. Mandate records it as a request and turns it into specs and work orders.</div>
                 <div className="gs-pipe">
-                  <span className="gs-pipe-n">Feedback</span>
+                  <span className="gs-pipe-n">Request</span>
                   <IconArrowRight size={13} className="gs-pipe-ar" />
                   <span className="gs-pipe-n">Specs</span>
                   <IconArrowRight size={13} className="gs-pipe-ar" />
-                  <span className="gs-pipe-n" data-gate>
-                    <IconShieldCheck size={13} /> You approve
-                  </span>
-                  <IconArrowRight size={13} className="gs-pipe-ar" />
                   <span className="gs-pipe-n">Work orders</span>
                 </div>
-                <div className="gs-pnote">The agent files your idea as feedback, drafts specs, and opens work orders only after you approve them.</div>
+                <div className="gs-pnote">The agent records your idea as a request and works without asking for approval; only its questions need you.</div>
                 <div className="gs-pcmd" onClick={(e) => e.stopPropagation()}>
                   <span className="gs-pcmd-v">“{NEW_PROJECT_PROMPT}”</span>
                   <CopyBtn value={NEW_PROJECT_PROMPT} label="example prompt" tone={path === 'new' ? 'primary' : 'default'} title="Copied prompt" />

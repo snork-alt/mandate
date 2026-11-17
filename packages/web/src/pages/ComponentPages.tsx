@@ -320,7 +320,7 @@ export function ComponentDetailPage() {
             ))}
           </span>
         </Prop>
-        <Prop label="Open feedback">{c.openFeedback ?? 0}</Prop>
+        <Prop label="Open requests">{c.openFeedback ?? 0}</Prop>
       </PropGroup>
     </>
   );

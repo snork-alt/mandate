@@ -6991,3 +6991,14 @@ button.flow-badge {
   max-height: 240px;
   object-fit: contain;
 }
+
+/* Request page: work orders and questions linked to it. */
+.fb-links { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.fb-link-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.fb-question-chip { cursor: pointer; }
+.fb-change-chip { white-space: nowrap; }
+
+/* Acceptance criteria: "Proved by <test>" rows in the section meta. */
+.proved-by { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; width: 100%; }
+.proved-by-item { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.chip-test { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

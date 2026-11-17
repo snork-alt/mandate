@@ -51,7 +51,7 @@ function SpecLink({ id, spec }: { id: string; spec?: Spec }) {
 }
 
 /** "Implemented @abc1234" / "Outdated" / "Not implemented", plus links to open work orders for the section. */
-function ImplementationBadge({ state, openItems }: { state?: { implementedCommit?: string; outdated: boolean }; openItems: WorkOrder[] }) {
+export function ImplementationBadge({ state, openItems, by }: { state?: { implementedCommit?: string; outdated: boolean }; openItems: WorkOrder[]; /** Work order that delivered the implementation (`implementedBy`). */ by?: string }) {
   return (
     <span className="impl-badges">
       {!state ? (
@@ -68,6 +68,13 @@ function ImplementationBadge({ state, openItems }: { state?: { implementedCommit
         <span className="impl-badge" data-state="done">
           <IconCircleCheckFilled size={12} /> Implemented {state.implementedCommit && <CommitHash sha={state.implementedCommit} className="impl-commit" />}
         </span>
+      )}
+      {by && (
+        <Tooltip label={`Implemented by work order ${by}`} openDelay={300}>
+          <Link to={`/work-orders/${by}`} className="impl-badge impl-work-order" data-testid="implemented-by">
+            Implemented by <span className="mono">{by}</span>
+          </Link>
+        </Tooltip>
       )}
       {openItems.map((q) => (
         <Tooltip key={q.id} label={`${KIND_LABEL[q.kind]} · ${q.status.replace('_', ' ')}`} openDelay={300}>
@@ -433,7 +440,7 @@ export function SpecDetailPage() {
 
       <VerificationPanel v={verification} specId={spec.id} />
 
-      <PropGroup title={`Feedback${feedback.data ? ` · ${feedback.data.items.filter((f) => f.status === 'open').length} open` : ''}`}>
+      <PropGroup title={`Requests${feedback.data ? ` · ${feedback.data.items.filter((f) => f.status === 'open').length} open` : ''}`}>
         <FeedbackList items={feedback.data?.items ?? []} />
       </PropGroup>
       <QuestionsPanel refUri={buildRef({ kind: 'specs', id: spec.id })} />
@@ -534,6 +541,7 @@ export function SpecDetailPage() {
             <FeedbackBadge data={feedback.data} sectionId={section.id} />
             <ImplementationBadge
               state={implementation.data?.[section.id]}
+              by={section.implementedBy}
               openItems={openItems.filter((q) => q.sections.some((x) => x.id === section.id))}
             />
           </>
@@ -541,7 +549,7 @@ export function SpecDetailPage() {
         quotes={(feedback.data?.items ?? [])
           .filter((f) => f.status === 'open' && f.quote)
           .flatMap((f) => f.sections.map((sid) => ({ id: f.id, sectionId: sid, quote: f.quote! })))}
-        onQuoteClick={(fid) => navigate(`/feedback/${fid}`)}
+        onQuoteClick={(fid) => navigate(`/requests/${fid}`)}
       />
     </>
   );

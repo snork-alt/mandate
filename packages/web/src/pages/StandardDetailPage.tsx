@@ -117,7 +117,7 @@ export function StandardDetailPage() {
         <WhereUsedPanel refUri={buildRef({ kind: 'standards', id: std.id })} />
       </PropGroup>
       <DeviationsPanel usage={usage.data} />
-      <PropGroup title={`Feedback${feedback.data ? ` · ${feedback.data.items.filter((f) => f.status === 'open').length} open` : ''}`}>
+      <PropGroup title={`Requests${feedback.data ? ` · ${feedback.data.items.filter((f) => f.status === 'open').length} open` : ''}`}>
         <FeedbackList items={feedback.data?.items ?? []} />
       </PropGroup>
       <QuestionsPanel refUri={buildRef({ kind: 'standards', id: std.id })} />
@@ -179,7 +179,7 @@ export function StandardDetailPage() {
         quotes={(feedback.data?.items ?? [])
           .filter((f) => f.status === 'open' && f.quote)
           .flatMap((f) => f.sections.map((sid) => ({ id: f.id, sectionId: sid, quote: f.quote! })))}
-        onQuoteClick={(fid) => navigate(`/feedback/${fid}`)}
+        onQuoteClick={(fid) => navigate(`/requests/${fid}`)}
       />
     </>
   );

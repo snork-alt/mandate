@@ -10,7 +10,6 @@ export type OnOff = 'on' | 'off';
 export type QuestionsVia = 'mandate' | 'chat';
 export interface Policy {
   flowPolicy: 'required' | 'optional' | 'off';
-  approvalPolicy: 'required' | 'optional';
 }
 export interface FlowClient {
   id: string;
@@ -20,14 +19,13 @@ export interface FlowClient {
   keyName?: string;
   version?: string;
   flow: OnOff | null;
-  approval: OnOff | null;
   /** Where the agent asks the user (absent on older servers): through Mandate (default) or in chat. */
   questions?: QuestionsVia | null;
   updatedAt: string | null;
   updatedVia: 'command' | 'ui' | null;
   lastSeenAt: string;
-  effective: { flow: OnOff; approval: OnOff; questions?: QuestionsVia };
-  locked: { flow: boolean; approval: boolean };
+  effective: { flow: OnOff; questions?: QuestionsVia };
+  locked: { flow: boolean };
 }
 export interface FlowProject {
   id: string;
@@ -61,13 +59,9 @@ export function AgentIcon({ client, size = 14 }: { client: string; size?: number
 }
 
 export const POLICY_TEXT: Record<Policy['flowPolicy'], { label: string; body: string }> = {
-  required: { label: 'Required', body: 'Every coding agent follows the Mandate flow: requests become feedback, specs and work orders. Agents cannot turn it off.' },
+  required: { label: 'Required', body: 'Every coding agent follows the Mandate flow: requests are recorded without approval, then specs and work orders follow. Agents cannot turn it off.' },
   optional: { label: 'Optional', body: 'Each agent client chooses (default on). People switch their own agents from the agent with /mandate-flow on|off.' },
-  off: { label: 'Off', body: 'Agents use Mandate as read-only context: no feedback, spec edits or work orders.' },
-};
-export const APPROVAL_TEXT: Record<Policy['approvalPolicy'], { label: string; body: string }> = {
-  required: { label: 'Required', body: 'Agents always show the plan (spec diff, components, work order) and wait for a go.' },
-  optional: { label: 'Optional', body: 'Each agent client chooses whether to stop for approval (default off).' },
+  off: { label: 'Off', body: 'Agents use Mandate as read-only context: no requests, spec edits or work orders.' },
 };
 
 /** "Flow on · 2 agents" / "Flow: required" / "Flow 1/2 on" for my clients of a project. */

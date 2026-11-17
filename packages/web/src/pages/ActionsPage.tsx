@@ -1,6 +1,6 @@
 /**
  * Actions: everything the user has to act on, one tab per kind with its count (questions from coding agents, feedback,
- * waivers, standard drafts, claims, approval overrides, contradicted audits, drifted specs, integrity errors, specs
+ * waivers, standard drafts, claims, contradicted audits, drifted specs, integrity errors, specs
  * needing attention, must findings, blocked items). The tab lives in `?tab=`; `?focus=` (the Overview's attention chips)
  * opens the matching tab.
  */
@@ -10,7 +10,7 @@ import { ErrorState } from '../components/ListStates';
 import { CopyPromptButton, DecisionDialogs } from '../components/decisions/DecisionActions';
 import { ActionTabs } from '../components/overview/ActionTab';
 import { getCurrentProject } from '../project';
-import { useDecisionAccess, useDecisions } from '../lib/decisions';
+import { useDecisions } from '../lib/decisions';
 import { decisionsPrompt } from '../lib/prompts';
 import { actionCount, useOverview } from '../lib/overview';
 import '../components/overview/overview.css';
@@ -18,7 +18,6 @@ import '../components/overview/overview.css';
 export function ActionsPage() {
   const q = useOverview();
   const decisions = useDecisions(50);
-  const access = useDecisionAccess().data;
   const projectId = getCurrentProject() ?? '';
   const crumbs = [{ label: 'Actions' }];
   const pending = q.data && decisions.data ? actionCount(q.data, decisions.data.total) : null;
@@ -54,9 +53,9 @@ export function ActionsPage() {
       <div className="ov-page" data-testid="actions">
         <header className="ov-header act-header">
           <h1 className="ov-title">Actions</h1>
-          <span className="ov-sub">What needs you: questions from coding agents, feedback, waivers, drafts and claims.</span>
+          <span className="ov-sub">What needs you: questions from coding agents, requests, waivers, drafts and claims.</span>
         </header>
-        <ActionTabs o={q.data} q={decisions} projectId={projectId} overrideOk={access?.override.ok ?? false} />
+        <ActionTabs o={q.data} q={decisions} projectId={projectId} />
       </div>
     </DecisionDialogs>
   );

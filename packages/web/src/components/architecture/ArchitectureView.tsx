@@ -74,7 +74,7 @@ function Badges({ n, compact }: { n: ArchitectureNode; compact?: boolean }) {
   const o = n.overlay;
   const chips: { key: string; icon: React.ReactNode; text: string; tone?: string; tip: string }[] = [];
   if (o.workOrders) chips.push({ key: 'wo', icon: <IconClipboardList size={11} />, text: `${o.workOrders}`, tip: `${plural(o.workOrders, 'open work order')}${o.claims.length ? `, claimed by ${o.claims.join(', ')}` : ''}` });
-  if (o.openFeedback) chips.push({ key: 'fb', icon: <IconMessageReport size={11} />, text: `${o.openFeedback}`, tip: plural(o.openFeedback, 'open feedback item') });
+  if (o.openFeedback) chips.push({ key: 'fb', icon: <IconMessageReport size={11} />, text: `${o.openFeedback}`, tip: plural(o.openFeedback, 'open request') });
   if (o.blocked) chips.push({ key: 'bl', icon: <IconLock size={11} />, text: `${o.blocked}`, tone: 'danger', tip: `${plural(o.blocked, 'affecting spec')} blocked` });
   if (o.drifted) chips.push({ key: 'dr', icon: <IconAlertTriangle size={11} />, text: `${o.drifted}`, tone: 'warn', tip: `${plural(o.drifted, 'affecting spec')} drifted since done` });
   if (o.upstreamChanged) chips.push({ key: 'up', icon: <IconAlertTriangle size={11} />, text: `${o.upstreamChanged}`, tone: 'warn', tip: `${plural(o.upstreamChanged, 'section')}: an interface it depends on changed` });

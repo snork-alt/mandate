@@ -6,7 +6,7 @@ import { HoverCard, Text } from '@mantine/core';
 import { IconRoute } from '@tabler/icons-react';
 import { goTo } from '../project';
 import { relativeTime } from '../lib/time';
-import { AgentIcon, APPROVAL_TEXT, flowSummary, POLICY_TEXT, useFlowState } from '../setup/flowApi';
+import { AgentIcon, flowSummary, POLICY_TEXT, useFlowState } from '../setup/flowApi';
 
 export function FlowBadge({ projectId }: { projectId: string }) {
   const q = useFlowState(projectId, !!projectId);
@@ -26,7 +26,7 @@ export function FlowBadge({ projectId }: { projectId: string }) {
           Project policy
         </Text>
         <Text size="sm">
-          Flow {POLICY_TEXT[p.policy.flowPolicy].label.toLowerCase()} · approval {APPROVAL_TEXT[p.policy.approvalPolicy].label.toLowerCase()}
+          Flow {POLICY_TEXT[p.policy.flowPolicy].label.toLowerCase()}
         </Text>
         <Text size="xs" c="dimmed" mb={8}>
           {POLICY_TEXT[p.policy.flowPolicy].body}
@@ -42,7 +42,7 @@ export function FlowBadge({ projectId }: { projectId: string }) {
                 {c.label}
               </Text>
               <Text size="xs" c="dimmed" className="flow-card-state">
-                flow {c.effective.flow} · approval {c.effective.approval}
+                flow {c.effective.flow}
               </Text>
               <Text size="xs" c="dimmed" className="flow-card-seen">
                 {relativeTime(c.lastSeenAt)}

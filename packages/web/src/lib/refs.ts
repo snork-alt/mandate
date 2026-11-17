@@ -63,7 +63,7 @@ function altRef(r: MandateRef, commit?: string, head?: string): CopyTarget['alt'
 
 export function docTarget(kind: DocKind | 'work-orders' | 'feedback', id: string, commit?: string, head?: string): CopyTarget {
   if (kind === 'work-orders') return workOrderTarget(id);
-  if (kind === 'feedback') return { label: 'feedback', ref: refMention({ kind: 'feedback', id }), link: `${origin()}/feedback/${id}` };
+  if (kind === 'feedback') return { label: 'request', ref: refMention({ kind: 'feedback', id }), link: `${origin()}/requests/${id}` };
   return {
     label: kind === 'specs' ? 'spec' : kind === 'standards' ? 'standard' : kind === 'audits' ? 'audit' : 'component',
     ref: refMention({ kind, id, commit }),
@@ -136,9 +136,9 @@ export function mention(ref: MandateRef): string {
 
 export function feedbackTarget(f: Feedback): CopyTarget {
   return {
-    label: 'feedback',
+    label: 'request',
     ref: refMention({ kind: 'feedback', id: f.id }),
     markdown: () => feedbackMarkdown(f),
-    link: `${origin()}/feedback/${f.id}`,
+    link: `${origin()}/requests/${f.id}`,
   };
 }

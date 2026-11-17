@@ -133,3 +133,7 @@ export function useAnswerAllRecommended(onDone?: (r: { ok: number; failed: strin
     onSettled: () => settle(qc),
   });
 }
+
+/** Every open question (one query, filtered client-side per request on the request pages). */
+export const useOpenQuestions = () => useQuestions(undefined, 'open', 200);
+export const useAllQuestions = () => useQuestions(undefined, 'all', 200);

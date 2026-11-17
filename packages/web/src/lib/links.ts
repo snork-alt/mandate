@@ -29,7 +29,7 @@ export function sectionHref(uri: string): string {
   const r = parseRef(uri);
   if (!r) return auditHref(uri) ?? '#';
   const q = [r.commit ? `version=${r.commit}&view=version` : '', r.lines ? `lines=${r.lines.start}-${r.lines.end}` : ''].filter(Boolean).join('&');
-  return `/${r.kind}/${r.id}${q ? `?${q}` : ''}${r.sectionId ? `#section-${r.sectionId}` : ''}`;
+  return `/${r.kind === 'feedback' ? 'requests' : r.kind}/${r.id}${q ? `?${q}` : ''}${r.sectionId ? `#section-${r.sectionId}` : ''}`;
 }
 
 /** UI path of an audit finding (`/audits/<id>#finding-<fid>`); null for other refs (audits are documents: see sectionHref). */

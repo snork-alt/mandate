@@ -1,3 +1,4 @@
+import { normalizeFeedback } from './feedback';
 import { useQuery } from '@tanstack/react-query';
 import type { EntityKind, Feedback, WorkOrder, Spec, Standard } from '@mandate/shared';
 import { api } from '../api';
@@ -36,7 +37,7 @@ export function useStandardUsage(id: string) {
 }
 
 export function useFeedback() {
-  return useQuery({ queryKey: ['feedback'], queryFn: () => api.list('feedback') as Promise<Feedback[]> });
+  return useQuery({ queryKey: ['feedback'], queryFn: () => api.list('feedback') as Promise<Feedback[]>, select: (items) => items.map(normalizeFeedback) });
 }
 
 export function useDocFeedback(kind: 'specs' | 'standards', id: string) {

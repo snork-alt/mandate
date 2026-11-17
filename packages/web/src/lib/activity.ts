@@ -49,18 +49,14 @@ export function eventTitle(e: ActivityEvent): string {
   if (family && DOC_NOUN[family] && a === 'created' && title) return `Created ${DOC_NOUN[family]} ${title}`;
   if (family && DOC_NOUN[family] && a === 'deleted' && title) return `Deleted ${DOC_NOUN[family]} ${title}`;
   if (e.type === 'commit') return cap(commitMessage(e));
-  if (e.type === 'feedback.closed') {
+  if (e.type === 'request.closed') {
     const res = str(e.details?.resolution);
     const id = e.refs[0] ? (parseRef(e.refs[0])?.id ?? '') : '';
-    if (id && res) return `Closed feedback ${id} as ${res.replace(/_/g, ' ')}`;
-  }
-  if (e.type === 'approval.override_confirmed') {
-    const id = e.refs[0] ? (parseRef(e.refs[0])?.id ?? '') : '';
-    return id ? `Confirmed the approval override of feedback ${id}` : 'Confirmed an approval override';
+    if (id && res) return `Closed request ${id} as ${res.replace(/_/g, ' ')}`;
   }
   if (e.type === 'approval.override') {
     const id = e.refs[0] ? (parseRef(e.refs[0])?.id ?? '') : '';
-    return id ? `Self-approved feedback ${id} (approval override)` : 'Approval override';
+    return id ? `Self-approved request ${id} (approval override)` : 'Approval override';
   }
   if (e.type.startsWith('question.')) {
     const what = str(e.details?.header) ?? title ?? str(e.details?.question);
@@ -115,7 +111,7 @@ export function groupKey(e: ActivityEvent): string | null {
   if (!target) return null;
   if (isEdit(e.type)) return `${who}|edit|${target}`;
   const family = e.type.split('.')[0];
-  if (family === 'feedback' || family === 'work_order' || family === 'audit' || family === 'comment' || family === 'verification') return `${who}|${family}|${target}`;
+  if (family === 'request' || family === 'feedback' || family === 'work_order' || family === 'audit' || family === 'comment' || family === 'verification') return `${who}|${family}|${target}`;
   return `${who}|${e.type}|${target}`;
 }
 
@@ -162,7 +158,7 @@ export function groupTitle(g: ActivityGroup): string {
   if (isEdit(e.type)) return `${n} edits to ${targetLabel(e)}`;
   const family = e.type.split('.')[0];
   const label = targetLabel(e);
-  if (family === 'feedback') return `${n} updates to feedback ${label}`;
+  if (family === 'request' || family === 'feedback') return `${n} updates to request ${label}`;
   if (family === 'work_order') return `${n} updates to work order ${label}`;
   if (family === 'audit') return `${n} audit updates in ${label}`;
   if (family === 'comment') return `${plural(n, 'comment')} on ${label}`;

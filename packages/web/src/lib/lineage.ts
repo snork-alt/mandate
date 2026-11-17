@@ -181,7 +181,7 @@ export interface GraphItem {
 }
 
 export const GROUP_PREFIX = 'group:';
-const KIND_PLURAL: Record<string, string> = { work_order: 'work orders', code_file: 'files', code_range: 'code ranges', verification: 'verifications', finding: 'findings', feedback: 'feedback items', comment: 'comments', commit: 'commits', spec: 'specs', standard: 'standards', component: 'components', audit: 'audits' };
+const KIND_PLURAL: Record<string, string> = { work_order: 'work orders', code_file: 'files', code_range: 'code ranges', verification: 'verifications', finding: 'findings', feedback: 'requests', comment: 'comments', commit: 'commits', spec: 'specs', standard: 'standards', component: 'components', audit: 'audits' };
 
 /** The document a node belongs to (sections -> their spec / standard); null for documents and other kinds. */
 function parentOf(n: LineageNode): string | null {
@@ -402,7 +402,7 @@ export function summaryChips(s: LineageSummary | undefined): SummaryChip[] {
     { id: 'commits', n: c.commits, label: plural(c.commits, 'commit'), nodeKinds: ['commit', 'code_commit'], eventKinds: [], changing: false },
     { id: 'changing-wo', n: g.workOrders, label: plural(g.workOrders, 'work order'), nodeKinds: ['work_order'], eventKinds: ['work_order'], changing: true },
     { id: 'changing-findings', n: g.findings, label: plural(g.findings, 'finding'), nodeKinds: ['finding'], eventKinds: ['audit'], changing: true },
-    { id: 'changing-feedback', n: g.feedback, label: plural(g.feedback, 'feedback item'), nodeKinds: ['feedback'], eventKinds: ['feedback'], changing: true },
+    { id: 'changing-feedback', n: g.feedback, label: plural(g.feedback, 'request'), nodeKinds: ['feedback'], eventKinds: ['feedback'], changing: true },
   ];
   return chips.filter((x) => x.n > 0).map(({ n: _n, ...x }) => x);
 }

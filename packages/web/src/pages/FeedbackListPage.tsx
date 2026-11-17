@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Button, Text } from '@mantine/core';
 import { IconChevronRight, IconMessageReport, IconSearch, IconX } from '@tabler/icons-react';
-import type { Feedback, FeedbackKind, FeedbackStatus } from '@mandate/shared';
+import type { Feedback, FeedbackKind, FeedbackStatus, Question } from '@mandate/shared';
 import { Menu } from '@mantine/core';
 import { IconArrowsSort, IconCheck, IconLayoutList } from '@tabler/icons-react';
 import { absoluteTime } from '../lib/time';
@@ -14,6 +14,9 @@ import { EmptyView, ErrorState, RowsSkeleton } from '../components/ListStates';
 import { SearchInput } from '../components/SearchInput';
 import { TopBar } from '../components/TopBar';
 import { FEEDBACK_KIND_META, FEEDBACK_SORTS, FEEDBACK_STATUS_META, FEEDBACK_STATUS_ORDER, RESOLUTION_META, firstLine, sortFeedback, type FeedbackSort } from '../lib/feedback';
+import { changedDocs, questionsByRequest, workOrdersByRequest } from '../lib/requestLinks';
+import { useOpenQuestions } from '../lib/questions';
+import { QuestionChip, WorkOrderChip } from '../components/FeedbackParts';
 import { useFeedback, useSpecs, useStandards, useWorkOrders } from '../lib/queries';
 import { ListHeader, ListRow, RowTime, withNodes, type ChipItem, type ColDef } from '../components/list/ListRow';
 import { feedbackTarget } from '../lib/refs';
@@ -25,7 +28,7 @@ const KEYS = ['kind', 'status', 'resolution', 'target'] as const;
 
 const FEEDBACK_CHIPS_W = 300;
 const FEEDBACK_COLS: ColDef[] = [
-  { key: 'issues', width: 72, hide: 'xl', label: 'Issues', tip: 'Validation issues in the stored feedback' },
+  { key: 'issues', width: 72, hide: 'xl', label: 'Issues', tip: 'Validation issues in the stored request' },
   { key: 'outcome', width: 104, hide: 'sm', label: 'Outcome', tip: 'Outcome: how it was resolved, or the work order handling it' },
 ];
 
@@ -34,29 +37,33 @@ function FeedbackListHeader() {
     <ListHeader
       list="feedback"
       leadWidth={36}
-      id={{ label: 'ID', tip: 'Feedback id' }}
+      id={{ label: 'ID', tip: 'Request id' }}
       idWidth={84}
-      main={{ label: 'Feedback', tip: 'First line of the feedback' }}
-      chips={{ label: 'Targets', tip: 'The spec or standard sections it is about (hover "+N" for the rest)' }}
+      main={{ label: 'Request', tip: 'First line of the request' }}
+      chips={{ label: 'Targets', tip: 'The sections it is about, the spec changes it caused, the work orders acting on it and its open questions (hover "+N" for the rest)' }}
       chipsWidth={FEEDBACK_CHIPS_W}
       cols={FEEDBACK_COLS}
       people={{ label: 'People', tip: 'Who filed it (person and agent) and who worked on it' }}
-      time={{ label: 'When', tip: 'Created, or closed for closed feedback' }}
+      time={{ label: 'When', tip: 'Created, or closed for closed requests' }}
       timeWidth={96}
     />
   );
 }
 
-function FeedbackRow({ f, titles, workOrder }: { f: Feedback; titles: Map<string, string>; workOrder?: OpenWorkOrderRef }) {
+function FeedbackRow({ f, titles, workOrder, workOrders = [], questions = [] }: { f: Feedback; titles: Map<string, string>; workOrder?: OpenWorkOrderRef; workOrders?: { id: string; status: string; title?: string }[]; questions?: Question[] }) {
   const target = feedbackTarget(f);
   const legacy = f.targets.some((t) => !parseRef(t)?.sectionId);
   const chips: ChipItem[] = [
     ...(legacy ? [{ key: '~legacy', node: <span className="legacy-badge">legacy</span> }] : []),
     ...f.targets.map((t) => ({ key: t, node: <TargetChip target={t} titles={titles} plain />, short: <TargetChip target={t} titles={titles} plain short /> })),
+    // Spec / standard changes this request caused, the work orders acting on it and its open questions.
+    ...changedDocs(f.changes).map((c) => ({ key: `chg:${c.key}`, node: <span className="fb-target fb-change-chip" data-kind={c.kind} title={`Changed ${c.title}`}>~ {c.title}</span> })),
+    ...workOrders.map((w) => ({ key: `wo:${w.id}`, node: <WorkOrderChip w={w} plain /> })),
+    ...questions.filter((x) => x.status === 'open').map((x) => ({ key: `q:${x.id}`, node: <QuestionChip q={x} plain /> })),
   ];
   return (
     <ListRow
-      to={`/feedback/${f.id}`}
+      to={`/requests/${f.id}`}
       list="feedback"
       copy={target}
       lead={
@@ -70,7 +77,7 @@ function FeedbackRow({ f, titles, workOrder }: { f: Feedback; titles: Map<string
       idWidth={84}
       title={<span className="fb-title">{firstLine(f.body)}</span>}
       chips={chips}
-      chipsMax={legacy ? 3 : 2}
+      chipsMax={legacy ? 4 : 3}
       chipsWidth={FEEDBACK_CHIPS_W}
       cols={withNodes(FEEDBACK_COLS, {
         issues: f.validationIssues ? <IssuesBadge issues={f.validationIssues} /> : null,
@@ -92,6 +99,7 @@ function FeedbackRow({ f, titles, workOrder }: { f: Feedback; titles: Map<string
 export function FeedbackListPage() {
   const query = useFeedback();
   const workOrders = useWorkOrders();
+  const openQuestions = useOpenQuestions();
   const specs = useSpecs();
   const standards = useStandards();
   const [params, setParams] = useSearchParams();
@@ -129,6 +137,8 @@ export function FeedbackListPage() {
     }
     return m;
   }, [workOrders.data]);
+  const woByRequest = useMemo(() => workOrdersByRequest(workOrders.data ?? []), [workOrders.data]);
+  const qByRequest = useMemo(() => questionsByRequest(openQuestions.data?.items ?? []), [openQuestions.data]);
   const all = query.data ?? [];
   const f = { kind: sel('kind'), status: sel('status'), resolution: sel('resolution'), target: sel('target') };
   const sort = (FEEDBACK_SORTS.some((x) => x.value === params.get('sort')) ? params.get('sort') : 'created-desc') as FeedbackSort;
@@ -147,7 +157,7 @@ export function FeedbackListPage() {
 
   return (
     <>
-      <TopBar crumbs={[{ label: 'Feedbacks' }]}>
+      <TopBar crumbs={[{ label: 'Requests' }]}>
         {query.data && (
           <Text size="sm" c="var(--app-text-faint)" visibleFrom="xs">
             {count((x) => x.status === 'open')} open · {all.length} total
@@ -223,19 +233,19 @@ export function FeedbackListPage() {
             ))}
           </Menu.Dropdown>
         </Menu>
-        <SearchInput value={q} onChange={(v) => set('q', v)} placeholder="Search feedback…" />
+        <SearchInput value={q} onChange={(v) => set('q', v)} placeholder="Search requests…" />
       </div>
 
       {query.isPending && <RowsSkeleton rows={6} />}
       {query.isError && <ErrorState error={query.error} onRetry={() => void query.refetch()} />}
       {query.data && all.length === 0 && (
-        <EmptyView icon={<IconMessageReport size={22} stroke={1.5} />} title="No feedback yet" description="Agents and people file feedback on specs and standards; it lands in feedback.jsonl." />
+        <EmptyView icon={<IconMessageReport size={22} stroke={1.5} />} title="No requests yet" description="Tell your coding agent what you want: it records a request here and works on it. No approval needed." />
       )}
       {query.data && all.length > 0 && visible.length === 0 && (
-        <EmptyView icon={<IconSearch size={22} stroke={1.5} />} title="No matching feedback" description="Try another filter or search term." />
+        <EmptyView icon={<IconSearch size={22} stroke={1.5} />} title="No matching requests" description="Try another filter or search term." />
       )}
       {visible.length > 0 && <FeedbackListHeader />}
-      {groupNone && sorted.map((x) => <FeedbackRow key={x.id} f={x} titles={titles} workOrder={openWorkOrders.get(x.id)} />)}
+      {groupNone && sorted.map((x) => <FeedbackRow key={x.id} f={x} titles={titles} workOrder={openWorkOrders.get(x.id)} workOrders={woByRequest.get(x.id)} questions={qByRequest.get(x.id)} />)}
       {!groupNone && FEEDBACK_STATUS_ORDER.map((status: FeedbackStatus) => {
         const items = sorted.filter((x) => x.status === status);
         if (!items.length) return null;
@@ -250,7 +260,7 @@ export function FeedbackListPage() {
                 {items.length}
               </Text>
             </button>
-            {!isCollapsed && items.map((x) => <FeedbackRow key={x.id} f={x} titles={titles} workOrder={openWorkOrders.get(x.id)} />)}
+            {!isCollapsed && items.map((x) => <FeedbackRow key={x.id} f={x} titles={titles} workOrder={openWorkOrders.get(x.id)} workOrders={woByRequest.get(x.id)} questions={qByRequest.get(x.id)} />)}
           </section>
         );
       })}

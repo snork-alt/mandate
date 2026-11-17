@@ -14,13 +14,25 @@ export const DocLinksContext = createContext<DocLinks | undefined>(undefined);
 export const useSectionLinks = (sectionId: string) => useContext(DocLinksContext)?.sections[sectionId];
 
 const WAIVER_REASON: Record<string, string> = {
-  no_feedback: 'not approved (no feedback linked)',
-  feedback_missing: 'approval feedback is missing',
-  not_accepted: 'approval feedback is not accepted yet',
-  same_author: 'approved by its own author (needs someone else)',
-  self_approved: 'accepted by the same person who wrote the waiver (needs someone else)',
+  no_feedback: 'not approved (no approval question linked)',
+  feedback_missing: 'its approval record is missing',
+  not_accepted: 'the user has not approved it yet (an approval question must be answered)',
+  same_author: 'approved by its own author (needs the user)',
+  self_approved: 'approved by the same person who wrote the waiver (needs the user)',
   stale: 'lapsed: the criteria changed since approval',
 };
+
+/** The approval behind a waiver: a question (`ask-NNNN`, links to it) or a legacy request id (`fb-NNNN`). */
+export function ApprovalRef({ id }: { id?: string }) {
+  if (!id) return null;
+  return id.startsWith('ask-') ? (
+    <Link to={`/questions/${id}`} className="mono">
+      {id}
+    </Link>
+  ) : (
+    <span className="mono">{id}</span>
+  );
+}
 
 /** A section link chip: relation icon, target doc › section, target state; hover shows the target summary. */
 export function LinkChip({ link, resolved }: { link: SectionLink; resolved?: ResolvedLink }) {
@@ -41,7 +53,8 @@ export function LinkChip({ link, resolved }: { link: SectionLink; resolved?: Res
       {resolved?.archived && <div style={{ marginTop: 4 }}>Target is archived{link.rel === 'depends_on' ? ' (broken dependency)' : ''}.</div>}
       {resolved?.waiver && (
         <div style={{ marginTop: 4 }}>
-          {resolved.waiver.effective ? `Waived via feedback ${resolved.waiver.feedback}` : `Deviation ${WAIVER_REASON[resolved.waiver.reason ?? 'no_feedback']}`}
+          {resolved.waiver.effective ? 'Waived via approval ' : `Deviation ${WAIVER_REASON[resolved.waiver.reason ?? 'no_feedback']}`}
+          {resolved.waiver.effective && <ApprovalRef id={resolved.waiver.feedback} />}
         </div>
       )}
       {resolved && !resolved.exists && <div>Target no longer exists.</div>}

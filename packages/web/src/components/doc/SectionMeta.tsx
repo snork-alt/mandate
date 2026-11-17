@@ -1,6 +1,7 @@
 import type { ValueChange } from '@mandate/doc';
 import type { CodeRef, Section } from '@mandate/shared';
 import { CodeRefChip, StandardChip, SymbolChip } from './Chips';
+import { ProvedBy } from './ProvedBy';
 import { LinkChip, useSectionLinks } from './LinkParts';
 import type { SectionLink } from '@mandate/doc';
 
@@ -46,11 +47,13 @@ export function SectionMeta({
   const links = withChanges<SectionLink>(section.links ?? [], ch('links'));
   const info = useSectionLinks(section.id);
   void standardTitles; // standards are links now (follows), shown as link chips
-  if (!refs.length && !symbols.length && !links.length) return null;
+  const proved = section.provedBy ?? [];
+  if (!refs.length && !symbols.length && !links.length && !proved.length) return null;
   return (
     <div className="section-meta">
       {refs.map(({ item, mark }, i) => wrap(mark, `r-${i}-${mark}`, <CodeRefChip codeRef={item} />))}
       {symbols.map(({ item, mark }) => wrap(mark, `y-${item}-${mark}`, <SymbolChip symbol={item} />))}
+      {proved.length > 0 && <ProvedBy items={proved} />}
       {links.map(({ item, mark }) =>
         wrap(mark, `l-${item.to}-${item.rel}-${mark}`, <LinkChip link={item} resolved={info?.outgoing.find((o) => o.to === item.to && o.rel === item.rel)} />),
       )}

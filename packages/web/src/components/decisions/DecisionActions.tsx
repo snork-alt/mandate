@@ -5,7 +5,7 @@
  */
 import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
 import { ActionIcon, Button, Group, Menu, Modal, SegmentedControl, Select, Text, Textarea, Tooltip } from '@mantine/core';
-import { IconCheck, IconCopy, IconDots, IconMoonStars, IconPlayerStop, IconX, IconCopyCheck, IconUserCheck } from '@tabler/icons-react';
+import { IconCopy, IconDots, IconMoonStars, IconPlayerStop, IconX, IconCopyCheck } from '@tabler/icons-react';
 import { copyText } from '../../lib/copy';
 import { useDecide, useDecisionAccess, type DecisionAccess } from '../../lib/decisions';
 import { useFeedback } from '../../lib/queries';
@@ -14,14 +14,10 @@ import './decisions.css';
 /* ---------------------------------------------------------------- dialogs */
 
 export type DialogRequest =
-  | { type: 'accept'; ref: string; title: string; /** Waiver approvals the user wrote themselves: needs an override with a reason. */ selfApproval?: boolean }
   | { type: 'reject'; ref: string; title: string }
   | { type: 'duplicate'; ref: string; title: string }
   | { type: 'release'; ref: string; title: string; agent?: string; heartbeat?: string }
-  | { type: 'snooze'; rule: string; uri: string; title: string }
-  | { type: 'confirm_override'; ref: string; title: string }
-  /** Several open feedback items at once (Actions › Feedback: the selected or suggested ones). */
-  | { type: 'accept_many'; refs: string[]; title: string };
+  | { type: 'snooze'; rule: string; uri: string; title: string };
 
 interface DialogApi {
   open: (r: DialogRequest) => void;
@@ -51,39 +47,15 @@ function DialogBody({ req, onClose, access }: { req: DialogRequest; onClose: () 
   );
   const meta = <Text size="xs" c="dimmed" mt={8}>{RECORDED}</Text>;
 
-  if (req.type === 'accept') {
-    const needsOverride = !!req.selfApproval;
-    const eligible = access?.override.ok ?? false;
-    return (
-      <>
-        <Text size="sm">
-          Accept <strong>{req.title}</strong>: it will be acted on (a coding agent changes the spec or standard through a work order).
-        </Text>
-        {needsOverride && (
-          <>
-            <Text size="sm" mt="sm">
-              This approves a change you wrote yourself, so it needs an <strong>approval override</strong> with a reason. {eligible ? `You are eligible (${access?.override.why}).` : `You are not eligible: ${access?.override.why ?? 'unknown'}.`}
-            </Text>
-            <Textarea label="Override reason" required mt="xs" autosize minRows={2} maxLength={500} value={note} onChange={(e) => setNote(e.currentTarget.value)} disabled={!eligible} data-testid="override-reason" />
-          </>
-        )}
-        {meta}
-        {footer(needsOverride ? 'Accept with override' : 'Accept', (needsOverride && (!eligible || !note.trim())) || busy, () =>
-          decide.mutate({ tool: 'feedback_accept', args: { ref: req.ref, ...(needsOverride ? { override: true, overrideReason: note.trim() } : {}) } }),
-        )}
-      </>
-    );
-  }
-  if (req.type === 'accept_many') return <AcceptMany refs={req.refs} onClose={onClose} />;
   if (req.type === 'reject') {
     return (
       <>
         <Text size="sm">
-          Reject <strong>{req.title}</strong>. Closed feedback cannot be reopened; the reason is shown to everyone.
+          Reject <strong>{req.title}</strong>. Closed request cannot be reopened; the reason is shown to everyone.
         </Text>
         <Textarea label="Reason" required mt="xs" autosize minRows={2} maxLength={1000} value={note} onChange={(e) => setNote(e.currentTarget.value)} data-autofocus data-testid="reject-reason" />
         {meta}
-        {footer('Reject', !note.trim() || busy, () => decide.mutate({ tool: 'feedback_close', args: { ref: req.ref, resolution: 'rejected', resolutionNote: note.trim() } }), 'red')}
+        {footer('Reject', !note.trim() || busy, () => decide.mutate({ tool: 'request_close', args: { ref: req.ref, resolution: 'rejected', resolutionNote: note.trim() } }), 'red')}
       </>
     );
   }
@@ -93,23 +65,11 @@ function DialogBody({ req, onClose, access }: { req: DialogRequest; onClose: () 
     return (
       <>
         <Text size="sm">
-          Close <strong>{req.title}</strong> as a duplicate of another feedback item.
+          Close <strong>{req.title}</strong> as a duplicate of another request.
         </Text>
-        <Select label="Original item" required mt="xs" searchable data={options} value={dup} onChange={setDup} nothingFoundMessage="No feedback item" data-testid="duplicate-of" comboboxProps={{ withinPortal: true }} />
+        <Select label="Original item" required mt="xs" searchable data={options} value={dup} onChange={setDup} nothingFoundMessage="No request" data-testid="duplicate-of" comboboxProps={{ withinPortal: true }} />
         {meta}
-        {footer('Mark duplicate', !dup || busy, () => decide.mutate({ tool: 'feedback_close', args: { ref: req.ref, resolution: 'duplicate', duplicateOf: dup! } }))}
-      </>
-    );
-  }
-  if (req.type === 'confirm_override') {
-    return (
-      <>
-        <Text size="sm">
-          Confirm the self-approved acceptance of <strong>{req.title}</strong>: you are a second person and reviewed it. It leaves the integrity warnings, and the coding agent that self-approved it is told. The person who made the override cannot confirm it.
-        </Text>
-        <Textarea label="Review note" required mt="xs" autosize minRows={2} maxLength={500} value={note} onChange={(e) => setNote(e.currentTarget.value)} data-autofocus data-testid="confirm-override-note" />
-        {meta}
-        {footer('Confirm override', !note.trim() || busy, () => decide.mutate({ tool: 'approval_override_confirm', args: { ref: req.ref, note: note.trim().replace(/\s+/g, ' ') } }))}
+        {footer('Mark duplicate', !dup || busy, () => decide.mutate({ tool: 'request_close', args: { ref: req.ref, resolution: 'duplicate', duplicateOf: dup! } }))}
       </>
     );
   }
@@ -140,51 +100,11 @@ function DialogBody({ req, onClose, access }: { req: DialogRequest; onClose: () 
   );
 }
 
-/** Accepts several feedback items one after the other (each is its own recorded decision). */
-function AcceptMany({ refs, onClose }: { refs: string[]; onClose: () => void }) {
-  const decide = useDecide();
-  const [done, setDone] = useState(0);
-  const [busy, setBusy] = useState(false);
-  const run = async () => {
-    setBusy(true);
-    try {
-      for (const ref of refs) {
-        await decide.mutateAsync({ tool: 'feedback_accept', args: { ref } });
-        setDone((n) => n + 1);
-      }
-      onClose();
-    } catch {
-      /* the failure is shown by useDecide; the rest stays pending */
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <>
-      <Text size="sm">
-        Accept <strong>{refs.length === 1 ? '1 feedback item' : `${refs.length} feedback items`}</strong>: each will be acted on (a coding agent changes the spec or standard through a work order).
-      </Text>
-      <Text size="xs" c="dimmed" mt={8}>{RECORDED} One decision per item.</Text>
-      <Group justify="flex-end" mt="md" gap="xs">
-        <Button variant="default" onClick={onClose} disabled={busy}>
-          Cancel
-        </Button>
-        <Button onClick={() => void run()} loading={busy} disabled={!refs.length} data-testid="decision-confirm">
-          {busy ? `Accepting ${done + 1} of ${refs.length}` : `Accept ${refs.length}`}
-        </Button>
-      </Group>
-    </>
-  );
-}
-
 const TITLE: Record<DialogRequest['type'], string> = {
-  accept: 'Accept feedback',
-  reject: 'Reject feedback',
+  reject: 'Reject request',
   duplicate: 'Mark as duplicate',
   release: 'Release stale claim',
   snooze: 'Snooze integrity warning',
-  confirm_override: 'Confirm approval override',
-  accept_many: 'Accept feedback',
 };
 
 /** Hosts the confirmation dialogs for everything below it. */
@@ -217,13 +137,10 @@ export interface ItemAction {
 }
 
 const ICON: Record<DialogRequest['type'], ReactNode> = {
-  accept: <IconCheck size={14} />,
   reject: <IconX size={14} />,
   duplicate: <IconCopyCheck size={14} />,
   release: <IconPlayerStop size={14} />,
   snooze: <IconMoonStars size={14} />,
-  confirm_override: <IconUserCheck size={14} />,
-  accept_many: <IconCheck size={14} />,
 };
 
 /** Why direct actions are unavailable (no write access to the repository), or null. */
@@ -296,12 +213,8 @@ export function CopyPromptButton({ prompt, label = 'Copy prompt for all', testId
   );
 }
 
-/** Feedback decisions (accept primary, reject, duplicate). */
-export const feedbackActions = (ref: string, title: string, opts: { status: 'open' | 'accepted'; selfApproval?: boolean } = { status: 'open' }): ItemAction[] =>
-  opts.status === 'open'
-    ? [
-        { id: 'accept', label: opts.selfApproval ? 'Approve with override' : 'Accept', primary: true, dialog: { type: 'accept', ref, title, selfApproval: opts.selfApproval } },
-        { id: 'reject', label: 'Reject', danger: true, dialog: { type: 'reject', ref, title } },
-        { id: 'duplicate', label: 'Mark duplicate', dialog: { type: 'duplicate', ref, title } },
-      ]
-    : [{ id: 'reject', label: 'Reject', danger: true, dialog: { type: 'reject', ref, title } }];
+/** Request decisions the user may take (reject, mark duplicate). Requests need no approval. */
+export const feedbackActions = (ref: string, title: string): ItemAction[] => [
+  { id: 'reject', label: 'Reject', danger: true, dialog: { type: 'reject', ref, title } },
+  { id: 'duplicate', label: 'Mark duplicate', dialog: { type: 'duplicate', ref, title } },
+];

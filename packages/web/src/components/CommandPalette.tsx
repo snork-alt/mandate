@@ -43,7 +43,7 @@ export const openCommandPalette = (query?: string) => openPalette(query);
 
 /** Object-type icon (KIND_ICON, the single source of truth); unknown kinds fall back to the spec icon. */
 const docIcon = (kind: string) => KIND_ICON[kind as NodeKind] ?? KIND_ICON.spec;
-const KIND_LABEL: Record<SearchKind, string> = { spec: 'Spec', standard: 'Standard', section: 'Section', work_order: 'Work order', feedback: 'Feedback', component: 'Component', audit: 'Audit' };
+const KIND_LABEL: Record<SearchKind, string> = { spec: 'Spec', standard: 'Standard', section: 'Section', work_order: 'Work order', feedback: 'Request', component: 'Component', audit: 'Audit' };
 const KIND_ORDER: SearchKind[] = ['spec', 'standard', 'section', 'work_order', 'feedback'];
 const MATCH_LABEL = { text: 'text', semantic: 'meaning', symbol: 'symbol' } as const;
 
@@ -499,7 +499,7 @@ export function CommandPalette() {
         </div>
       ) : (
         <div className="cmdk-state">
-          {parsed.type === 'id' ? `No spec, standard, work order or feedback with id "${parsed.id}"` : 'Nothing found'}
+          {parsed.type === 'id' ? `No spec, standard, work order or request with id "${parsed.id}"` : 'Nothing found'}
           {canFilter && (kinds.length > 0 || status.length > 0) && <div className="cmdk-hint">Try clearing the filters</div>}
         </div>
       );

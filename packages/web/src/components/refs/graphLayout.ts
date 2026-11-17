@@ -121,7 +121,7 @@ export function mergeEdges(edges: RawEdge[]): GEdge[] {
   return [...out.values()];
 }
 
-const KIND_PLURAL: Record<string, string> = { feedback: 'feedback', work_order: 'work orders', code_range: 'code ranges', code_file: 'files', verification: 'checks' };
+const KIND_PLURAL: Record<string, string> = { feedback: 'requests', work_order: 'work orders', code_range: 'code ranges', code_file: 'files', verification: 'checks' };
 export const kindPlural = (k: string, n: number) => (n === 1 ? k.replace(/_/g, ' ') : (KIND_PLURAL[k] ?? `${k.replace(/_/g, ' ')}s`));
 
 export const COLLAPSE_ABOVE = 25;

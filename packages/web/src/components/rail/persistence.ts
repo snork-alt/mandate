@@ -51,8 +51,8 @@ export const loadCollapsed = (w = viewport()) => {
 };
 export const saveCollapsed = (c: boolean) => write(KEYS.collapsed, c ? '1' : '0');
 
-/** Document pages (`/specs/x`, `/standards/x`, `/components/x`, `/work-orders/x`, `/feedback/x`, `/audits/x`) vs everything else. */
-export const pageTypeOf = (pathname: string): PageType => (/^\/(specs|standards|components|work-orders|feedback|audits)\/[^/]+/.test(pathname) ? 'doc' : 'list');
+/** Document pages (`/specs/x`, `/standards/x`, `/components/x`, `/work-orders/x`, `/requests/x`, `/audits/x`) vs everything else. */
+export const pageTypeOf = (pathname: string): PageType => (/^\/(specs|standards|components|work-orders|requests|feedback|audits)\/[^/]+/.test(pathname) ? 'doc' : 'list');
 
 export const tabsFor = (t: PageType): RailTab[] => (t === 'doc' ? ['details', 'activity', 'ask'] : ['activity', 'ask']);
 export const defaultTab = (t: PageType): RailTab => (t === 'doc' ? 'details' : 'activity');

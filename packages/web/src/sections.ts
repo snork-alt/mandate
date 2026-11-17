@@ -52,8 +52,8 @@ export const SECTIONS: SectionDef[] = [
   },
   {
     kind: 'feedback',
-    label: 'Feedbacks',
-    singular: 'feedback item',
+    label: 'Requests',
+    singular: 'request',
     description: 'Why specs and standards change: ambiguities, conflicts, bugs and ideas.',
     icon: KIND_ICON.feedback,
     count: (items) => (items as { status: string }[]).filter((f) => f.status === 'open').length,

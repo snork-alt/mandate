@@ -50,7 +50,7 @@ describe('ListRow slots', () => {
     wrap(
       'server',
       <ListRow
-        to="/feedback/fb-1"
+        to="/requests/fb-1"
         list="feedback"
         lead={<span>L</span>}
         leadWidth={36}

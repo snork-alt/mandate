@@ -27,7 +27,7 @@ export const PICKER_KIND_LABEL: Partial<Record<string, string>> = {
   section: 'Section',
   component: 'Component',
   work_order: 'Work order',
-  feedback: 'Feedback',
+  feedback: 'Request',
   audit: 'Audit',
   finding: 'Finding',
   verification: 'Verification',
@@ -47,7 +47,7 @@ export function groupPickerItems(items: PickerItem[]): { kind: string; label: st
   let index = 0;
   return kinds.map((kind) => ({
     kind,
-    label: kind === 'code_range' || kind === 'code_file' ? 'Code' : `${PICKER_KIND_LABEL[kind] ?? kind.replace(/_/g, ' ')}${kind === 'feedback' ? '' : 's'}`,
+    label: kind === 'code_range' || kind === 'code_file' ? 'Code' : `${PICKER_KIND_LABEL[kind] ?? kind.replace(/_/g, ' ')}${'s'}`,
     items: items.filter((i) => i.kind === kind).map((item) => ({ item, index: index++ })),
   }));
 }

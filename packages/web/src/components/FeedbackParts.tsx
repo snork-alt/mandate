@@ -2,7 +2,10 @@ import { SpecMaturityDot } from './maturity/SpecMaturity';
 import { parseRef } from '@mandate/shared/refs';
 import { Tooltip } from '@mantine/core';
 import type { Feedback, FeedbackChange } from '@mandate/shared';
-import { Link } from 'react-router';
+import { Link, useNavigate } from 'react-router';
+import type { Question } from '@mandate/shared';
+import type { MouseEvent } from 'react';
+import { questionTitle } from '../lib/requestLinks';
 import { FEEDBACK_KIND_META, FEEDBACK_STATUS_META, RESOLUTION_META, firstLine, targetLabel } from '../lib/feedback';
 
 export function FeedbackKindIcon({ kind, size = 15 }: { kind: Feedback['kind']; size?: number }) {
@@ -106,11 +109,11 @@ export function ActionBadge({ action }: { action: FeedbackChange['action'] }) {
 
 /** Compact feedback list (panels on spec, standard and work-order pages). */
 export function FeedbackList({ items }: { items: Feedback[] }) {
-  if (!items.length) return <span className="faint small">No feedback yet</span>;
+  if (!items.length) return <span className="faint small">No requests yet</span>;
   return (
     <>
       {items.map((f) => (
-        <Link key={f.id} to={`/feedback/${f.id}`} className="linked-item fb-linked">
+        <Link key={f.id} to={`/requests/${f.id}`} className="linked-item fb-linked">
           <FeedbackStatusIcon status={f.status} resolution={f.resolution} />
           <span className="linked-title">{firstLine(f.body)}</span>
           <FeedbackKindIcon kind={f.kind} size={13} />
@@ -120,7 +123,7 @@ export function FeedbackList({ items }: { items: Feedback[] }) {
   );
 }
 
-/** An open work order acting on a feedback item (pending / in progress). */
+/** An open work order acting on a request (pending / in progress). */
 export interface OpenWorkOrderRef {
   id: string;
   status: string;
@@ -155,6 +158,56 @@ export function FeedbackOutcome({ f, workOrder }: { f: Pick<Feedback, 'status' |
         {glyph && <span className="fb-outcome-glyph">{glyph}</span>}
         <span className={workOrder && !f.resolution ? 'mono' : undefined}>{text}</span>
       </span>
+    </Tooltip>
+  );
+}
+
+/** A question about a request: a chip linking to it (`plain`: inside a row link, navigates on click). */
+export function QuestionChip({ q, plain }: { q: Pick<Question, 'id' | 'status' | 'questions'>; plain?: boolean }) {
+  const navigate = useNavigate();
+  const label = (
+    <>
+      <span className="mono">{q.id}</span>
+      {q.status === 'open' && <span className="faint"> · open</span>}
+    </>
+  );
+  if (plain) {
+    const go = (e: MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      navigate(`/questions/${q.id}`);
+    };
+    return (
+      <Tooltip label={questionTitle(q as Question)} multiline maw={320}>
+        <span className="fb-target fb-question-chip" data-kind="question" role="link" tabIndex={0} onClick={go} onKeyDown={(e) => e.key === 'Enter' && navigate(`/questions/${q.id}`)} data-testid="fb-question-chip">
+          {label}
+        </span>
+      </Tooltip>
+    );
+  }
+  return (
+    <Tooltip label={questionTitle(q as Question)} multiline maw={320}>
+      <Link to={`/questions/${q.id}`} className="fb-target fb-question-chip" data-kind="question" data-testid="fb-question-chip">
+        {label}
+      </Link>
+    </Tooltip>
+  );
+}
+
+/** A work order acting on a request: a chip (`plain` inside a row link). */
+export function WorkOrderChip({ w, plain }: { w: { id: string; status: string; title?: string }; plain?: boolean }) {
+  const tip = `Work order ${w.id} · ${w.status.replace('_', ' ')}${w.title ? ` · ${w.title}` : ''}`;
+  return (
+    <Tooltip label={tip} multiline maw={320}>
+      {plain ? (
+        <span className="fb-target fb-wo-chip" data-kind="work-orders">
+          <span className="mono">{w.id}</span>
+        </span>
+      ) : (
+        <Link to={`/work-orders/${w.id}`} className="fb-target fb-wo-chip" data-kind="work-orders" data-testid="fb-wo-chip">
+          <span className="mono">{w.id}</span>
+        </Link>
+      )}
     </Tooltip>
   );
 }

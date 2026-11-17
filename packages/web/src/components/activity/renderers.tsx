@@ -288,6 +288,7 @@ export const activityRenderers: ActivityRendererRegistry = {
   'work_order.git_updated': gitUpdated,
   'comment.*': comment,
   'work_order.*': workOrder,
+  'request.*': feedback,
   'feedback.*': feedback,
   'verification.recorded': verification,
   'audit.*': audit,
@@ -296,6 +297,5 @@ export const activityRenderers: ActivityRendererRegistry = {
   'git.push_failed': pushFailed,
   commit,
   'approval.override': override,
-  'approval.override_confirmed': override,
   'question.*': question,
 };

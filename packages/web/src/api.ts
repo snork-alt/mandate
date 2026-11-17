@@ -1,5 +1,6 @@
 import { primeContributors } from './lib/people';
 import { buildRef, type RefKind } from '@mandate/shared/refs';
+import { normalizeFeedback } from './lib/feedback';
 import { callTool, McpToolError } from './mcp/client';
 import type { CommentCounts, CommentThread, StoredWorkOrderDoc, AutoPushStatus, ArchitectureGraph, GitCommitInfo, DocFeedback, EntityKind, Feedback, FileVersion, ResolvedFeedback, ResolvedWorkOrder, SectionImplementation, StandardUsage, GitStatus, GitSyncResult, HistoryEntry, WorkOrder, SectionTypeInfo, Spec, Standard } from '@mandate/shared';
 
@@ -21,11 +22,19 @@ const primed =
   };
 const historyOf = (kind: RefKind, id: string) => call<{ entries: HistoryEntry[] }>('history_get', { ref: buildRef({ kind, id }), limit: 500 }).then((r) => r.entries);
 
+/** `get` of a request returns `{ request, targets }`; pages keep the `{ feedback, targets }` shape. */
+const requestGet = (id: string): Promise<ResolvedFeedback> =>
+  call<Record<string, unknown>>('get', { of: 'requests', ref: id }).then((r) => {
+    const { request, ...rest } = r as { request?: unknown };
+    const fb = (request ?? (r as { feedback?: unknown }).feedback) as Feedback;
+    return { ...rest, feedback: fb && normalizeFeedback(fb) } as unknown as ResolvedFeedback;
+  });
+
 /** Read-only client over MCP tools (the web UI never writes; agents write through MCP). */
 export const api = {
   list: (kind: EntityKind) => call<{ items: Entity[] }>('doc_list', { kind }).then((r) => r.items),
   get: (kind: EntityKind, id: string): Promise<Entity> =>
-    (kind === 'work-orders' ? call<Entity>('get', { of: 'work-orders', ref: id }) : kind === 'feedback' ? call<Entity>('get', { of: 'feedback', ref: id }) : call<Entity>('doc_get', { kind, id })).then(primed(kind, id)),
+    (kind === 'work-orders' ? call<Entity>('get', { of: 'work-orders', ref: id }) : kind === 'feedback' ? requestGet(id) as unknown as Promise<Entity> : call<Entity>('doc_get', { kind, id })).then(primed(kind, id)),
   history: (kind: DocKind, id: string) => historyOf(kind, id),
   version: (kind: DocKind, id: string, commit: string, against: 'parent' | 'head' = 'parent', base?: string) =>
     call<FileVersion>('version_get', compact({ kind, id, commit, against: against === 'head' ? 'head' : undefined, base })),
@@ -46,7 +55,7 @@ export const api = {
   /** Comment threads on a target and its sections (`list` of comments). */
   comments: (target: string, includeResolved = true) => call<{ target: string; counts: CommentCounts; threads: CommentThread[] }>('list', { of: 'comments', target, includeResolved }),
   implementation: (specId: string) => call<{ sections: SectionImplementation }>('spec_implementation', { id: specId }).then((r) => r.sections),
-  feedbackItem: (id: string) => call<ResolvedFeedback>('get', { of: 'feedback', ref: id }).then(primed('feedback', id)),
+  feedbackItem: (id: string) => requestGet(id).then(primed('feedback', id)),
   feedbackHistory: (id: string) => historyOf('feedback', id),
   docFeedback: (kind: 'specs' | 'standards', id: string) => call<DocFeedback>('doc_feedback', { kind, id }),
   sectionTypes: () => call<{ items: SectionTypeInfo[] }>('section_types').then((r) => r.items),
