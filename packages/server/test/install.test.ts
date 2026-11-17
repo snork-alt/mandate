@@ -5,7 +5,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, utimesSync, wri
 import path from 'node:path';
 import Fastify from 'fastify';
 import { afterAll, describe, expect, it } from 'vitest';
-import { CliTarball, findCliPackage, type Packer } from '../src/install/cli-package.js';
+import { buildFromSource, CliTarball, findCliPackage, findSourceCliPackage, type Packer } from '../src/install/cli-package.js';
 import { registerInstallRoutes } from '../src/install/routes.js';
 import { renderInstallPs1, renderInstallSh, renderUninstallPs1, renderUninstallSh, sha256Hex } from '../src/install/script.js';
 import { cleanupTempDirs, tempDir } from './helpers.js';
@@ -87,6 +87,50 @@ describe('the CLI tarball', () => {
     writeFileSync(path.join(repo, 'packages', 'cli', 'dist', 'cli.js'), '');
     expect(findCliPackage({}, path.join(repo, 'packages', 'server', 'src', 'install'))?.dir).toBe(path.join(repo, 'packages', 'cli'));
     expect(findCliPackage({ MANDATE_CLI_PACKAGE_DIR: f.pkg }, '/')?.dir).toBe(f.pkg);
+  });
+
+  it('from source (npm run dev) finds the repo CLI even unbuilt; not from a dist bundle or with MANDATE_CLI_AUTOBUILD=0', async () => {
+    const repo = await tempDir();
+    const from = path.join(repo, 'packages', 'server', 'src', 'install');
+    mkdirSync(from, { recursive: true });
+    mkdirSync(path.join(repo, 'packages', 'cli', 'src'), { recursive: true });
+    mkdirSync(path.join(repo, 'packages', 'cli', 'scripts'), { recursive: true });
+    writeFileSync(path.join(repo, 'packages', 'cli', 'package.json'), JSON.stringify({ name: 'getmandate', version: '0.1.0', bin: { mandate: 'dist/cli.js' } }));
+    writeFileSync(path.join(repo, 'packages', 'cli', 'src', 'cli.ts'), '');
+    writeFileSync(path.join(repo, 'packages', 'cli', 'scripts', 'build.mjs'), '');
+    expect(findSourceCliPackage({}, from)).toEqual({ dir: path.join(repo, 'packages', 'cli'), name: 'getmandate', version: '0.1.0' });
+    expect(findSourceCliPackage({ MANDATE_CLI_AUTOBUILD: '0' }, from)).toBeNull();
+    expect(findSourceCliPackage({}, path.join(repo, 'packages', 'cli', 'dist'))).toBeNull();
+  });
+
+  it('buildFromSource is a no-op when the builds are newer than every source', async () => {
+    const repo = await tempDir();
+    const pk = (...p: string[]) => path.join(repo, 'packages', ...p);
+    for (const d of ['cli/src', 'cli/dist', 'server/src', 'doc/src', 'shared/src', 'web/src', 'web/dist']) mkdirSync(pk(d), { recursive: true });
+    for (const f of ['cli/src/cli.ts', 'server/src/index.ts', 'web/src/main.tsx', 'web/index.html']) writeFileSync(pk(f), '');
+    const later = new Date(Date.now() + 60_000);
+    for (const f of ['web/dist/index.html', 'cli/dist/cli.js']) {
+      writeFileSync(pk(f), '');
+      utimesSync(pk(f), later, later);
+    }
+    await expect(buildFromSource(pk('cli'))).resolves.toBeUndefined(); // would fail if it ran vite / build.mjs here
+  });
+
+  it('runs prepare (the source build) once for concurrent downloads, before packing', async () => {
+    const f = await fakeCli();
+    const order: string[] = [];
+    let prepares = 0;
+    const cli = new CliTarball(f.cli.pkg, f.cache, async (_d, dest) => {
+      order.push('pack');
+      writeFileSync(path.join(dest, 'x.tgz'), TGZ_BYTES);
+      return 'x.tgz';
+    }, async () => {
+      prepares++;
+      order.push('prepare');
+    });
+    await Promise.all([cli.get(), cli.get()]);
+    expect(prepares).toBe(1);
+    expect(order).toEqual(['prepare', 'pack']);
   });
 
   it('packs once per build (concurrent requests share it), atomically into the cache; a rebuilt dist repacks', async () => {

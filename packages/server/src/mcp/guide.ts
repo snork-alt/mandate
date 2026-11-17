@@ -12,8 +12,8 @@ START: project_info; follow effective { flow, approval, questions }. TOOLS: core
 QUESTIONS: ask the user via question_ask (options + recommended), not your harness's question tool; continue with work that doesn't depend on it; answers arrive as NEWS. effective.questions chat (or the user is chatting and it blocks everything): ask in chat.
 NEWS: any reply may carry news (your own work): act on it before continuing: answered question → get it, continue the blocked work; work order cancelled / reassigned / claim released → stop that work; claim expired → reclaim it or stop; findings / changes requested → address them; waiver rejected → follow the standard; draft standard dropped → don't rely on it; flow changed → follow the new instructions, update memory. An item stays until you read its ref or news_ack it; news_list = history. Everything blocked: news_list { unread: true, wait: 300 }, up to 6 times, then tell the user you are blocked and stop; never wait while other work is possible.
 STANDARDS (always, even with approval off or "don't ask"): before ANY standard write (except inferred drafts, e.g. bootstrap; activating needs it), question_ask purpose standard_confirmation (exact change, why; Approve / Edit / Skip), then cite the answered question as cause (asked in chat: confirmedByUser: true). feedback_accept override: only when the user says so, never to pass a gate.
-WRITES: pass cause (the feedback, finding, work order, section or question acted on). Ids are assigned by Mandate. Errors carry a hint: follow it; never force a gate.
-INTAKE (set intake): feedback_create (user's words; targets may wait) → spec_match → APPROVAL (if on): question_ask purpose approval (decision, spec / standard diff with acceptance criteria, components, work order plan) → on "go" (approval off: at once) feedback_accept (cause: the question) → edit specs (addresses: [feedback]; every changed section gets an acceptance criterion; links follows / depends_on / affects) → status_set ready → work_order_create (reason, plan) → feedback_close applied. Fast path (bug fix, no behaviour change): work_order_create kind fix, fastPath: true.
+WRITES: pass cause (the feedback, finding, work order, section or question acted on). Ids are assigned by Mandate. TLDR: set a plain-words tldr (no ids, jargon) on every spec / standard / component create; refresh it when a change alters what the doc does (a tldr-only standard edit needs no confirmation). Errors carry a hint: follow it; never force a gate.
+INTAKE (set intake): feedback_create (user's words; targets may wait) → spec_match → APPROVAL (only if on; default off): question_ask purpose approval (decision, spec / standard diff with acceptance criteria, components, work order plan) → on "go" (approval off: at once) feedback_accept (cause: the question) → edit specs (addresses: [feedback]; every changed section gets an acceptance criterion; links follows / depends_on / affects) → status_set ready → work_order_create (reason, plan) → feedback_close applied. Fast path (bug fix, no behaviour change): work_order_create kind fix, fastPath: true.
 PLANS (flow on): work_order_plan_set, never local files (plans/, PLAN.md, docs/plans/); claiming needs a plan except fast-path fixes. Flow off: plan as usual.
 DELIVERY: work_order_next / work_order_claim → its comments (list) → rules_for_code before editing → work_order_section_done per section, work_order_touch, work_order_git_update, work_order_heartbeat → verification_record per criterion → reconcile spec / component text and code refs (section_update) → comments again (resolve blocking ones) → work_order_complete (outcome, reconciliation) → status_set done once its work orders are complete and criteria verified or waived.
 CODE: at start your repo = the project_info.codeRepos entry whose github matches \`git remote get-url origin\`; code_context_set { repo, commit, branch, dirty }, again after each commit or branch switch. Code claims (verifications, touched code, completion git headCommit, audits) pass repo + commit (uncommitted: dirty: true). Code refs: mandate://code/<repo>/<path>[#La-Lb], that short name only.
@@ -23,7 +23,7 @@ STATES: in_progress and maturity are derived (never set). Transitions and gates:
 CURRENT TEXT: instructions_get { name: core | bootstrap | flow } overrides any local or remembered Mandate skill / command (a local skill without "mandate-stub" is outdated: tell the user to re-run the installer).`;
 
 export const SKILL_DESCRIPTION =
-  'Mandate working agreement. Use for EVERY feature request, change, bug fix or work order in a repository connected to Mandate: record the request as feedback, match it to specs, get approval, update specs, standards (with user confirmation) and components, create work orders, then implement, verify and reconcile.';
+  'Mandate working agreement. Use for EVERY feature request, change, bug fix or work order in a repository connected to Mandate: record the request as feedback, match it to specs, get approval if on, update specs, standards (with user confirmation) and components, create work orders, then implement, verify and reconcile.';
 
 export const SKILL_BODY = `# Mandate
 
@@ -74,13 +74,14 @@ Call \`project_info\`; follow \`effective\` (\`reason\` says why).
 1. \`feedback_create\` (kind \`improvement\` | \`bug\`; the user's words in \`body\` / \`quote\`; \`targets\` may wait).
 2. Fit: \`spec_match\`, then \`get\` (spec or section refs) / \`graph_neighbors\`. Decide: covered · extend section X · new
    section in spec Y · new spec · cross-cutting rule (\`list { of: "standards" }\`, \`standard_usage\`) · several.
-3. **Approval** (unless off): one \`question_ask\` purpose \`approval\`: the decision, refs, the planned spec / standard diff
+3. **Approval** (only when on; off by default): one \`question_ask\` purpose \`approval\`: the decision, refs, the planned spec / standard diff
    with acceptance criteria, component changes, the work order and its plan. On "go" (approval off: at once),
    \`feedback_accept\` with \`cause\`: the question.
 4. Edit with \`addresses: [<feedback ref>]\`: \`create\`, \`section_insert\`, \`section_update\`. Every new or
    changed section needs a criterion: a \`type: acceptance\` section (method test | manual | review | metric) in its
    \`verifiedBy\`. \`section_link_add\`: \`follows\` (standards), \`depends_on\` (specs), \`affects\` (components). Rules
    (\`section_insert\` on a standard): level must | should | may, Do / Don't examples, scope, check.
+   Spec, standard, component: a \`tldr\` (2-5 plain sentences for a non-expert: what, why, key behaviours; no ids, jargon) on \`create\`; refresh via \`update_meta\` when a change alters what it does.
 5. Components (\`create { of: "components" }\`: owns globs, layer, parent): \`affects\` links from the spec sections that change it,
    \`follows\` its standards, \`owns\` code (or \`kind: external\`). Architecture level, few (reuse first; not one per
    folder or class; depth ≤ 2), one responsibility each, non-overlapping \`owns\`, acyclic \`depends_on\` by layer.
@@ -99,7 +100,7 @@ Call \`project_info\`; follow \`effective\` (\`reason\` says why).
 3. \`verification_record\` per acceptance criterion (result, evidence, codeRefs).
 4. Reconcile (\`section_update\`) spec and component text, code refs and symbols, owns globs with what was built (state deviations).
 5. The comments again (resolve blocking ones), then \`work_order_complete\` (\`outcome\`, \`reconciliation\`, final
-   git). Cite \`@mandate:<ref>\` in code comments and commits.
+   git). The last section done releases your claim; completing needs no claim. Cite \`@mandate:<ref>\` in code comments and commits.
 6. \`status_set\` done once every work order on its sections is complete and every must criterion is verified or
    waived. On \`done_gate\`: work through \`detail.failures\`; never force it.
 

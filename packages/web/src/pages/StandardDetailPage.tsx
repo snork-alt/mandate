@@ -8,7 +8,7 @@ import { FeedbackBadge } from '../components/FeedbackBadge';
 import { VerificationMatrix } from '../components/VerificationMatrix';
 import { AuditsPanel, ComplianceView, LastAuditLine } from '../components/audits/panels';
 import { FeedbackList } from '../components/FeedbackParts';
-import { DocPage, Pill, TagPill } from '../components/doc';
+import { DocPage, Pill, TagPill, TldrCard } from '../components/doc';
 import { EmptyView, ErrorState } from '../components/ListStates';
 import { Prop, PropGroup } from '../components/PropertyList';
 import { TimeAgo } from '../components/TimeAgo';
@@ -88,6 +88,7 @@ export function StandardDetailPage() {
       <h1 className="doc-title">
         <TrackedValue field="title" value={std.title} render={(v) => v} />
       </h1>
+      <TldrCard tldr={std.tldr} />
       {(std.summary || tracked.data) && (
         <p className="doc-summary">
           <TrackedValue field="summary" value={std.summary} render={(v) => v} />

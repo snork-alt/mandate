@@ -1,4 +1,4 @@
-import { createDefaultRegistry, createDocFormat, type DocFormat } from '@mandate/doc';
+import { createDefaultRegistry, tldrWarnings, createDocFormat, type DocFormat } from '@mandate/doc';
 import type { z } from 'zod';
 import {
   specFrontmatterSchema,
@@ -26,9 +26,9 @@ import type { FileCodec } from './MarkdownDirRepository.js';
 export const sectionTypes = createDefaultRegistry();
 
 /** Structured documents (frontmatter + `<!-- @section -->` blocks) for specs and standards. */
-export const specFormat = createDocFormat(specFrontmatterSchema, { registry: sectionTypes });
-export const standardFormat = createDocFormat(standardFrontmatterSchema, { registry: sectionTypes });
-export const componentFormat = createDocFormat(componentFrontmatterSchema, { registry: sectionTypes });
+export const specFormat = createDocFormat(specFrontmatterSchema, { registry: sectionTypes, docWarnings: tldrWarnings });
+export const standardFormat = createDocFormat(standardFrontmatterSchema, { registry: sectionTypes, docWarnings: tldrWarnings });
+export const componentFormat = createDocFormat(componentFrontmatterSchema, { registry: sectionTypes, docWarnings: tldrWarnings });
 /** Audit reports (`audits/<id>.md`): an overview plus one `audit-item` section per checklist item. */
 export const auditFormat = createDocFormat(auditFrontmatterSchema, { registry: sectionTypes });
 /** Work orders (`work-orders/<id>.md`): plan, one `wo-section` per targeted spec section, reconciliation, outcome. */

@@ -1,4 +1,5 @@
 import { useSearchParams } from 'react-router';
+import { allSectionsFinished } from '@mandate/shared';
 import { useMemo, useState } from 'react';
 import { SegmentedControl, Text } from '@mantine/core';
 import { IconAlertTriangle, IconChevronRight, IconFileText, IconListCheck, IconSearch } from '@tabler/icons-react';
@@ -119,7 +120,7 @@ function WorkOrderRow({ item, spec, now }: { item: WorkOrder; spec?: Spec; now: 
 const LIFECYCLE: WorkOrderStatus[] = ['pending', 'in_progress', 'done', 'failed', 'cancelled'];
 
 /** True when the work order needs a human look: failed, or claimed with a stale heartbeat. */
-const needsAttention = (i: WorkOrder, now: number) => i.status === 'failed' || (i.status === 'in_progress' && !!i.claim && isStale(i.claim, now));
+const needsAttention = (i: WorkOrder, now: number) => i.status === 'failed' || (i.status === 'in_progress' && !!i.claim && !allSectionsFinished(i.sections) && isStale(i.claim, now));
 
 /** Thin stacked bar + clickable counts per work-order status (same look as the spec list summary). */
 function WorkOrderSummary({ items, now, selected, onToggle }: { items: WorkOrder[]; now: number; selected: string[]; onToggle: (v: string) => void }) {

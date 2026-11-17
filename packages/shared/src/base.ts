@@ -66,3 +66,6 @@ export const CRITERION_STATES = ['verified', 'failing', 'stale', 'unverified', '
 /** Component lifecycle (transitions: COMPONENT_TRANSITIONS in lifecycle.ts). */
 export const COMPONENT_STATUSES = ['active', 'deprecated', 'archived'] as const;
 export const STANDARD_STATUSES = ['draft', 'active', 'deprecated'] as const;
+
+/** Longest `tldr` (plain-language overview of a spec, standard or component) a write accepts, in characters. */
+export const TLDR_MAX_CHARS = 1200;

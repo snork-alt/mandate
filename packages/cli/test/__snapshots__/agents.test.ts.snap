@@ -312,7 +312,7 @@ If that tool is missing or the Mandate server cannot be reached: stop and tell t
 exports[`skills and command templates > two skills, open-format front matter, one source each 1`] = `
 "---
 name: mandate
-description: "Mandate working agreement. Use for EVERY feature request, change, bug fix or work order in a repository connected to Mandate: record the request as feedback, match it to specs, get approval, update specs, standards (with user confirmation) and components, create work orders, then implement, verify and reconcile."
+description: "Mandate working agreement. Use for EVERY feature request, change, bug fix or work order in a repository connected to Mandate: record the request as feedback, match it to specs, get approval if on, update specs, standards (with user confirmation) and components, create work orders, then implement, verify and reconcile."
 metadata:
   managed-by: mandate
 ---

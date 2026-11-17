@@ -5,6 +5,7 @@
  * canonical refs, the commit(s), warnings and, for section edits, the resulting section with its derived states.
  */
 import {
+  allSectionsFinished,
   isClaimStale,
   SERVICE_USER_PREFIX,
   userOfTrailers,
@@ -137,6 +138,8 @@ const strip = <T extends Record<string, unknown>>(a: T) => {
   return rest;
 };
 
+/** Added to the create / update_meta descriptions of specs, standards and components. */
+const TLDR_GUIDE = ' tldr: plain-language overview for a human reader (2-5 short sentences or bullets, markdown, max 1200 chars, no jargon, no ids or refs: what it is, why it exists, the key behaviours); write it on create, refresh it whenever a change alters what the document does. summary stays the terse one-liner.';
 const SECTION_GUIDE = `\nSections: one concept each, a one-sentence summary, under ~${SOFT_LIMIT} tokens (warnings otherwise); name symbols, refs and standards in the metadata.`;
 /** Write boilerplate (agent, branch, idempotencyKey, cause, returns) lives once in the server INSTRUCTIONS. */
 const COMMON = '';
@@ -191,7 +194,7 @@ function docWriteTools(kind: DocKind): AnyToolDef[] {
       name: `${k}_create`,
       title: `Create a ${k}`,
       kind: 'write',
-      description: `Create a ${k} (Mandate assigns the id from the title: use the returned ref / ids; never pass id). ${kind === 'specs' ? 'Starts as draft; use spec_status_set to move it.' : kind === 'standards' ? 'appliesTo rules (repo:x, tag:x, category:x) make it apply to matching specs.' : 'kind service|module|library|datastore|external; owns: code path globs per repo (most specific glob wins in code_owner). layer (optional): ui|api|service|domain|data|infra or another slug; omitted, it is inherited from the parent or derived from depends_on. parent (optional): the containing component (a tree: one parent, no cycles, not archived). Architecture level, few: not one per folder or class; reuse first (architecture_get). Typical sections: responsibility, interfaces, context (mermaid), rationale.'} Sections are optional here (${k}_section_insert).${COMMON}`,
+      description: `Create a ${k} (Mandate assigns the id from the title: use the returned ref / ids; never pass id). ${kind === 'specs' ? 'Starts as draft; use spec_status_set to move it.' : kind === 'standards' ? 'appliesTo rules (repo:x, tag:x, category:x) make it apply to matching specs.' : 'kind service|module|library|datastore|external; owns: code path globs per repo (most specific glob wins in code_owner). layer (optional): ui|api|service|domain|data|infra or another slug; omitted, it is inherited from the parent or derived from depends_on. parent (optional): the containing component (a tree: one parent, no cycles, not archived). Architecture level, few: not one per folder or class; reuse first (architecture_get). Typical sections: responsibility, interfaces, context (mermaid), rationale.'} Sections are optional here (${k}_section_insert).${COMMON}${TLDR_GUIDE}`,
       // DF-11: spec_create takes addresses / workOrder like the other doc writes (Feedback / Work-Order trailers).
       input: (kind === 'specs' ? withExtras(createSchema as unknown as z.ZodObject) : createSchema) as unknown as z.ZodObject,
       ...(kind === 'specs' ? { trailers: docEditTrailers } : {}),
@@ -205,7 +208,7 @@ function docWriteTools(kind: DocKind): AnyToolDef[] {
       name: `${k}_update_meta`,
       title: `Update ${k} metadata`,
       kind: 'write',
-      description: `Update frontmatter fields of a ${k} (null removes an optional field). ${kind === 'specs' ? 'Status: spec_status_set. Standards are linked from sections (follows), dependencies from section depends_on links.' : kind === 'components' ? 'Status: component_status_set. Dependencies: depends_on links from its sections.' : 'Sections: the section tools.'}${COMMON}`,
+      description: `Update frontmatter fields of a ${k} (null removes an optional field). ${kind === 'specs' ? 'Status: spec_status_set. Standards are linked from sections (follows), dependencies from section depends_on links.' : kind === 'components' ? 'Status: component_status_set. Dependencies: depends_on links from its sections.' : 'Sections: the section tools.'}${TLDR_GUIDE}${COMMON}`,
       input: withExtras(metaSchema as unknown as z.ZodObject),
       trailers: docEditTrailers,
       run: async (a, ctx) => {
@@ -549,7 +552,7 @@ const workOrderTools: AnyToolDef[] = [
     name: 'work_order_release',
     title: 'Release a claim',
     kind: 'write',
-    description: `Give a work order back (claim moved to claims as released; in_progress -> pending).${WO_COMMON}`,
+    description: `Give a work order back (claim moved to claims as released; in_progress -> pending). Not for finished work: when every section is done the claim is released automatically and the work order stays in_progress until work_order_complete.${WO_COMMON}`,
     input: workOrderRefInputSchema,
     uiAllowed: true,
     run: async (a, ctx) => {
@@ -560,6 +563,7 @@ const workOrderTools: AnyToolDef[] = [
       if (ctx.principal?.kind === 'ui') {
         const cur = await ctx.storage.workOrderService.get(id);
         if (!cur.claim) throw Object.assign(new Error(`not_claimed: work order ${id} is not claimed`), { statusCode: 409, code: 'not_claimed' });
+        if (allSectionsFinished(cur.sections)) throw Object.assign(new Error(`all_done: every section of ${id} is done; ask the agent to complete it (work_order_complete), do not release the claim`), { statusCode: 409, code: 'all_done' });
         if (!isClaimStale(cur.claim)) throw Object.assign(new Error(`claim_fresh: ${cur.claim.agent} sent a heartbeat ${cur.claim.heartbeatAt}; only a stale claim can be released from the UI`), { statusCode: 409, code: 'claim_fresh' });
         agent = cur.claim.agent;
       }
@@ -571,7 +575,7 @@ const workOrderTools: AnyToolDef[] = [
     name: 'work_order_section_done',
     title: 'Mark work-order sections done',
     kind: 'write',
-    description: `Mark sections (spec section ids or work-order section refs) done or obsolete, writing notes (appended), codeRefs ("repo:path#Lx-Ly" or { repo, path, lines, symbols, change, from }; merged into touched), deviations and verifications into each; code { repo, commit, dirty } for codeRefs / touched without commits. implement/update: records implementedCommit on the spec sections. Optional ${GIT_NOTE}, touched.${WO_COMMON}`,
+    description: `Mark sections (spec section ids or work-order section refs) done or obsolete, writing notes (appended), codeRefs ("repo:path#Lx-Ly" or { repo, path, lines, symbols, change, from }; merged into touched), deviations and verifications into each; code { repo, commit, dirty } for codeRefs / touched without commits. implement/update: records implementedCommit on the spec sections. When the last section is done the claim is released automatically; then call work_order_complete (no claim needed). Optional ${GIT_NOTE}, touched.${WO_COMMON}`,
     input: workOrderSectionDoneInputSchema,
     run: async (a, ctx) => {
       const commits: string[] = [];
@@ -584,7 +588,7 @@ const workOrderTools: AnyToolDef[] = [
         metaOf(ctx, commits),
       );
       const warnings: string[] = [...checkCodeRepos(ctx, (a.git ?? []).map((g) => g.repo), 'git'), ...stamped.warnings];
-      if (w.sections.every((s) => s.status !== 'pending')) warnings.push('every section is finished: reconcile specs / components with the code, then work_order_complete with the outcome');
+      if (w.sections.every((s) => s.status !== 'pending')) warnings.push('every section is finished and your claim was released automatically: reconcile specs / components with the code, then call work_order_complete with the outcome (no claim needed)');
       if (a.status === 'done' && !a.codeRefs?.length && !a.touched?.length) warnings.push('no code refs given for these sections: record the code you changed (codeRefs here, or work_order_touch with section)');
       return woResult(ctx, id, commits, {}, warnings);
     },
@@ -593,7 +597,7 @@ const workOrderTools: AnyToolDef[] = [
     name: 'work_order_complete',
     title: 'Complete a work order',
     kind: 'write',
-    description: `Finish a work order: outcome (what was delivered; required), reconciliation (what you updated). Remaining pending sections are marked done; the work order is then frozen (only PR / merge fields change). ${GIT_NOTE}: the final headCommit per repo (required for implement / update / fix unless recorded before; dirty claims are linked to it), PR, merge; touched.${WO_COMMON}`,
+    description: `Finish a work order: outcome (what was delivered; required), reconciliation (what you updated). Needs the claim, or no claim at all once every section is done (the claim is released automatically with the last section; any agent may complete). Remaining pending sections are marked done; the work order is then frozen (only PR / merge fields change). ${GIT_NOTE}: the final headCommit per repo (required for implement / update / fix unless recorded before; dirty claims are linked to it), PR, merge; touched.${WO_COMMON}`,
     input: workOrderCompleteInputSchema,
     run: async (a, ctx) => {
       const commits: string[] = [];
@@ -830,6 +834,8 @@ export function withUserConfirmation(def: AnyToolDef): AnyToolDef {
     trailers: (a: Record<string, unknown>) => ({ ...(def.trailers?.(a as never) ?? {}), 'User-Confirmed': a.confirmedByUser === true ? 'yes' : undefined }),
     run: async (a: Record<string, unknown>, ctx) => {
       const { confirmedByUser: _c, ...rest } = a;
+      // A tldr-only metadata update is descriptive (it changes no rule): no confirmation needed.
+      if (def.name === 'standard_update_meta' && Object.keys(rest).every((k) => ['ref', 'tldr', 'agent', 'branch', 'idempotencyKey', 'cause', 'addresses', 'workOrder'].includes(k)) && rest.tldr !== undefined) return def.run(rest as never, ctx);
       // An answered standard_confirmation question cited as cause: User-Confirmed names it and the answering user.
       const proof = await questionProof(ctx, ['standard_confirmation']);
       let draft = false;

@@ -5,6 +5,7 @@ import { checkBody, type SectionTypeRegistry } from './registry.js';
 import { sectionMetaSchema, sectionSchema, type Doc, type Section, type SectionInput } from './schema.js';
 import { createDefaultRegistry } from './types/index.js';
 import { sectionSummaryWarnings } from './warnings.js';
+import type { DocWarning } from './errors.js';
 
 /** `<!-- @section <id> -->` on its own line starts a section. */
 const MARKER_RE = /^<!--\s*@section\s+(\S+)\s*-->\s*$/;
@@ -190,6 +191,8 @@ export interface DocFormat<F, FIn = F> {
 export interface DocFormatOptions {
   /** Section types to accept; defaults to the built-ins (markdown, mermaid, html). */
   registry?: SectionTypeRegistry;
+  /** Extra document-level advice from the parsed frontmatter (appended to `validate().warnings`; never a gate). */
+  docWarnings?: (frontmatter: Record<string, unknown>) => DocWarning[];
 }
 
 function normalizeBody(body: string): string {
@@ -403,7 +406,7 @@ export function createDocFormat<S extends z.ZodType<Record<string, unknown>, Rec
     registry,
     validate(md) {
       const { issues, doc } = analyze(md);
-      return { ok: issues.length === 0, issues, warnings: doc ? sectionSummaryWarnings(doc.sections, md) : [] };
+      return { ok: issues.length === 0, issues, warnings: doc ? [...sectionSummaryWarnings(doc.sections, md), ...(options.docWarnings?.(doc.frontmatter as Record<string, unknown>) ?? [])] : [] };
     },
     inspect(md) {
       const { issues, partial } = analyze(md);

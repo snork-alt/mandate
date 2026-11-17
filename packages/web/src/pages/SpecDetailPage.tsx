@@ -24,6 +24,7 @@ import {
   StatusIcon,
   StatusPill,
   TagPill,
+  TldrCard,
 } from '../components/doc';
 import { EmptyView, ErrorState } from '../components/ListStates';
 import { Prop, PropGroup } from '../components/PropertyList';
@@ -175,6 +176,7 @@ export function SpecDetailPage() {
       <h1 className="doc-title">
         <TrackedValue field="title" value={spec.title} render={(v) => v} />
       </h1>
+      <TldrCard tldr={spec.tldr} />
       {(spec.summary || tracked.data) && (
         <p className="doc-summary">
           <TrackedValue field="summary" value={spec.summary} render={(v) => v} />

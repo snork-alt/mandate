@@ -97,7 +97,7 @@ export type StuckItem = { kind: 'claim'; w: OverviewWorkOrder } | { kind: 'block
 
 /** Stale claims first, then blocked work orders and sections. */
 export function stuckItems(o: Pick<ProjectOverview, 'inProgress' | 'blocked'>): StuckItem[] {
-  return [...o.inProgress.filter((w) => w.claim?.stale).map((w) => ({ kind: 'claim' as const, w })), ...o.blocked.map((b) => ({ kind: 'blocked' as const, b }))];
+  return [...o.inProgress.filter((w) => w.claim?.stale && !(w.sections.total > 0 && w.sections.done >= w.sections.total)).map((w) => ({ kind: 'claim' as const, w })), ...o.blocked.map((b) => ({ kind: 'blocked' as const, b }))];
 }
 
 /* ---------------------------------------------------------------- durations */

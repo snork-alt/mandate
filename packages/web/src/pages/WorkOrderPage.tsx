@@ -2,10 +2,11 @@ import { Markdown } from '../components/Markdown';
 import { QuestionsPanel } from '../components/questions/QuestionsPanel';
 import { useEffect, useMemo } from 'react';
 import { Alert, Skeleton, Tooltip } from '@mantine/core';
-import { IconAlertTriangle, IconArrowRight, IconBolt, IconCircleCheckFilled, IconCircleDashed, IconCircleOff, IconFileText } from '@tabler/icons-react';
+import { IconAlertTriangle, IconArrowRight, IconBolt, IconCircleCheck, IconCircleCheckFilled, IconCircleDashed, IconCircleOff, IconFileText } from '@tabler/icons-react';
 import { KindIcon } from '../components/refs/KindIcon';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useLocation, useParams } from 'react-router';
+import { allSectionsFinished, WAITING_FOR_COMPLETION_HINT } from '@mandate/shared';
 import { buildRef } from '@mandate/shared/refs';
 import { api } from '../api';
 import { ClaimAvatar, ClaimCard, CriterionStateIcon, DocPage, Pill, PriorityIcon } from '../components/doc';
@@ -108,7 +109,9 @@ export function WorkOrderPage() {
 
   const { main: mainTitle, origin } = splitTitle(title);
   const { hidden: hiddenSections, missing } = emptyScaffolding(doc.sections);
-  const stale = !!item.claim && isStale(item.claim, now);
+  // Every section done on an open work order: the agent only has to complete it; a (stale) claim is moot.
+  const waiting = (item.status === 'pending' || item.status === 'in_progress') && allSectionsFinished(item.sections);
+  const stale = !!item.claim && !waiting && isStale(item.claim, now);
   const deps0 = tracked.commit ? depsAt.data?.dependencies : r.dependencies;
   const header = (
     <>
@@ -153,7 +156,15 @@ export function WorkOrderPage() {
           <SectionProgress done={done} total={item.sections.length} />
         </div>
         <div className="wo-strip-claim">
-          {item.claim ? (
+          {waiting ? (
+            <Tooltip label={WAITING_FOR_COMPLETION_HINT} multiline maw={320}>
+              <span data-testid="wo-waiting-completion">
+                <Pill tone="accent" icon={<IconCircleCheck size={13} />}>
+                  Waiting for completion
+                </Pill>
+              </span>
+            </Tooltip>
+          ) : item.claim ? (
             <>
               <ClaimAvatar claim={item.claim} now={now} size={18} workOrder={item.id} />
               <span className="wo-strip-agent">{item.claim.agent}</span>

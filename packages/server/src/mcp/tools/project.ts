@@ -58,7 +58,7 @@ async function setPreference(a: PrefPatch, ctx: ToolContext) {
   const c = clientIdentity(ctx);
   const before = await s.clients.get(s.project, c.id);
   const rec = await s.clients.set(s.project, c, a, 'command');
-  const fields = (['flow', 'approval', 'questions'] as const).filter((k) => a[k] && (before?.[k] ?? (k === 'questions' ? 'mandate' : 'on')) !== a[k]).map((k) => `${k} ${k === 'questions' ? `via ${a[k]}` : a[k]} for ${c.label}`);
+  const fields = (['flow', 'approval', 'questions'] as const).filter((k) => a[k] && (before?.[k] ?? (k === 'questions' ? 'mandate' : k === 'approval' ? 'off' : 'on')) !== a[k]).map((k) => `${k} ${k === 'questions' ? `via ${a[k]}` : a[k]} for ${c.label}`);
   const user = ctx.principal?.kind === 'user' ? ctx.principal.login : undefined;
   const e = flowChangedEvent(s.project, fields, { agent: ctx.commit?.agent ?? c.client, ...(user ? { user } : {}), ...(ctx.principal?.kind === 'key' ? { source: ctx.principal.keyName } : {}) }, (await ctx.storage.git.head().catch(() => null)) ?? '');
   if (e) ctx.activity?.emit(e);

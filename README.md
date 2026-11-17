@@ -376,6 +376,9 @@ npm run dev          # API on :4000, web UI with hot reload on :5173
 npm run seed         # optional: a sample project with specs, standards, components and work orders
 ```
 
+In dev, the installer download (`/getmandate.tgz`) is built on demand from the sources and rebuilt when they change
+(`MANDATE_CLI_AUTOBUILD=0` turns this off).
+
 ```sh
 npm run typecheck
 npm test             # vitest across all workspaces

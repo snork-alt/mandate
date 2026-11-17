@@ -26,10 +26,11 @@ const tmp = () => mkdtempSync(path.join(os.tmpdir(), 'mandate-flow-'));
 const P = (flowPolicy: Policy['flowPolicy'], approvalPolicy: Policy['approvalPolicy'] = 'optional'): Policy => ({ flowPolicy, approvalPolicy });
 
 describe('policy precedence', () => {
-  it('required / off win; optional follows the client (default on)', () => {
-    expect(effective(P('required'), { flow: 'off', approval: null })).toMatchObject({ flow: 'on', approval: 'on' });
+  it('required / off win; optional follows the client (default flow on, approval off)', () => {
+    expect(effective(P('required'), { flow: 'off', approval: null })).toMatchObject({ flow: 'on', approval: 'off' });
+    expect(effective(P('optional'), { flow: 'on', approval: 'on' })).toMatchObject({ approval: 'on' });
     expect(effective(P('off'), { flow: 'on', approval: null })).toMatchObject({ flow: 'off' });
-    expect(effective(P('optional'), undefined)).toMatchObject({ flow: 'on', approval: 'on', reason: expect.stringContaining('default: on') });
+    expect(effective(P('optional'), undefined)).toMatchObject({ flow: 'on', approval: 'off', reason: expect.stringContaining('default: on') });
     expect(effective(P('optional'), { flow: 'off', approval: 'off' })).toMatchObject({ flow: 'off', approval: 'off' });
     expect(effective(P('optional', 'required'), { flow: 'on', approval: 'off' })).toMatchObject({ approval: 'on', reason: expect.stringContaining('approval is required') });
   });
@@ -112,7 +113,7 @@ describe('MCP tools (seeded project)', () => {
 
   it('project_info: policy, this client, effective and reason; the call records the client', async () => {
     const r = await fx.call('project_info', {});
-    expect(r.body).toMatchObject({ policy: P('optional'), client: { id: 'mandate-test/default', label: 'mandate-test', flow: null, approval: null }, effective: { flow: 'on', approval: 'on' } });
+    expect(r.body).toMatchObject({ policy: P('optional'), client: { id: 'mandate-test/default', label: 'mandate-test', flow: null, approval: null }, effective: { flow: 'on', approval: 'off' } });
     expect(r.body.reason).toMatch(/default: on/);
     const seen = await settings.clients.list('test');
     expect(seen.map((c) => c.id)).toContain('mandate-test/default');
@@ -122,7 +123,7 @@ describe('MCP tools (seeded project)', () => {
     expect((await fx.call('flow_set', {})).isError).toBe(true);
     expect((await fx.call('flow_set', { flow: 'maybe' })).isError).toBe(true);
     const off = await fx.call('flow_set', { flow: 'off' });
-    expect(off.body).toMatchObject({ client: { flow: 'off' }, effective: { flow: 'off', approval: 'on' }, changed: ['flow off for mandate-test'] });
+    expect(off.body).toMatchObject({ client: { flow: 'off' }, effective: { flow: 'off', approval: 'off' }, changed: ['flow off for mandate-test'] });
     expect((await fx.call('project_info', {})).body.effective.flow).toBe('off');
     await settings.setPolicy({ flowPolicy: 'required' });
     const refused = await fx.call('flow_set', { flow: 'off' });

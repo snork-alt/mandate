@@ -83,7 +83,7 @@ export class HistoryService {
           if (s.status === 'added' || s.status === 'removed' || s.moved || s.title || s.body) out.add('text');
           else if (s.meta.length) out.add('metadata');
         }
-        for (const c of d.frontmatter) out.add(c.key === 'status' ? 'status' : c.key === 'title' || c.key === 'summary' ? 'text' : 'metadata');
+        for (const c of d.frontmatter) out.add(c.key === 'status' ? 'status' : c.key === 'title' || c.key === 'summary' || c.key === 'tldr' ? 'text' : 'metadata');
         tags = [...out];
       } catch {
         tags = undefined;

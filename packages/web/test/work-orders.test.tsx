@@ -189,6 +189,32 @@ describe.each(['light', 'dark'] as const)('work order page (%s)', (scheme) => {
   });
 });
 
+describe('all sections done', () => {
+  it('shows Waiting for completion (with the hint) instead of a stale claim and Release claim', async () => {
+    const saved = { sections: resolved.item.sections, claim: resolved.item.claim };
+    resolved.item.sections = [{ id: 'enrolment-ui', status: 'done' }, { id: 'login-flow', status: 'obsolete' }];
+    resolved.item.claim = { agent: 'review-agent@ci', startedAt: now, heartbeatAt: new Date(Date.now() - 50 * 60_000).toISOString() } as never;
+    try {
+      render(
+        <R path={`/work-orders/${WO}`}>
+          <Routes>
+            <Route path="/work-orders/:id" element={<WorkOrderPage />} />
+          </Routes>
+        </R>,
+      );
+      await screen.findByRole('heading', { name: 'Review TOTP multi-factor authentication' }, { timeout: 8000 });
+      const strip = screen.getByTestId('wo-status-strip');
+      expect(within(strip).getByTestId('wo-waiting-completion').textContent).toContain('Waiting for completion');
+      expect(strip.textContent).not.toMatch(/Stale|heartbeat/);
+      expect(screen.queryByText('Release claim')).toBeNull();
+      expect(strip.querySelector('button[aria-label*="actions" i], [data-testid="item-menu"]')).toBeNull();
+    } finally {
+      resolved.item.sections = saved.sections;
+      resolved.item.claim = saved.claim;
+    }
+  }, 20000);
+});
+
 describe('work-order parts', () => {
   it('comment list: blocking first, resolved collapsed until expanded, replies shown', () => {
     const { container } = render(

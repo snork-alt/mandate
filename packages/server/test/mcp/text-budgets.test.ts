@@ -14,15 +14,15 @@ const tok = (s: string) => Math.ceil(s.length / 4);
 
 describe('working agreement budgets', () => {
   it('master skill (was ~3250 tokens before the lifecycle registry, 2055 before the prompts review)', () => {
-    expect(tok(SKILL_BODY)).toBeLessThanOrEqual(2150); // +9: instructions_get pointer; +50: tool sets (tools_enable)
-    expect(SKILL_BODY.split('\n').length).toBeLessThanOrEqual(112);
+    expect(tok(SKILL_BODY)).toBeLessThanOrEqual(2220); // +15: last section done frees the claim; +55: tldr guidance; +9: instructions_get pointer; +50: tool sets (tools_enable)
+    expect(SKILL_BODY.split('\n').length).toBeLessThanOrEqual(113);
     expect(tok(SKILL_DESCRIPTION)).toBeLessThanOrEqual(87);
     expect(SKILL_BODY).toContain('lifecycle_get');
   });
 
   it('server instructions (CORE_RULES mirror)', () => {
-    expect(tok(CORE_RULES)).toBeLessThanOrEqual(1055); // +46: CURRENT TEXT (instructions_get beats local copies); +15: TOOLS (tool sets)
-    expect(tok(INSTRUCTIONS)).toBeLessThanOrEqual(1310);
+    expect(tok(CORE_RULES)).toBeLessThanOrEqual(1110); // +55: tldr guidance; +46: CURRENT TEXT (instructions_get beats local copies); +15: TOOLS (tool sets)
+    expect(tok(INSTRUCTIONS)).toBeLessThanOrEqual(1360);
     expect(INSTRUCTIONS).toContain('lifecycle_get');
   });
 

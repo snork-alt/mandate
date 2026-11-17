@@ -67,7 +67,7 @@ export const POLICY_TEXT: Record<Policy['flowPolicy'], { label: string; body: st
 };
 export const APPROVAL_TEXT: Record<Policy['approvalPolicy'], { label: string; body: string }> = {
   required: { label: 'Required', body: 'Agents always show the plan (spec diff, components, work order) and wait for a go.' },
-  optional: { label: 'Optional', body: 'Each agent client chooses whether to stop for approval (default on).' },
+  optional: { label: 'Optional', body: 'Each agent client chooses whether to stop for approval (default off).' },
 };
 
 /** "Flow on · 2 agents" / "Flow: required" / "Flow 1/2 on" for my clients of a project. */

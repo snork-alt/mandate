@@ -231,21 +231,21 @@ const ENTRIES: LifecycleEntry[] = [
     table: WORK_ORDER_TRANSITIONS,
     enforced: true,
     steps: [
-      step('pending', ['work_order_release'], 'give a claimed work order back', { from: ['in_progress'] }),
-      step('in_progress', ['work_order_claim', 'work_order_next'], 'when you start delivery (also reopens a failed one)', {
+      step('pending', ['work_order_release'], 'give a claimed work order back (not for finished work: with every section done the claim is released automatically)', { from: ['in_progress'] }),
+      step('in_progress', ['work_order_claim', 'work_order_next'], 'when you start delivery (also reopens a failed one; claiming an all-sections-done work order keeps its progress)', {
         gate: 'a plan (work_order_plan_set) unless fastPath fix; no fresh claim by another agent',
         enforcedBy: 'WorkOrderService.claim (storage/work-orders.ts)',
         errors: ['plan_required', 'claim_conflict', 'transition_not_allowed'],
       }),
       step('done', ['work_order_complete'], 'after every section is done, verified and reconciled', {
-        gate: 'you hold the claim; outcome given; no unresolved blocking comment',
+        gate: 'you hold the claim, or nobody does and every section is done (the last work_order_section_done releases the claim: any agent may complete); outcome given; no unresolved blocking comment',
         enforcedBy: 'WorkOrderService.complete (storage/work-orders.ts)',
         errors: ['outcome_required', 'open_comments', 'not_claimed', 'claim_conflict', 'stale_claim', 'transition_not_allowed'],
       }),
       step('failed', ['work_order_fail'], 'you cannot deliver it (note why); claim again to retry', { errors: ['transition_not_allowed'] }),
       step('cancelled', ['work_order_cancel'], 'the work is no longer wanted (automatic when the spec is archived)', { errors: ['transition_not_allowed'] }),
     ],
-    notes: ['Closed work orders are frozen: only PR status / merge fields change (work_order_git_update); other writes give work_order_frozen.', 'A claim without heartbeat for 30 min is stale: work_order_claim takes it over.'],
+    notes: ['Closed work orders are frozen: only PR status / merge fields change (work_order_git_update); other writes give work_order_frozen.', 'A claim without heartbeat for 30 min is stale: work_order_claim takes it over.', 'The last section done / obsolete releases the claim automatically (status stays in_progress, no heartbeat or staleness after): then call work_order_complete (outcome, reconciliation); no claim needed.'],
   },
   {
     kind: 'work_order_section',
@@ -257,7 +257,7 @@ const ENTRIES: LifecycleEntry[] = [
     table: WORK_ORDER_SECTION_TRANSITIONS,
     enforced: false,
     steps: [
-      step('done', ['work_order_section_done', 'work_order_complete'], 'as each section lands (notes, codeRefs, deviations); complete marks the rest done', { gate: 'you hold the claim', errors: ['work_order_frozen', 'not_claimed', 'claim_conflict', 'stale_claim'] }),
+      step('done', ['work_order_section_done', 'work_order_complete'], 'as each section lands (notes, codeRefs, deviations); complete marks the rest done', { gate: 'you hold the claim (or nobody does and every section is already done)', errors: ['work_order_frozen', 'not_claimed', 'claim_conflict', 'stale_claim'] }),
       step('obsolete', ['work_order_section_done'], 'the spec section was archived or superseded (automatic on archive)'),
     ],
     notes: ['done on implement/update records implementedCommit on the spec section.'],
@@ -446,10 +446,11 @@ export const ERROR_ACTIONS: Record<string, string> = {
   outcome_required: 'pass outcome (what was delivered)',
   claim_conflict: 'another agent holds a fresh claim: pick another work order (work_order_next) or coordinate (comment_add)',
   stale_claim: 'the claim is stale: work_order_claim to take it over, then retry',
-  not_claimed: 'claim the work order first (work_order_claim), then retry',
+  not_claimed: 'claim the work order first (work_order_claim), then retry (not needed to complete once every section is done: the claim is released automatically)',
   ready_gate: 'every live section needs an acceptance criterion: insert one per listed section (or verifiedBy an existing one), then set ready',
   waiver_self_approved: 'approval must come from someone else: ask the user (question_ask purpose approval). Only if the user explicitly says to self-approve: feedback_accept with override: true, overrideReason (their words) and cause: the answered question',
   override_not_allowed: 'self-approval is only for the sole active user, or an admin, and only when the user says so: ask another user to accept the feedback',
+  all_done: 'every section is done: the agent only has to call work_order_complete (outcome, reconciliation); no claim and no release needed',
   claim_fresh: 'the claim has a recent heartbeat: only a stale claim can be released from the web UI; ask the agent or wait',
   not_snoozable: 'integrity errors cannot be snoozed: fix the error (its hint says how)',
   work_order_frozen: 'the work order is closed: only work_order_git_update (PR / merge) and replies are allowed; open a new work order for more work',

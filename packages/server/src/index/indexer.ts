@@ -456,7 +456,7 @@ export class Indexer {
             ...lineStats(s.before?.body ?? '', s.after?.body ?? ''),
           });
         }
-        for (const c of d.frontmatter) kinds.add(c.key === 'status' ? 'status' : c.key === 'title' || c.key === 'summary' ? 'text' : 'metadata');
+        for (const c of d.frontmatter) kinds.add(c.key === 'status' ? 'status' : c.key === 'title' || c.key === 'summary' || c.key === 'tldr' ? 'text' : 'metadata');
       } catch {
         kinds.add('text');
       }

@@ -4,6 +4,7 @@
  */
 import {
   buildRef,
+  allSectionsFinished,
   isClaimStale,
   MATURITY_STEPS,
   OPEN_WORK_ORDER_STATUSES,
@@ -147,7 +148,7 @@ export async function projectOverview(storage: Storage, input: ProjectOverviewIn
     status: w.status,
     ...(w.priority ? { priority: w.priority } : {}),
     sections: { done: w.sections.filter((s) => s.status !== 'pending').length, total: w.sections.length },
-    ...(w.claim ? { claim: { agent: w.claim.agent, ...(w.claim.branch ? { branch: w.claim.branch } : {}), startedAt: w.claim.startedAt, heartbeatAt: w.claim.heartbeatAt, stale: isClaimStale(w.claim, now) } } : {}),
+    ...(w.claim ? { claim: { agent: w.claim.agent, ...(w.claim.branch ? { branch: w.claim.branch } : {}), startedAt: w.claim.startedAt, heartbeatAt: w.claim.heartbeatAt, stale: !allSectionsFinished(w.sections) && isClaimStale(w.claim, now) } } : {}),
     git: w.git ?? [],
     hasPlan: !!w.hasPlan,
     updatedAt: w.updatedAt,
@@ -171,7 +172,7 @@ export async function projectOverview(storage: Storage, input: ProjectOverviewIn
   for (const w of workOrders) {
     const base = { workOrder: w.id, kind: w.kind, title: view(w).title };
     for (const c of w.claims ?? []) if (c.endedAt >= since) sessions.push({ ...base, agent: c.agent, startedAt: c.startedAt, endedAt: c.endedAt, ended: c.ended });
-    if (w.claim && OPEN_WORK_ORDER_STATUSES.includes(w.status) && w.claim.heartbeatAt >= since) sessions.push({ ...base, agent: w.claim.agent, startedAt: w.claim.startedAt, heartbeatAt: w.claim.heartbeatAt, stale: isClaimStale(w.claim, now) });
+    if (w.claim && OPEN_WORK_ORDER_STATUSES.includes(w.status) && w.claim.heartbeatAt >= since) sessions.push({ ...base, agent: w.claim.agent, startedAt: w.claim.startedAt, heartbeatAt: w.claim.heartbeatAt, stale: !allSectionsFinished(w.sections) && isClaimStale(w.claim, now) });
   }
   sessions.sort((a, b) => a.startedAt.localeCompare(b.startedAt));
   const weekAgo = new Date(now - 7 * DAY).toISOString();

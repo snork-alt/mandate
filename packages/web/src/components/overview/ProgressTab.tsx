@@ -18,7 +18,7 @@ import {
   IconTimeline,
 } from '@tabler/icons-react';
 import { Link } from 'react-router';
-import { MATURITY_LABELS, MATURITY_STEPS, STEP_TONE, type MaturityStep, type OverviewWorkOrder, type ProjectOverview, type SpecMaturity } from '@mandate/shared';
+import { WAITING_FOR_COMPLETION_HINT, MATURITY_LABELS, MATURITY_STEPS, STEP_TONE, type MaturityStep, type OverviewWorkOrder, type ProjectOverview, type SpecMaturity } from '@mandate/shared';
 import { buildRef } from '@mandate/shared/refs';
 import { ActorAvatar, AgentAvatar } from '../people/People';
 import { SectionProgress, WorkOrderGitSummary } from '../work-orders/parts';
@@ -41,6 +41,13 @@ import './progress.css';
 const kindLabel = (k: string) => KIND_LABEL[k as keyof typeof KIND_LABEL] ?? k;
 
 function Heartbeat({ w, now }: { w: OverviewWorkOrder; now: number }) {
+  if (w.sections.total > 0 && w.sections.done >= w.sections.total && w.status !== 'done') {
+    return (
+      <Tooltip label={WAITING_FOR_COMPLETION_HINT} multiline maw={320} openDelay={300}>
+        <span className="ov-heartbeat" data-testid="pg-waiting-completion">Waiting for completion</span>
+      </Tooltip>
+    );
+  }
   if (!w.claim) return <span className="ov-muted">Not claimed</span>;
   return (
     <Tooltip label={`Last heartbeat ${absoluteTime(w.claim.heartbeatAt)} · claimed ${absoluteTime(w.claim.startedAt)}`} openDelay={300}>
@@ -65,7 +72,7 @@ function AgentFaceMark({ agent, at }: { agent: string; at?: string }) {
 }
 
 const releaseAction = (w: OverviewWorkOrder, now: number): ItemAction[] =>
-  w.claim?.stale ? [{ id: 'release', label: 'Release claim', primary: true, dialog: { type: 'release', ref: buildRef({ kind: 'work-orders', id: w.id }), title: w.id, agent: w.claim.agent, heartbeat: compactTime(w.claim.heartbeatAt, now) } }] : [];
+  w.claim?.stale && !(w.sections.total > 0 && w.sections.done >= w.sections.total) ? [{ id: 'release', label: 'Release claim', primary: true, dialog: { type: 'release', ref: buildRef({ kind: 'work-orders', id: w.id }), title: w.id, agent: w.claim.agent, heartbeat: compactTime(w.claim.heartbeatAt, now) } }] : [];
 
 /** "2/5 Write the tests", "plan · 4 steps", "plan done", "no plan yet". */
 function PlanStep({ w }: { w: OverviewWorkOrder }) {

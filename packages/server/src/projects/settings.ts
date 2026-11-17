@@ -126,7 +126,8 @@ export function effective(policy: Policy, pref: (Pick<ClientRecord, 'flow' | 'ap
     approval = 'on';
     reasons.push('approval is required by the project policy');
   } else {
-    approval = pref?.approval ?? 'on';
+    // Default off: a request goes straight through the flow; the checkpoint is opt-in (approval on) or policy-required.
+    approval = pref?.approval ?? 'off';
     if (pref?.approval) reasons.push(`approval ${pref.approval} by preference`);
   }
   const questions = pref?.questions ?? 'mandate';

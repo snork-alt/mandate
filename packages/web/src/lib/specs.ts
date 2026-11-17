@@ -68,9 +68,9 @@ export function categoryLabel(category: string): string {
 
 /** Frontmatter fields of each document kind (used to show a past version's properties). */
 export const FRONTMATTER_FIELDS = {
-  specs: ['title', 'summary', 'category', 'status', 'priority', 'tags', 'owner', 'repo', 'implementedCommit', 'exemptFrom'],
-  standards: ['title', 'summary', 'status', 'effectiveFrom', 'supersededBy', 'tags', 'owner', 'appliesTo'],
-  components: ['title', 'summary', 'kind', 'owns', 'tags', 'owner', 'status'],
+  specs: ['title', 'summary', 'tldr', 'category', 'status', 'priority', 'tags', 'owner', 'repo', 'implementedCommit', 'exemptFrom'],
+  standards: ['title', 'summary', 'tldr', 'status', 'effectiveFrom', 'supersededBy', 'tags', 'owner', 'appliesTo'],
+  components: ['title', 'summary', 'tldr', 'kind', 'owns', 'tags', 'owner', 'status'],
   'work-orders': ['title', 'status', 'priority', 'note', 'claim', 'claims', 'dependencies', 'fastPath', 'touched', 'git', 'completedAt', 'updatedAt'],
   audits: ['title', 'summary', 'target', 'commit', 'code', 'auditor', 'status', 'startedAt', 'completedAt', 'abandonedAt', 'abandonReason', 'counts'],
 } as const;

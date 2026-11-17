@@ -129,6 +129,12 @@ function endClaim(d: StoredWorkOrderDoc, ended: ClaimEndReason, at: string): Sto
   const { claim, ...rest } = d;
   return { ...rest, claims: [...(d.claims ?? []), { ...claim, endedAt: at, ended }] } as StoredWorkOrderDoc;
 }
+/** True when the work order has sections and every one is done or obsolete. */
+export const allSectionsDone = (d: Pick<StoredWorkOrderDoc, 'sections'>): boolean => {
+  const wos = d.sections.filter(isWoSection);
+  return wos.length > 0 && wos.every((s) => s.status === 'done' || s.status === 'obsolete');
+};
+
 const endReason = (status: WorkOrder['status']): ClaimEndReason => (status === 'done' ? 'completed' : status === 'failed' ? 'failed' : status === 'cancelled' ? 'cancelled' : 'released');
 
 /** Delivery extras accepted by claim / heartbeat / section_done / complete. */
@@ -213,6 +219,9 @@ export class WorkOrderService {
     }
   }
 
+  /** Work orders being completed right now: marking their last pending sections done keeps the claim for `completed`. */
+  private readonly keepClaimOnDone = new Set<string>();
+
   /** The claim's effective heartbeat (runtime state; see heartbeats.ts). */
   heartbeatOf(id: string, claim: NonNullable<StoredWorkOrderDoc['claim']>): string {
     return effectiveHeartbeat(this.heartbeats, id, claim);
@@ -263,6 +272,8 @@ export class WorkOrderService {
     let out: StoredWorkOrderDoc = { ...next };
     // Closing drops the claim into the history.
     if (out.claim && !isOpen(out)) out = endClaim(out, endReason(out.status), now);
+    // The last section done / obsolete releases the claim (status stays in_progress): work_order_complete needs no claim then.
+    if (out.claim && isOpen(out) && current && !allSectionsDone(current) && allSectionsDone(out) && !this.keepClaimOnDone.has(out.id)) out = endClaim(out, 'all_done', now);
     // Inside the write lock: a fresh claim by another agent cannot be overwritten (claim races have one winner).
     if (current?.claim && out.claim && out.claim.agent !== current.claim.agent && !isClaimStale({ heartbeatAt: this.heartbeatOf(current.id, current.claim) })) {
       throw new ClaimedError(`claimed: ${next.id} is claimed by ${current.claim.agent}`);
@@ -471,7 +482,7 @@ export class WorkOrderService {
     // DF-3: another agent's stale claim is reported as stale (take it over with work_order_claim), never as fresh.
     if (current.claim?.agent !== agent) throw current.claim ? this.otherClaim(id, current.claim) : new WorkOrderError('not_claimed', `work order ${id} is not claimed`, { kind: 'work_order', id });
     const now = (meta.date ?? new Date()).toISOString();
-    const d = await this.modify(id, (cur) => ({ ...endClaim(cur, 'released', now), ...(cur.status === 'in_progress' ? { status: 'pending' as const } : {}) }), {
+    const d = await this.modify(id, (cur) => ({ ...endClaim(cur, 'released', now), ...(cur.status === 'in_progress' && !allSectionsDone(cur) ? { status: 'pending' as const } : {}) }), {
       ...meta,
       agent: meta.agent ?? agent,
       message: meta.message ?? `work order: release ${id}`,
@@ -531,7 +542,7 @@ export class WorkOrderService {
     return this.locked(async () => {
       const current = await this.doc(id);
       if (!isOpen(current)) throw this.frozenError(current);
-      if (input.agent !== undefined) this.requireClaim(current, input.agent);
+      if (input.agent !== undefined && !(!current.claim && allSectionsDone(current))) this.requireClaim(current, input.agent);
       const picked = input.sections.map((k) => this.woSection(current, k));
       const specIds = picked.map(targetSection);
       if (status === 'done' && (current.kind === 'implement' || current.kind === 'update')) {
@@ -541,6 +552,7 @@ export class WorkOrderService {
           trailers: { ...meta.trailers, 'Work-Order': id },
         });
       }
+      const finishes = allSectionsDone({ sections: current.sections.map((s) => (picked.some((p) => p.id === s.id) ? ({ ...s, status } as Section) : s)) });
       const d = await this.modify(
         id,
         (cur) => {
@@ -560,7 +572,7 @@ export class WorkOrderService {
           const next = { ...cur, sections, ...(code.length ? { touched: mergeTouched(cur.touched ?? [], code) } : {}) };
           return this.applyExtras(next, input);
         },
-        { ...meta, message: meta.message ?? `work order: ${status} ${specIds.join(', ')} in ${id}` },
+        { ...meta, message: meta.message ?? `work order: ${status} ${specIds.join(', ')} in ${id}${finishes && current.claim && !this.keepClaimOnDone.has(id) ? `; all sections done, claim by ${current.claim.agent} released` : ''}` },
       );
       return this.project(d);
     });
@@ -676,7 +688,8 @@ export class WorkOrderService {
     return this.locked(async () => {
       const doc = await this.doc(id);
       if (!isOpen(doc)) throw new ConflictError(`work order ${id} is ${doc.status}; done and cancelled are final`);
-      this.requireClaim(doc, agent);
+      // Nobody holds the claim and every section is done (auto-released): any agent may complete it.
+      if (!(!doc.claim && allSectionsDone(doc))) this.requireClaim(doc, agent);
       const outcome = input.outcome?.trim() || sectionBody(doc, WO_OUTCOME).trim();
       if (!outcome) throw new WorkOrderError('outcome_required', `work order ${id}: give outcome (a summary of what was delivered) to complete it`, { kind: 'work_order', missing: ['outcome'] }, 400);
       const warnings: string[] = [];
@@ -691,7 +704,14 @@ export class WorkOrderService {
       }
       if (open.length) warnings.push(`${open.length} open non-blocking comment thread(s): ${open.map((t) => t.uri).join(', ')}`);
       const pending = doc.sections.filter(isWoSection).filter((s) => (s.status ?? 'pending') === 'pending');
-      if (pending.length) await this.sectionDone({ id, sections: pending.map((s) => s.id), status: 'done' }, meta);
+      if (pending.length) {
+        this.keepClaimOnDone.add(id);
+        try {
+          await this.sectionDone({ id, sections: pending.map((s) => s.id), status: 'done' }, meta);
+        } finally {
+          this.keepClaimOnDone.delete(id);
+        }
+      }
       const d = await this.modify(
         id,
         (cur) => {
@@ -704,7 +724,7 @@ export class WorkOrderService {
           const links = input.codeLinks?.length ? { codeLinks: [...(cur.codeLinks ?? []), ...input.codeLinks.filter((l) => !(cur.codeLinks ?? []).some((c) => c.ref === l.ref))] } : {};
           return this.applyExtras({ ...cur, sections, status: 'done', ...links }, input);
         },
-        { ...meta, message: meta.message ?? `work order: complete ${id}` },
+        { ...meta, ...(doc.claim ? {} : { agent: meta.agent ?? agent }), message: meta.message ?? `work order: complete ${id}${doc.claim ? '' : ` (by ${agent}, no claim held: all sections were done)`}` },
       );
       this.heartbeats.clear(id);
       if (!(d.touched ?? []).length) warnings.push('no touched code recorded: report the files you changed with work_order_touch');
@@ -739,6 +759,7 @@ export class WorkOrderService {
       .filter((w) => !filters.spec || w.spec === filters.spec)
       .filter((w) => !filters.priority?.length || (w.priority && filters.priority.includes(w.priority)))
       .filter((w) => !w.claim || w.claim.agent === claim.agent || isClaimStale(w.claim))
+      .filter((w) => !w.sections.length || !w.sections.every((x) => x.status === 'done' || x.status === 'obsolete'))
       .sort((a, b) => rank(a) - rank(b) || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
     const specCache = new Map<string, StoredSpec | null>();
     for (const w of candidates) {

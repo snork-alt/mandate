@@ -25,6 +25,6 @@ export {
 export { codeBlockRange, locateQuote, sectionBodyRange, sectionLineRange, selectionRanges, type QuoteLocation } from './quote.js';
 export type { SplitBudget, SplitPiece } from './registry.js';
 export { estimateTokens, type Tokenizer } from './tokens.js';
-export { isSummaryLikelyStale, sectionAdvice, sectionSummaryWarnings, type SectionAdviceOptions } from './warnings.js';
+export { isSummaryLikelyStale, sectionAdvice, sectionSummaryWarnings, tldrWarnings, type SectionAdviceOptions } from './warnings.js';
 export { htmlToLines, mermaidToLines, type IndexLine } from './split/extract.js';
 export { checkLinks, findCycle, LINK_RULES, parseLinkTarget, parseSectionUri, WHOLE_STANDARD_RELS } from './links.js';

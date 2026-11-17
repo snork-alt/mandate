@@ -7,7 +7,7 @@ import type { Component } from '@mandate/shared';
 import { Link, useParams, useSearchParams } from 'react-router';
 import { api } from '../api';
 import { ArchitectureView, KIND_ICON } from '../components/architecture/ArchitectureView';
-import { ClaimAvatar, DocPage, TagPill } from '../components/doc';
+import { ClaimAvatar, DocPage, TagPill, TldrCard } from '../components/doc';
 import { TrackedValue, useTrackedChanges } from '../components/doc/tracked';
 import { EmptyView, ErrorState } from '../components/ListStates';
 import { Prop, PropGroup } from '../components/PropertyList';
@@ -196,6 +196,7 @@ export function ComponentDetailPage() {
       <h1 className="doc-title">
         <TrackedValue field="title" value={c.title} render={(v) => v} />
       </h1>
+      <TldrCard tldr={c.tldr} />
       {c.summary && (
         <p className="doc-summary">
           <TrackedValue field="summary" value={c.summary} render={(v) => v} />

@@ -157,6 +157,26 @@ describe('UI allow-list (uiAllowed)', () => {
     expect((await fx.storage.workOrderService.get(pending.id)).claim).toBeUndefined();
     expect((await fx.git.commitInfo((await fx.git.head())!)).message).toMatch(/release stale claim of busy-agent/);
   });
+
+  it('an all-sections-done work order with a stale claim is no stale_claim decision and cannot be released from the UI', async () => {
+    const sid = `dec-${Date.now().toString(36)}`;
+    await fx.call('spec_create', { id: sid, title: 'Decision spec', summary: 's', agent: 't', sections: [{ id: 'one', title: 'One', summary: 'o', body: 'o' }] });
+    const created = await fx.call('work_order_create', { spec: sid, sections: ['one'], kind: 'implement', plan: 'p', agent: 't' });
+    const wo = { id: (created.body.ref as string).split('/').pop()! };
+    await fx.call('work_order_claim', { ref: wo.id, agent: 'busy-agent' });
+    const secs = ['one'];
+    await fx.call('work_order_section_done', { ref: wo.id, agent: 'busy-agent', sections: secs });
+    const after = await fx.storage.workOrderService.get(wo.id);
+    expect(after.claim).toBeUndefined(); // auto-released
+    // An old, already-stale claim on a finished work order (as before auto-release existed).
+    const old = new Date(Date.now() - 3_600_000).toISOString();
+    await fx.storage.workOrderDocs.modify(wo.id, (d) => ({ ...d, claim: { agent: 'busy-agent', startedAt: old } }), { agent: 'busy-agent' });
+    fx.storage.heartbeats.set(wo.id, 'busy-agent', old);
+    const list = await fx.call('decisions_list', { kinds: ['stale_claim'], limit: 200 });
+    expect(list.body.items.some((d: any) => d.ref.endsWith(wo.id))).toBe(false);
+    const r = await callTool(tool('work_order_release'), { ref: wo.id }, uiCtx('write'));
+    expect(body(r).error.code).toBe('all_done');
+  });
 });
 
 describe('integrity_snooze', () => {

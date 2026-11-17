@@ -18,7 +18,7 @@ import { ConfigFile, preconfigured, SetupState } from './setup/files.js';
 import { FolderBrowser } from './setup/fs.js';
 import { adminClaimHook, registerSetupRoutes, setupStatus } from './setup/routes.js';
 import { registerInstallRoutes } from './install/routes.js';
-import { CliTarball, findCliPackage } from './install/cli-package.js';
+import { buildFromSource, CliTarball, findCliPackage, findSourceCliPackage } from './install/cli-package.js';
 import { githubRemote, registerAdminRoutes, TokenChecker } from './projects/admin.js';
 import { registerStaticUi, resolveWebDir } from './static.js';
 import { DbClientStore, migrateFlowPolicies, projectSettings } from './projects/settings.js';
@@ -167,15 +167,18 @@ registerAuthRoutes(app, {
 registerSetupRoutes(app, setupDeps);
 // One-line installer for developer machines: `curl -fsSL <url>/p/<project>/install.sh | sh` (no secrets in it).
 // The installer installs this server's own CLI package, served as /getmandate.tgz (packed once into ~/.mandate/cache/cli).
-const cliPackage = findCliPackage();
+// From source (npm run dev) the repo's CLI is built on demand, so the installer works without `npm run build`.
+const cliSource = findSourceCliPackage();
+const cliPackage = cliSource ?? findCliPackage();
 if (!cliPackage) app.log.info('install: no built CLI package found; /getmandate.tgz is unavailable (npm run build)');
+else if (cliSource) app.log.info('install: running from source; /getmandate.tgz is built on demand from the repo');
 registerInstallRoutes(app, {
   url: config.publicUrl,
   version: process.env.MANDATE_VERSION ?? '0.1.0',
   trustProxy: config.trustProxy,
   hostOk,
   hasProject: (id) => !!projects.config(id),
-  cli: cliPackage ? new CliTarball(cliPackage, path.join(mandateHome(), 'cache', 'cli')) : null,
+  cli: cliPackage ? new CliTarball(cliPackage, path.join(mandateHome(), 'cache', 'cli'), undefined, cliSource ? () => buildFromSource(cliSource.dir) : undefined) : null,
 });
 // Agent flow: project policy (projects.json) + per-client preferences (server-state database).
 registerFlowRoutes(app, { auth, hostOk, registry: projects, settings: flowSettings, access: (login, p) => perms.access(login, p) as Promise<'none' | 'read' | 'write'> });

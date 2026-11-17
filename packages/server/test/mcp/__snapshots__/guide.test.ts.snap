@@ -50,13 +50,14 @@ Call \`project_info\`; follow \`effective\` (\`reason\` says why).
 1. \`feedback_create\` (kind \`improvement\` | \`bug\`; the user's words in \`body\` / \`quote\`; \`targets\` may wait).
 2. Fit: \`spec_match\`, then \`get\` (spec or section refs) / \`graph_neighbors\`. Decide: covered · extend section X · new
    section in spec Y · new spec · cross-cutting rule (\`list { of: "standards" }\`, \`standard_usage\`) · several.
-3. **Approval** (unless off): one \`question_ask\` purpose \`approval\`: the decision, refs, the planned spec / standard diff
+3. **Approval** (only when on; off by default): one \`question_ask\` purpose \`approval\`: the decision, refs, the planned spec / standard diff
    with acceptance criteria, component changes, the work order and its plan. On "go" (approval off: at once),
    \`feedback_accept\` with \`cause\`: the question.
 4. Edit with \`addresses: [<feedback ref>]\`: \`create\`, \`section_insert\`, \`section_update\`. Every new or
    changed section needs a criterion: a \`type: acceptance\` section (method test | manual | review | metric) in its
    \`verifiedBy\`. \`section_link_add\`: \`follows\` (standards), \`depends_on\` (specs), \`affects\` (components). Rules
    (\`section_insert\` on a standard): level must | should | may, Do / Don't examples, scope, check.
+   Spec, standard, component: a \`tldr\` (2-5 plain sentences for a non-expert: what, why, key behaviours; no ids, jargon) on \`create\`; refresh via \`update_meta\` when a change alters what it does.
 5. Components (\`create { of: "components" }\`: owns globs, layer, parent): \`affects\` links from the spec sections that change it,
    \`follows\` its standards, \`owns\` code (or \`kind: external\`). Architecture level, few (reuse first; not one per
    folder or class; depth ≤ 2), one responsibility each, non-overlapping \`owns\`, acyclic \`depends_on\` by layer.
@@ -75,7 +76,7 @@ Call \`project_info\`; follow \`effective\` (\`reason\` says why).
 3. \`verification_record\` per acceptance criterion (result, evidence, codeRefs).
 4. Reconcile (\`section_update\`) spec and component text, code refs and symbols, owns globs with what was built (state deviations).
 5. The comments again (resolve blocking ones), then \`work_order_complete\` (\`outcome\`, \`reconciliation\`, final
-   git). Cite \`@mandate:<ref>\` in code comments and commits.
+   git). The last section done releases your claim; completing needs no claim. Cite \`@mandate:<ref>\` in code comments and commits.
 6. \`status_set\` done once every work order on its sections is complete and every must criterion is verified or
    waived. On \`done_gate\`: work through \`detail.failures\`; never force it.
 

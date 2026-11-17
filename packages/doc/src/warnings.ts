@@ -59,6 +59,16 @@ export function sectionSummaryWarnings(sections: Pick<Section, 'id' | 'title' | 
   return out;
 }
 
+/**
+ * `tldr-missing`: a non-draft document without a plain-language TL;DR. Advice only (never a gate); documents whose
+ * frontmatter has no `status` (or drafts, or archived ones) are not nagged.
+ */
+export function tldrWarnings(frontmatter: { status?: unknown; tldr?: unknown; archived?: unknown }): DocWarning[] {
+  if (typeof frontmatter.tldr === 'string' && frontmatter.tldr.trim()) return [];
+  if (frontmatter.status === 'draft' || frontmatter.status === 'archived' || frontmatter.archived === true) return [];
+  return [{ code: 'tldr-missing', message: 'no tldr: add a plain-language overview (2-5 short sentences or bullets, no jargon, no ids) for human readers' }];
+}
+
 export interface SectionAdviceOptions {
   /** Sections above this size get a `section-too-long` warning (default 600). */
   sectionSoftLimitTokens?: number;

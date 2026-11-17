@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { createDocFormat, estimateTokens, isSummaryLikelyStale, sectionAdvice, type Section } from '../src/index.js';
+import { createDocFormat, estimateTokens, isSummaryLikelyStale, sectionAdvice, tldrWarnings, type Section } from '../src/index.js';
 import { bodyStartLine, chunkDocument, chunkInput, chunkSection, docChunk, htmlToLines, mermaidToLines, type ChunkDoc } from '../src/split/index.js';
 
 const fmt = createDocFormat(z.object({ title: z.string(), category: z.string().optional(), summary: z.string().optional() }));
@@ -289,6 +289,21 @@ describe('summary warnings', () => {
     expect(stale.ok).toBe(true);
     expect(stale.warnings.map((w) => w.code)).toEqual(['summary-stale']);
     expect(isSummaryLikelyStale({ title: 'x', body: '', summary: 'anything goes here really' })).toBe(false);
+  });
+
+  it('tldr-missing is advice only: not for drafts, archived or documents with a tldr', () => {
+    expect(tldrWarnings({ status: 'ready' })).toMatchObject([{ code: 'tldr-missing' }]);
+    expect(tldrWarnings({})).toHaveLength(1);
+    expect(tldrWarnings({ status: 'draft' })).toEqual([]);
+    expect(tldrWarnings({ status: 'archived' })).toEqual([]);
+    expect(tldrWarnings({ status: 'ready', tldr: '  ' })).toHaveLength(1);
+    expect(tldrWarnings({ status: 'ready', tldr: 'Plain words.' })).toEqual([]);
+    const f = createDocFormat(z.object({ title: z.string(), status: z.string().optional(), tldr: z.string().optional() }), { docWarnings: tldrWarnings });
+    const md = f.serialize({ frontmatter: { title: 'T', status: 'ready' }, sections: [{ id: 'a', title: 'A', summary: 'Alpha thing.', body: 'Alpha thing here.' }] });
+    const v = f.validate(md);
+    expect(v.ok).toBe(true);
+    expect(v.warnings.map((w) => w.code)).toEqual(['tldr-missing']);
+    expect(f.validate(f.serialize({ frontmatter: { title: 'T', status: 'ready', tldr: 'Hi.\n\n- a' }, sections: [] })).warnings).toEqual([]);
   });
 
   it('sectionAdvice flags long sections', () => {

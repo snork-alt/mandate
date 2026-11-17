@@ -28,7 +28,7 @@ export interface DocIssue {
 
 /** Non-blocking advice: the document is valid but could be better for agents and search. */
 export interface DocWarning {
-  code: 'summary-missing' | 'summary-stale' | 'section-too-long';
+  code: 'summary-missing' | 'summary-stale' | 'section-too-long' | 'tldr-missing';
   message: string;
   sectionId?: string;
   line?: number;

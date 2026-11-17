@@ -8,6 +8,10 @@
  * It is cached under `<MANDATE_HOME>/cache/cli/`, keyed by version + a fingerprint of package.json and dist/ (a rebuilt
  * dist gets a new tarball), written to a temp dir then renamed (atomic: concurrent servers never see half a file),
  * and packed once per process (concurrent requests share the same promise).
+ *
+ * Running from source (`npm run dev`), the repo's packages/cli is served even when unbuilt: each download first
+ * rebuilds the web UI and the CLI bundle if any source file is newer than the build (`MANDATE_CLI_AUTOBUILD=0` turns
+ * this off), so the installer always gets the code the dev server runs.
  */
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -56,6 +60,61 @@ export function findCliPackage(env: NodeJS.ProcessEnv = process.env, from = path
     if (up === dir) return null;
     dir = up;
   }
+}
+
+/**
+ * Running from source (this module under a src/ directory of the repo, e.g. `npm run dev`): the repo's packages/cli,
+ * built or not, so the tarball can be built on demand (see `buildFromSource`). Null for an installed package or a dist
+ * bundle, with MANDATE_CLI_PACKAGE_DIR, or with MANDATE_CLI_AUTOBUILD=0.
+ */
+export function findSourceCliPackage(env: NodeJS.ProcessEnv = process.env, from = path.dirname(fileURLToPath(import.meta.url))): CliPackage | null {
+  if (env.MANDATE_CLI_AUTOBUILD === '0' || env.MANDATE_CLI_PACKAGE_DIR || !from.split(path.sep).includes('src')) return null;
+  let dir = from;
+  for (;;) {
+    const cli = path.join(dir, 'packages', 'cli');
+    if (existsSync(path.join(cli, 'src', 'cli.ts')) && existsSync(path.join(cli, 'scripts', 'build.mjs'))) return isCli(cli);
+    const up = path.dirname(dir);
+    if (up === dir) return null;
+    dir = up;
+  }
+}
+
+/** Newest mtime (ms) of the files under `dirs` (missing dirs count as 0). */
+function newest(dirs: string[]): number {
+  let max = 0;
+  const walk = (d: string) => {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.isFile()) max = Math.max(max, statSync(p).mtimeMs);
+    }
+  };
+  for (const d of dirs) if (existsSync(d)) walk(d);
+  return max;
+}
+const mtime = (p: string) => (existsSync(p) ? statSync(p).mtimeMs : 0);
+
+const run = (cmd: string, args: string[], cwd: string) =>
+  new Promise<void>((resolve, reject) => {
+    const win = process.platform === 'win32';
+    execFile(cmd, args, { cwd, shell: win, maxBuffer: 64 * 1024 * 1024, env: { ...process.env, npm_config_update_notifier: 'false', npm_config_fund: 'false' } }, (err, _stdout, stderr) =>
+      err ? reject(new Error(`${[cmd, ...args].join(' ')} failed: ${(stderr || err.message).trim().split('\n').slice(-3).join(' ')}`)) : resolve(),
+    );
+  });
+
+/**
+ * Brings the repo's CLI build up to date with the sources: the web UI (`vite build`, no typecheck) when web/src is
+ * newer than web/dist, then the CLI bundle (scripts/build.mjs) when any bundled source or the web build is newer than
+ * dist/cli.js. A no-op when nothing changed.
+ */
+export async function buildFromSource(cliDir: string): Promise<void> {
+  const pkgs = path.dirname(cliDir);
+  const web = path.join(pkgs, 'web');
+  const webOut = path.join(web, 'dist', 'index.html');
+  if (newest([path.join(web, 'src'), path.join(web, 'public')]) > mtime(webOut) || mtime(path.join(web, 'index.html')) > mtime(webOut))
+    await run(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['vite', 'build'], web);
+  const src = ['cli', 'server', 'doc', 'shared'].map((p) => path.join(pkgs, p, 'src'));
+  if (Math.max(newest(src), mtime(webOut)) > mtime(path.join(cliDir, 'dist', 'cli.js'))) await run(process.execPath, ['scripts/build.mjs'], cliDir);
 }
 
 /** Cheap fingerprint of what `npm pack` would ship: package.json bytes + every dist/ file's path, size and mtime. */
@@ -110,14 +169,24 @@ export class CliTarball {
     readonly pkg: CliPackage,
     private readonly cacheDir: string,
     private readonly pack: Packer = npmPack,
+    /** Runs before each download (e.g. `buildFromSource`); concurrent downloads share one run. */
+    private readonly prepare?: () => Promise<void>,
   ) {}
+
+  private preparing: Promise<void> | null = null;
 
   get version(): string {
     return this.pkg.version;
   }
 
   /** Path + sha256 of the tarball for the current dist (packs it if needed). */
-  get(): Promise<CliTarballInfo> {
+  async get(): Promise<CliTarballInfo> {
+    if (this.prepare) {
+      this.preparing ??= this.prepare().finally(() => {
+        this.preparing = null;
+      });
+      await this.preparing;
+    }
     const key = `${this.pkg.version}-${fingerprint(this.pkg.dir)}`;
     if (this.inflight?.key !== key) {
       const p = this.build(key);

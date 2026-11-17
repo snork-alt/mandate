@@ -7,6 +7,7 @@ import {
   buildRef,
   DECISION_KINDS,
   decisionsListInputSchema,
+  allSectionsFinished,
   isClaimStale,
   OPEN_WORK_ORDER_STATUSES,
   type Decision,
@@ -217,7 +218,7 @@ export async function listDecisions(storage: Storage, input: DecisionsListInput 
 
   // Stale claims: no heartbeat for a while; another agent may take the work over.
   for (const w of open) {
-    if (!w.claim || !isClaimStale(w.claim, now)) continue;
+    if (!w.claim || allSectionsFinished(w.sections) || !isClaimStale(w.claim, now)) continue; // all done: waiting for completion, nothing to release
     const age = now - Date.parse(w.claim.heartbeatAt);
     items.push({
       ref: buildRef({ kind: 'work-orders', id: w.id }),

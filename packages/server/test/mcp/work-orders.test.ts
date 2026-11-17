@@ -152,6 +152,38 @@ describe('work orders as documents', () => {
     await expect(fx.storage.workOrderDocs.delete(id)).rejects.toMatchObject({ code: 'archive_only' });
   });
 
+  it('the last section done releases the claim; any agent completes without a claim; others stay refused while a claim is held', async () => {
+    const { ref, id } = await setup({ plan: 'p' });
+    await ok('work_order_claim', { ref });
+    // A claim held: another agent cannot complete.
+    expect((await fail('work_order_complete', { ref, outcome: 'x' }, 'other@test')).code).toBe('claim_conflict');
+    const one = await ok('work_order_section_done', { ref, sections: ['design'], codeRefs: ['app:a.ts#L1-2'] });
+    expect(one.workOrder.item.claim?.agent).toBe(AGENT);
+    const last = await ok('work_order_section_done', { ref, sections: ['api'], codeRefs: ['app:a.ts#L1-2'] });
+    const item = last.workOrder.item;
+    expect(item.status).toBe('in_progress');
+    expect(item.claim).toBeUndefined();
+    expect(item.claims.at(-1)).toMatchObject({ agent: AGENT, ended: 'all_done' });
+    expect(sh(fx.dir, 'log', '-1', '--format=%s')).toMatch(/all sections done|claim released/);
+    // No claim: release / heartbeat do nothing useful; another agent completes it and the commit records who.
+    const done = await ok('work_order_complete', { ref, outcome: 'Finished.' }, 'closer@test');
+    expect(done.workOrder.item).toMatchObject({ status: 'done' });
+    expect(sh(fx.dir, 'log', '-1', '--format=%s')).toMatch(/closer@test/);
+    expect((await fx.storage.workOrderService.get(id)).status).toBe('done');
+  });
+
+  it('claiming an all-sections-done work order keeps its progress and the claim then completes with the holder only', async () => {
+    const { ref } = await setup({ plan: 'p' });
+    await ok('work_order_claim', { ref });
+    await ok('work_order_section_done', { ref, sections: ['design', 'api'], codeRefs: ['app:a.ts#L1-2'] });
+    const re = await ok('work_order_claim', { ref, agent: 'wrap@test' });
+    expect(re.workOrder.item.claim.agent).toBe('wrap@test');
+    expect(re.workOrder.item.sections.every((x: { status: string }) => x.status === 'done')).toBe(true);
+    expect(re.workOrder.item.status).toBe('in_progress');
+    expect((await fail('work_order_complete', { ref, outcome: 'x' }, 'other@test')).code).toBe('claim_conflict');
+    expect((await ok('work_order_complete', { ref, outcome: 'Wrapped up.' }, 'wrap@test')).workOrder.item.claims.at(-1)).toMatchObject({ agent: 'wrap@test', ended: 'completed' });
+  });
+
   it('stale claims use runtime heartbeats; after a restart claims are fresh until the TTL since startup', async () => {
     const { MemoryHeartbeats, SqliteHeartbeats } = await import('../../src/storage/heartbeats.js');
     const { effectiveHeartbeat } = await import('../../src/storage/heartbeats.js');

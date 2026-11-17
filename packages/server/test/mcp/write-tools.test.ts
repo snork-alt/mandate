@@ -167,6 +167,33 @@ describe('specs and standards', () => {
   }, 60_000);
 });
 
+describe('tldr', () => {
+  const TLDR = 'Lets people sign in once.\n\n- Works across apps\n- Sessions end after a day';
+  it('spec, standard and component: create, update, clear, read back; warns only while a non-draft doc has none', async () => {
+    const sid = uid('spec');
+    const c = await ok('spec_create', { id: sid, title: `Spec ${sid}`, tldr: TLDR, sections: [{ id: 'a', title: 'A', summary: 'Part a.', body: 'Body a.' }] });
+    expect(c.document.tldr).toBe(TLDR);
+    expect(JSON.stringify(await read('get', { ref: `mandate://specs/${sid}` }))).toContain('Lets people sign in once');
+    expect(c.warnings.join(' ')).not.toMatch(/no tldr/); // drafts never warn
+    const cleared = await ok('spec_update_meta', { ref: sid, tldr: null });
+    expect(cleared.document.tldr).toBeUndefined();
+    expect(cleared.warnings.join(' ')).not.toMatch(/no tldr/); // still a draft
+    const again = await ok('spec_update_meta', { ref: sid, tldr: 'Back again.' });
+    expect(again.document.tldr).toBe('Back again.');
+    expect((await fail('spec_update_meta', { ref: sid, tldr: 'x'.repeat(1201) })).code).toMatch(/invalid_input|validation/);
+
+    const stdId = uid('std');
+    const s = await ok('standard_create', { id: stdId, title: `Std ${stdId}`, sections: [{ id: 'r', title: 'R', summary: 'Rule.', body: 'Rule.' }] });
+    expect(s.warnings.join(' ')).toMatch(/no tldr/); // active by default, no tldr
+    expect((await ok('standard_update_meta', { ref: stdId, tldr: TLDR })).warnings.join(' ')).not.toMatch(/no tldr/);
+
+    const cid = uid('cmp');
+    const k = await ok('component_create', { id: cid, title: 'Thing', kind: 'module', tldr: TLDR, sections: [{ id: 'responsibility', title: 'Responsibility', summary: 'Does it.', body: 'Does it.' }] });
+    expect(k.document.tldr).toBe(TLDR);
+    expect(k.warnings.join(' ')).not.toMatch(/no tldr/);
+  }, 60_000);
+});
+
 describe('error codes', () => {
   it('transition_not_allowed (spec and work order)', async () => {
     const id = await newSpec({ criteria: false });

@@ -107,7 +107,7 @@ export class DocWriteService {
     return [
       ...new Set([
         ...sectionAdvice(sections, { sectionSoftLimitTokens: this.opts.sectionSoftLimitTokens ?? 600 }).map((w) => w.message),
-        ...v.warnings.filter((w) => w.sectionId && touched.includes(w.sectionId)).map((w) => w.message),
+        ...v.warnings.filter((w) => (w.sectionId ? touched.includes(w.sectionId) : w.code === 'tldr-missing')).map((w) => w.message),
       ]),
     ];
   }
@@ -207,7 +207,7 @@ export class DocWriteService {
   async updateMeta(kind: DocKind, ref: string, patch: Record<string, unknown>, meta: CommitMeta): Promise<WriteOutcome<Doc>> {
     const { id } = await this.resolveDoc(kind, ref);
     const { value, commits } = await this.write((m) => this.repo(kind).update(id, patch as never, { ...m, message: m.message ?? `${SINGULAR[kind]}(${id}): update metadata` }) as Promise<Doc>, meta);
-    return { value, commits, warnings: [] };
+    return { value, commits, warnings: this.check(kind, value, []) };
   }
 
   /** Spec status through the transition table; `done` passes the done gate (409 `done_gate` with the failing criteria). */

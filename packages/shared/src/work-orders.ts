@@ -29,7 +29,7 @@ export const WO_RESERVED_SECTIONS = [WO_PLAN, WO_RECONCILIATION, WO_OUTCOME, WO_
 /** Closed work orders: frozen except PR status / merge fields (409 `work_order_frozen`). */
 export const FROZEN_WORK_ORDER_STATUSES = ['done', 'failed', 'cancelled'] as const;
 /** How a past claim ended. */
-export const CLAIM_END_REASONS = ['released', 'completed', 'failed', 'cancelled', 'taken_over', 'reclaimed'] as const;
+export const CLAIM_END_REASONS = ['released', 'completed', 'failed', 'cancelled', 'taken_over', 'reclaimed', 'all_done'] as const;
 export type ClaimEndReason = (typeof CLAIM_END_REASONS)[number];
 export const PR_STATUSES = ['draft', 'open', 'merged', 'closed'] as const;
 export type PrStatus = (typeof PR_STATUSES)[number];

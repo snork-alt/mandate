@@ -4,7 +4,7 @@
  */
 import { LINK_RELS, sectionMetaSchema, slugSchema } from '@mandate/doc';
 import { z } from 'zod';
-import { appliesToSchema, exemptionSchema, FEEDBACK_KINDS, FEEDBACK_RESOLUTIONS, PRIORITIES, STORED_SPEC_STATUSES, VERIFICATION_METHODS, VERIFICATION_RESULTS, WORK_ORDER_KINDS, STANDARD_STATUSES } from './base.js';
+import { TLDR_MAX_CHARS, appliesToSchema, exemptionSchema, FEEDBACK_KINDS, FEEDBACK_RESOLUTIONS, PRIORITIES, STORED_SPEC_STATUSES, VERIFICATION_METHODS, VERIFICATION_RESULTS, WORK_ORDER_KINDS, STANDARD_STATUSES } from './base.js';
 import { docRefSchema, sectionRefSchema } from './read-schemas.js';
 import { parseNodeUri, parseRef, type RefKind } from './refs.js';
 import { woDeliveryExtras } from './work-orders.js';
@@ -13,6 +13,8 @@ import { codeClaimSchema } from './code-context.js';
 
 const text = (max: number) => z.string().max(max);
 const line = (max: number) => z.string().trim().min(1).max(max).regex(/^[^\r\n]*$/, 'single line');
+/** Plain-language TL;DR: markdown, may span lines. */
+const tldrField = z.string().trim().min(1).max(TLDR_MAX_CHARS);
 const docKinds = ['specs', 'standards', 'components'] as const;
 export type WritableDocKind = (typeof docKinds)[number];
 
@@ -74,6 +76,8 @@ const atMostOnePlacement = (v: { after?: string; before?: string; position?: str
 const specMeta = {
   title: line(300).optional(),
   summary: line(1000).nullable().optional(),
+  /** Human-readable overview (2-5 short sentences or bullets, markdown, no jargon, no ids); refresh when the doc changes. */
+  tldr: tldrField.nullable().optional(),
   category: line(80).nullable().optional(),
   priority: z.enum(PRIORITIES).nullable().optional(),
   tags: z.array(line(80)).max(50).optional(),
@@ -86,6 +90,8 @@ const standardMeta = {
   /** In force from this ISO date or commit sha (before that its rules are announced, not required). */
   effectiveFrom: z.string().trim().min(4).max(40).nullable().optional(),
   summary: line(1000).nullable().optional(),
+  /** Human-readable overview (2-5 short sentences or bullets, markdown, no jargon, no ids); refresh when the doc changes. */
+  tldr: tldrField.nullable().optional(),
   tags: z.array(line(80)).max(50).optional(),
   owner: line(200).nullable().optional(),
   appliesTo: z.array(appliesToSchema).max(50).optional(),

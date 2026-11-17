@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { layerSchema, type LayerInfo } from './layers.js';
 import { idSchema, STORED_SPEC_STATUSES, PRIORITIES, exemptionSchema, appliesToSchema, WORK_ORDER_KINDS, FEEDBACK_KINDS, FEEDBACK_RESOLUTIONS, VERIFICATION_RESULTS, VERIFICATION_METHODS, SPEC_STATUSES, WORK_ORDER_STATUSES, FEEDBACK_STATUSES, CRITERION_STATES, STANDARD_STATUSES, COMPONENT_STATUSES } from './base.js';
 // Leaf module (no imports from this file): modules re-exported below can use these at load time without a cycle.
+export { TLDR_MAX_CHARS } from './base.js';
 export { idSchema, STORED_SPEC_STATUSES, PRIORITIES, exemptionSchema, appliesToSchema, WORK_ORDER_KINDS, FEEDBACK_KINDS, FEEDBACK_RESOLUTIONS, VERIFICATION_RESULTS, VERIFICATION_METHODS, SPEC_STATUSES, WORK_ORDER_STATUSES, FEEDBACK_STATUSES, CRITERION_STATES, STANDARD_STATUSES, COMPONENT_STATUSES } from './base.js';
 import { parseLinkTarget, sectionSchema, type CodeRef, type Section, type SectionInput, type SectionType } from '@mandate/doc';
 
@@ -113,6 +114,10 @@ export const claimSchema = z.object({
 export type Claim = z.infer<typeof claimSchema>;
 /** A claim without a heartbeat for this long is stale (another agent may take the work order over). */
 export const CLAIM_STALE_AFTER_MS = 30 * 60_000;
+/** Every section done or obsolete (and at least one): the work order only waits for work_order_complete; no claim applies. */
+export const allSectionsFinished = (sections: readonly { status?: string }[]): boolean => sections.length > 0 && sections.every((s) => s.status === 'done' || s.status === 'obsolete');
+export const WAITING_FOR_COMPLETION_HINT = 'All sections are done; ask the agent to complete the work order (writes Reconciliation and Outcome)';
+
 export const isClaimStale = (claim: Pick<Claim, 'heartbeatAt'>, now = Date.now()) => {
   const t = Date.parse(claim.heartbeatAt);
   return Number.isNaN(t) || now - t > CLAIM_STALE_AFTER_MS;
@@ -146,6 +151,8 @@ export type GateSnapshot = z.infer<typeof gateSnapshotSchema>;
 export const specFrontmatterSchema = z.object({
   title: z.string().trim().min(1),
   summary: z.string().optional(),
+  /** Plain-language overview for a human reader (markdown, max TLDR_MAX_CHARS); `summary` stays the terse agent line. */
+  tldr: z.string().optional(),
   category: z.string().min(1).optional(),
   status: storedSpecStatusSchema.default('draft'),
   priority: prioritySchema.optional(),
@@ -244,6 +251,8 @@ export type StandardStatus = (typeof STANDARD_STATUSES)[number];
 export const standardFrontmatterSchema = z.object({
   title: z.string().trim().min(1),
   summary: z.string().optional(),
+  /** Plain-language overview for a human reader (markdown, max TLDR_MAX_CHARS). */
+  tldr: z.string().optional(),
   /** Lifecycle (default active). */
   status: z.enum(STANDARD_STATUSES).default('active'),
   /** In force from this ISO date or commit (sha); before that its rules are announced, not required. */
@@ -346,6 +355,8 @@ export const ownsSchema = z.object({ repo: z.string().min(1), paths: z.array(z.s
 export const componentFrontmatterSchema = z.object({
   title: z.string().trim().min(1),
   summary: z.string().optional(),
+  /** Plain-language overview for a human reader (markdown, max TLDR_MAX_CHARS). */
+  tldr: z.string().optional(),
   kind: z.enum(COMPONENT_KINDS),
   owns: z.array(ownsSchema).default([]),
   tags: z.array(z.string().min(1)).default([]),
@@ -364,6 +375,7 @@ export type CreateComponentInput = z.input<typeof createComponentSchema>;
 export const updateComponentSchema = z.object({
   title: z.string().trim().min(1).optional(),
   summary: z.string().nullable().optional(),
+  tldr: z.string().nullable().optional(),
   kind: z.enum(COMPONENT_KINDS).optional(),
   owns: z.array(ownsSchema).optional(),
   tags: z.array(z.string().min(1)).optional(),
@@ -1281,6 +1293,7 @@ export type CreateSpecInput = z.input<typeof createSpecSchema>;
 export const updateSpecSchema = z.object({
   title: z.string().trim().min(1).optional(),
   summary: z.string().nullable().optional(),
+  tldr: z.string().nullable().optional(),
   category: z.string().min(1).nullable().optional(),
   status: z.enum(STORED_SPEC_STATUSES).optional(),
   priority: prioritySchema.nullable().optional(),
@@ -1301,6 +1314,7 @@ export type CreateStandardInput = z.input<typeof createStandardSchema>;
 export const updateStandardSchema = z.object({
   title: z.string().trim().min(1).optional(),
   summary: z.string().nullable().optional(),
+  tldr: z.string().nullable().optional(),
   tags: z.array(z.string().min(1)).optional(),
   owner: z.string().min(1).nullable().optional(),
   appliesTo: z.array(appliesToSchema).optional(),

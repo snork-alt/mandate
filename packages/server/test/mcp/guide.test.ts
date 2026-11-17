@@ -169,6 +169,15 @@ describe('MCP tools on seeded data', () => {
     expect(none.body.error.code).toBe('confirmation_required');
   });
 
+  it('a tldr-only standard_update_meta is descriptive: no confirmation; other metadata still needs it', async () => {
+    const tldr = 'Rules for how the HTTP API is shaped.\n\n- Names are consistent\n- Errors look the same';
+    const r = await fx.call('standard_update_meta', { ref: 'mandate://standards/api-conventions', tldr, agent: 'tester' });
+    expect(r.isError, JSON.stringify(r.body)).toBe(false);
+    expect(r.body.document.tldr).toBe(tldr);
+    const other = await fx.call('standard_update_meta', { ref: 'mandate://standards/api-conventions', tldr, tags: ['x'], agent: 'tester' });
+    expect(other.body.error.code).toBe('confirmation_required');
+  });
+
   it('inferred drafts need no confirmation (bootstrap); a confirmed section, activation or a non-inferred create still do', async () => {
     const rule = (title: string, provenance: 'inferred' | 'confirmed' = 'inferred') => ({ title, type: 'rule', level: 'must', rationale: 'Consistency.', body: `${title}.`, provenance, confidence: 0.9 });
     const c = await fx.call('standard_create', { title: 'Inferred draft standard', sections: [rule('Keys are kebab case')], agent: 'tester' });

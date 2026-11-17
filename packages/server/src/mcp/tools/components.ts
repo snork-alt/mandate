@@ -4,6 +4,7 @@
  */
 import { slugSchema } from '@mandate/doc';
 import {
+  TLDR_MAX_CHARS,
   architectureGetInputSchema,
   COMPONENT_KINDS,
   COMPONENT_STATUSES,
@@ -20,6 +21,8 @@ import { z } from 'zod';
 import { defineTool } from '../define.js';
 import { sectionGetWithImage, withImageMeta } from '../images.js';
 
+/** Plain-language TL;DR: markdown, may span lines. */
+const tldrField = z.string().trim().min(1).max(TLDR_MAX_CHARS);
 const line = (max: number) => z.string().trim().min(1).max(max).regex(/^[^\r\n]*$/, 'single line');
 const list = <T extends z.ZodType>(item: T, max = 20) => z.array(item).min(1).max(max);
 const REF_NOTE = 'ref: an id or any mandate://components reference form (@sha reads that version, #Lx-Ly an excerpt).';
@@ -71,6 +74,8 @@ export const codeOwnerInputSchema = z
 const componentMeta = {
   title: line(300).optional(),
   summary: line(1000).nullable().optional(),
+  /** Human-readable overview (2-5 short sentences or bullets, markdown, no jargon, no ids); refresh when the component changes. */
+  tldr: tldrField.nullable().optional(),
   kind: z.enum(COMPONENT_KINDS).optional(),
   /** Code the component owns: path globs per repo (the most specific glob across components wins). */
   owns: z.array(ownsSchema).max(50).optional(),
@@ -85,6 +90,7 @@ export const componentCreateInputSchema = z
   .object({
     title: line(300),
     summary: line(1000).optional(),
+    tldr: tldrField.optional(),
     kind: z.enum(COMPONENT_KINDS),
     owns: z.array(ownsSchema).max(50).default([]),
     tags: z.array(line(80)).max(50).default([]),

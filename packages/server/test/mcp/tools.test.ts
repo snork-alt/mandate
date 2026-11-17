@@ -158,7 +158,7 @@ const HAPPY: Record<string, { args: () => Record<string, unknown>; check: (b: Re
   ask_status: { args: () => ({}), check: (b) => expect(b).toMatchObject({ configured: false, missing: ['provider', 'model'] }) },
   instructions_get: { args: () => ({ name: 'core', stubVersion: 0 }), check: (b) => expect(b).toMatchObject({ name: 'core', text: SKILL_BODY, stubVersion: STUB_VERSION, update: expect.stringContaining('re-run the Mandate installer') }) },
   lifecycle_get: { args: () => ({ kind: 'feedback' }), check: (b) => expect(b.steps.map((s: any) => s.to)).toContain('accepted') },
-  project_info: { args: () => ({}), check: (b) => expect(b.effective).toEqual({ flow: 'on', approval: 'on', questions: 'mandate' }) },
+  project_info: { args: () => ({}), check: (b) => expect(b.effective).toEqual({ flow: 'on', approval: 'off', questions: 'mandate' }) },
   code_context_set: { args: () => ({ repo: 'app', commit: 'ABC1234', dirty: true }), check: (b) => expect(b.label).toBe('app@abc1234+dirty') },
   questions_list: { args: () => ({ status: 'all', limit: 5 }), check: (b) => expect(b.total).toBeTypeOf('number') },
   audit_plan: { args: () => ({ target: 'mandate://specs/login-sso' }), check: (b) => expect(b.items.length).toBeGreaterThan(3) },

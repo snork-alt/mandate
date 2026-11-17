@@ -8,6 +8,7 @@ export { HtmlFrame } from './HtmlFrame';
 export { MermaidBlock } from './MermaidBlock';
 export { Pill, PriorityPill, StatusPill } from './Pills';
 export { PriorityIcon } from './PriorityIcon';
+export { TldrCard } from './TldrCard';
 export { SectionBlock } from './SectionBlock';
 export { SectionMeta } from './SectionMeta';
 export { SectionTypeIcon } from './SectionTypeIcon';

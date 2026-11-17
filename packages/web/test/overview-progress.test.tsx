@@ -180,6 +180,18 @@ describe('In progress tab', () => {
     expect(screen.getByTestId('ov-recent')).toBeTruthy();
   });
 
+  it('an all-sections-done work order shows Waiting for completion, no stale flag, no Release and is not stuck', async () => {
+    data.inProgress[2] = { ...data.inProgress[2]!, sections: { done: 3, total: 3 } };
+    data.attention.staleClaims = 0;
+    render(<R />);
+    const stuck = await screen.findByTestId('ov-stuck');
+    expect(within(stuck).queryByTestId('pg-stuck-claim')).toBeNull();
+    const row = screen.getAllByTestId('pg-wo').find((e) => e.textContent?.includes('wo-099'))!;
+    expect(within(row).getByTestId('pg-waiting-completion').textContent).toContain('Waiting for completion');
+    expect(within(row).queryByText('Release claim')).toBeNull();
+    expect(within(row).queryByTestId('item-primary')).toBeNull();
+  });
+
   it('Release from the Stuck list records it through work_order_release', async () => {
     render(<R />);
     const stuck = await screen.findByTestId('ov-stuck');
