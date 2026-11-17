@@ -148,7 +148,9 @@ export class DocViewService {
   /** Per-section implementation state of a spec (implementedCommit, outdated). */
   async specImplementation(input: SpecImplementationInput) {
     const { id } = specImplementationInputSchema.parse(input);
-    return { sections: await this.storage.workOrderService.implementation(id) };
+    const sections = await this.storage.workOrderService.implementation(id);
+    for (const [sid, v] of Object.entries(sections)) if (v.outdated && v.implementedCommit) v.changes = await this.storage.linkService.changes('specs', id, sid, v.implementedCommit).catch(() => []);
+    return { sections };
   }
 
   /** Feedback targeting one document, with open counts per section. */

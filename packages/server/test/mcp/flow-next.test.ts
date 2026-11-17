@@ -336,6 +336,18 @@ describe('flowFor (pure)', () => {
     expect(flowAll(snap({ requests: [closed, open] })).map((i) => i.request.id)).toEqual(['fb-1']);
   });
 
+  it('a section the request changed has dependents showing Upstream changed: review each (section_link_ack, or a task)', () => {
+    const f = req({ specMatch: { at: 'x', by: 'y', refs: [] }, changes: [changed] });
+    const dependents = new Map([['mandate://specs/s/sections/a', [{ spec: 'other', section: 'use', summaries: ['Sessions now last 30 days.', null] }]]]);
+    const item = flowFor(f, snap({ requests: [f], dependents, agent: 'me' }));
+    expect(item.state).toBe('outdated');
+    expect(item.next).toMatchObject({ tool: 'section_link_ack', args: { ref: 'mandate://specs/other/sections/use', to: 'mandate://specs/s/sections/a' } });
+    expect(item.next?.why).toMatch(/Sessions now last 30 days/);
+    // A task of the request's work order covering the dependent section: the usual flow goes on.
+    const wo = { id: 'wo-9', spec: 'other', kind: 'update', status: 'in_progress', reason: ['fb-1'], sections: [{ id: 'use', status: 'pending' }], hasPlan: true, createdAt: '2026-01-01T00:00:00Z', planSteps: [{ id: 't1', text: 'x', status: 'pending', sections: ['use'] }] } as never;
+    expect(flowFor(f, snap({ requests: [f], workOrders: [wo], dependents, agent: 'me' })).state).not.toBe('outdated');
+  });
+
   it('an implemented section the request changed but no task covers asks: editorial, a task, or re-verify', () => {
     const f = req({ specMatch: { at: 'x', by: 'y', refs: [] }, changes: [changed] });
     const wo = (steps: unknown[]) => ({ id: 'wo-1', spec: 's', kind: 'update', status: 'in_progress', reason: ['fb-1'], sections: [{ id: 'b', status: 'pending' }, ...(steps.length ? [{ id: 'a', status: 'pending' }] : [])], planSteps: steps, hasPlan: true, createdAt: '2026-01-01T00:00:00Z', claim: { agent: 'me', startedAt: '2026-01-01T11:59:00Z', heartbeatAt: '2026-01-01T11:59:00Z' } }) as never;

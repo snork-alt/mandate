@@ -53,7 +53,7 @@ describe('editorial edits and re-verification', () => {
   it('a wording edit without editorial is Outdated (with who changed it); editorial keeps it implemented', async () => {
     const { spec, sec } = await implemented();
     expect((await state(spec)).outdated).toBe(false);
-    await ok('section_update', { ref: sec, body: 'The design, reworded.' });
+    await ok('section_update', { ref: sec, body: 'The design, reworded.', changeSummary: 'Reworded the design for clarity.' });
     const s = await state(spec);
     expect(s).toMatchObject({ outdated: true });
     expect(s.changedCommit).toBeTruthy();
@@ -75,7 +75,7 @@ describe('editorial edits and re-verification', () => {
 
   it('section_reverify moves the base forward; leftovers are listed by flow_next {} and decisions_list', async () => {
     const { spec, sec } = await implemented();
-    await ok('section_update', { ref: sec, body: 'Changed outside any task.' });
+    await ok('section_update', { ref: sec, body: 'Changed outside any task.', changeSummary: 'Changed outside any task.' });
     const next = await fx.call('flow_next', {});
     expect(next.body.outdatedSections.map((x: any) => x.section)).toContain(sec);
     expect(next.body.done).toBe(false);
@@ -92,7 +92,7 @@ describe('editorial edits and re-verification', () => {
 describe('comments carry the UI context', () => {
   it('stores the displayed state (Outdated, implemented commit, badges) and the selected text; pasted mentions become bare refs', async () => {
     const { spec, sec } = await implemented();
-    await ok('section_update', { ref: sec, body: 'Changed outside any task.' });
+    await ok('section_update', { ref: sec, body: 'Changed outside any task.', changeSummary: 'Changed outside any task.' });
     const added = await ok('comment_add', { target: sec, body: `why is it outdated? @mandate:${sec}`, selectedText: 'The design.' });
     expect(added.comment.body).toBe(`why is it outdated? ${sec}`);
     expect(added.comment.view).toMatchObject({ object: expect.stringContaining('section'), implementation: { state: 'outdated', implementedBy: expect.any(String) }, selectedText: 'The design.' });
@@ -108,5 +108,51 @@ describe('comments carry the UI context', () => {
     const { sec } = await implemented();
     const r = await ok('request_create', { kind: 'improvement', body: `Look at @mandate:${sec} please` });
     expect(r.request.body).toBe(`Look at ${sec} please`);
+  });
+});
+
+describe('change summaries and accepting changes', () => {
+  it('an implemented section needs a changeSummary; it is stored per edit and shown with who / when', async () => {
+    const { spec, sec } = await implemented();
+    const r = await fx.call('section_update', { agent: AGENT, ref: sec, body: 'The design v2.' });
+    expect(r.isError).toBe(true);
+    expect((r.body.error as { code: string }).code).toBe('change_summary_required');
+    // refs / symbols bookkeeping is not a content change
+    await ok('section_update', { ref: sec, symbols: [] });
+    await ok('section_update', { ref: sec, body: 'The design v2.', changeSummary: 'Sessions now last 30 days.' });
+    await ok('section_update', { ref: sec, body: 'The design v3.' , changeSummary: 'Added the refresh rule.' });
+    const s = await state(spec);
+    expect(s.outdated).toBe(true);
+    expect(s.changes.map((c: { summary: string; by: string }) => c.summary)).toEqual(['Sessions now last 30 days.', 'Added the refresh rule.']);
+    expect(s.changes[0].by).toBeTruthy();
+  });
+
+  it('a depended-on section needs a changeSummary too; legacy edits show no summary', async () => {
+    const up = uid('up');
+    await ok('spec_create', { id: up, title: 'Upstream', summary: 's', sections: [{ id: 'core', title: 'Core', summary: 's', body: 'v1' }] });
+    const down = uid('down');
+    await ok('spec_create', { id: down, title: 'Down', summary: 's', sections: [{ id: 'use', title: 'Use', summary: 's', body: 'b' }] });
+    await ok('spec_section_link_add', { ref: `mandate://specs/${down}/sections/use`, to: `mandate://specs/${up}/sections/core`, rel: 'depends_on' });
+    const miss = await fail('spec_section_update', { ref: `mandate://specs/${up}/sections/core`, body: 'v2' });
+    expect(miss.code).toBe('change_summary_required');
+    await ok('spec_section_update', { ref: `mandate://specs/${up}/sections/core`, body: 'v2', changeSummary: 'Core now says v2.' });
+  });
+
+  it('section_accept: wording only moves the implemented marker (who / why); section_link_ack sets seenAt', async () => {
+    const { spec, sec } = await implemented();
+    await ok('section_update', { ref: sec, body: 'Reworded.', changeSummary: 'Reworded.' });
+    expect((await state(spec)).outdated).toBe(true);
+    await ok('section_accept', { ref: sec, reason: 'only wording' });
+    const e = await state(spec);
+    expect(e.outdated).toBe(false);
+    const doc = await fx.call('spec_get', { ref: spec });
+    expect(doc.body.sections.find((x: any) => x.id === 'design').meta.implementationNotes.at(-1)).toMatchObject({ kind: 'editorial', reason: 'only wording' });
+    // upstream link ack
+    const up = uid('up');
+    await ok('spec_create', { id: up, title: 'Upstream', summary: 's', sections: [{ id: 'core', title: 'Core', summary: 's', body: 'v1' }] });
+    await ok('spec_section_link_add', { ref: sec, to: `mandate://specs/${up}/sections/core`, rel: 'depends_on' });
+    await ok('section_link_ack', { ref: sec, to: `mandate://specs/${up}/sections/core` });
+    const g = await fx.call('spec_get', { ref: spec });
+    expect(g.body.sections.find((x: any) => x.id === 'design').meta.links[0].seenAt).toMatch(/^[0-9a-f]{40}$/);
   });
 });

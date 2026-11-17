@@ -1141,6 +1141,8 @@ export interface ResolvedLink {
   archived?: boolean;
   /** The target changed after this (source) section was implemented (or acknowledged via `seenAt`). */
   upstreamChanged?: boolean;
+  /** Edits of the target since the pin (upstreamChanged): summaries, who, when. */
+  changes?: SectionChange[];
   /** The pin to compare against (implementedCommit / seenAt) cannot be read: state unknown. */
   pinLost?: boolean;
   /** The target section is superseded (by `supersededBy`). */
@@ -1149,6 +1151,14 @@ export interface ResolvedLink {
   waiver?: WaiverState;
   feedback?: string;
   seenAt?: string;
+}
+
+/** One edit of a section: who, when, the commit and the plain-language summary the editor gave (null: legacy edit without one). */
+export interface SectionChange {
+  commit: string;
+  by: string;
+  at: string;
+  summary: string | null;
 }
 
 /** State of a waiver (`deviates_from` link or exemption). */
@@ -1312,6 +1322,8 @@ export type SectionImplementation = Record<
     changedCommit?: string;
     changedBy?: string;
     changedAt?: string;
+    /** Outdated: every edit since it was implemented, oldest first, with the editor's plain-language summary (null: none was given). */
+    changes?: SectionChange[];
   }
 >;
 

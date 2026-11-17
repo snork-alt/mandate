@@ -1,5 +1,5 @@
 import { checkLinks, parseLinkTarget } from '@mandate/doc';
-import type { Backlink, DocLinks, ResolvedLink, Section, SectionLinkInfo, StoredComponent, StoredSpec, StoredStandard } from '@mandate/shared';
+import type { Backlink, DocLinks, ResolvedLink, Section, SectionChange, SectionLinkInfo, StoredComponent, StoredSpec, StoredStandard } from '@mandate/shared';
 import { userOfTrailers } from '@mandate/shared';
 import type { GitStore } from '../git/GitStore.js';
 import { componentCodec, specCodec, standardCodec } from './codecs.js';
@@ -185,6 +185,38 @@ export class LinkService {
     return out;
   }
 
+  /**
+   * The edits of a section after `since` (oldest first): who, when, commit and the plain-language change summary the editor
+   * gave (`Change-Summary` trailer; null for legacy edits). Whole-document targets: every section that changed.
+   */
+  async changes(kind: Kind, id: string, sectionId: string | undefined, since: string): Promise<SectionChange[]> {
+    const path = this.repo(kind).pathOf(id);
+    const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
+    const hist = (await this.git.fileHistory([dir])).get(path) ?? [];
+    const base = await this.git.resolveCommit(since).catch(() => null);
+    const chain: typeof hist = [];
+    for (const c of hist) {
+      if (c.id === base) break;
+      chain.push(c);
+    }
+    const out: SectionChange[] = [];
+    const view = async (commit: string) => {
+      const d = await this.docAt(kind, id, commit);
+      return sectionId ? [d?.sections.find((x) => x.id === sectionId)] : (d?.sections ?? []);
+    };
+    let prev = await view(since);
+    for (const c of chain.slice(0, 30).reverse()) {
+      const cur = await view(c.id);
+      const differs = sectionId ? !sameBody(prev[0], cur[0]) : cur.length !== prev.length || cur.some((x) => !sameBody(prev.find((y) => y?.id === x?.id), x));
+      if (differs) {
+        const m = /^Change-Summary:[ \t]*(.+)$/im.exec(c.message);
+        out.push({ commit: c.id, by: c.authorName, at: c.date, summary: m ? m[1]!.trim() : null });
+      }
+      prev = cur;
+    }
+    return out;
+  }
+
   /** Has the target changed since `pin` (pinLost when the commit cannot be read)? */
   private async changedSince(target: NonNullable<ReturnType<ReturnType<typeof finder>['target']>>, pin: string): Promise<{ changed: boolean; pinLost: boolean }> {
     const then = await this.docAt(target.kind, target.id, pin);
@@ -231,6 +263,7 @@ export class LinkService {
           ...(t.kind === 'specs' ? { implemented: !!t.section?.implementedCommit } : {}),
           ...(archived ? { archived } : {}),
           upstreamChanged,
+          ...(upstreamChanged && pin ? { changes: await this.changes(t.kind, t.id, t.sectionId, pin).catch(() => [] as SectionChange[]) } : {}),
           ...(pinLost ? { pinLost } : {}),
           ...(successors.has(l.to) ? { supersededBy: successors.get(l.to)![0] } : {}),
           ...(waiver ? { waiver } : {}),

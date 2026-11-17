@@ -42,6 +42,17 @@ async function snapshot(ctx: ToolContext, agent?: string, tree?: TreeInput): Pro
     const bad = Object.fromEntries(Object.entries(impl).filter(([, v]) => v.outdated).map(([k, v]) => [k, { ...(v.implementedBy ? { implementedBy: v.implementedBy } : {}), ...(v.changedBy ? { changedBy: v.changedBy } : {}), ...(v.changedAt ? { changedAt: v.changedAt } : {}), ...(v.changedCommit ? { changedCommit: v.changedCommit } : {}) }]));
     if (Object.keys(bad).length) outdated.set(sp.id, bad);
   }
+  const dependents: NonNullable<FlowSnapshot['dependents']> = new Map();
+  for (const sp of specList) {
+    if (sp.status === 'archived' || !sp.sections.some((x) => x.links.length)) continue;
+    const links = await st.linkService.forDoc('specs', sp).catch(() => null);
+    for (const [sid, info] of Object.entries(links?.sections ?? {})) {
+      for (const l of info.outgoing) if (l.upstreamChanged && l.kind === 'specs' && l.sectionId) {
+        const key = `mandate://specs/${l.docId}/sections/${l.sectionId}`;
+        dependents.set(key, [...(dependents.get(key) ?? []), { spec: sp.id, section: sid, summaries: (l.changes ?? []).map((c) => c.summary) }]);
+      }
+    }
+  }
   const inherited: NonNullable<FlowSnapshot['inherited']> = new Map();
   for (const w of workOrders) {
     if (!['pending', 'in_progress'].includes(w.status) || inherited.has(w.spec)) continue;
@@ -50,7 +61,7 @@ async function snapshot(ctx: ToolContext, agent?: string, tree?: TreeInput): Pro
     const list = inheritedOf(await st.verificationService.forSpec(sp).catch(() => null), sp.sections.map((x) => x.id));
     if (list.length) inherited.set(w.spec, list);
   }
-  return { requests, comments, workOrders, questions, specs: new Map(specList.map((s) => [s.id, s])), verifications, ...(inherited.size ? { inherited } : {}), ...(outdated.size ? { outdated } : {}), ...(git ? { git } : {}), ...(agent ? { agent } : {}) };
+  return { requests, comments, workOrders, questions, specs: new Map(specList.map((s) => [s.id, s])), verifications, ...(inherited.size ? { inherited } : {}), ...(outdated.size ? { outdated } : {}), ...(dependents.size ? { dependents } : {}), ...(git ? { git } : {}), ...(agent ? { agent } : {}) };
 }
 
 /** Outdated sections as re-verify items (flow_next without a request). */

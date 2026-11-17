@@ -17,6 +17,9 @@ const line = (max: number) => z.string().trim().min(1).max(max).regex(/^[^\r\n]*
 /** Plain-language TL;DR: markdown, may span lines. */
 const tldrField = z.string().trim().min(1).max(TLDR_MAX_CHARS);
 const docKinds = ['specs', 'standards', 'components'] as const;
+/** The change summary of an edit: 1-2 plain sentences, no code; stored with the edit (commit trailer `Change-Summary`). */
+const changeSummaryField = z.string().trim().min(3).max(400).regex(/^[^\r\n]*$/, 'single line, 1-2 plain sentences').optional();
+
 export type WritableDocKind = (typeof docKinds)[number];
 
 /** A section reference to write to: no `#L` lines; `@sha` (optional) must be the section's current version. */
@@ -144,6 +147,8 @@ const sectionTools = (kind: WritableDocKind) => ({
       provenance: sectionMetaSchema.shape.provenance.unwrap().nullable().optional(),
       confidence: sectionMetaSchema.shape.confidence.unwrap().nullable().optional(),
       /** Wording only, no behaviour change: an implemented section stays implemented (not Outdated). Only title / summary / body may change. */
+      /** 1-2 plain sentences (no code) saying what changed and why; required when the section is implemented or others depend on it. */
+      changeSummary: changeSummaryField,
       editorial: z.object({ reason: z.string().trim().min(3).max(500) }).strict().optional(),
     })
     .omit(kind === 'specs' ? RULE_ONLY : kind === 'standards' ? ACCEPTANCE_ONLY : { ...RULE_ONLY, ...ACCEPTANCE_ONLY })
@@ -153,7 +158,7 @@ const sectionTools = (kind: WritableDocKind) => ({
     .object({ ref: writeSectionRef(kind), ...placement })
     .strict()
     .refine((v) => [v.after, v.before, v.position].filter(Boolean).length === 1, 'give exactly one of after, before, position'),
-  archive: z.object({ ref: writeSectionRef(kind), reason: line(500).optional() }).strict(),
+  archive: z.object({ ref: writeSectionRef(kind), reason: line(500).optional(), changeSummary: changeSummaryField }).strict(),
   linkAdd: z
     .object({
       ref: writeSectionRef(kind),

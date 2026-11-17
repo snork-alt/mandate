@@ -325,9 +325,9 @@ Example: {"ref":"mandate://specs/login/sections/create-vm","codeRefs":["app:src/
       input: withExtras(S.update as unknown as z.ZodObject),
       trailers: docEditTrailers,
       run: async (a, ctx) => {
-        const { ref, editorial, ...patch } = S.update.parse(strip(a)) as { ref: string; editorial?: { reason: string } } & Record<string, unknown>;
+        const { ref, editorial, changeSummary, ...patch } = S.update.parse(strip(a)) as { ref: string; editorial?: { reason: string }; changeSummary?: string } & Record<string, unknown>;
         const commits: string[] = [];
-        const out = await writes(ctx).sectionUpdate(kind, ref, patch, metaOf(ctx, commits), editorial ? { editorial } : {});
+        const out = await writes(ctx).sectionUpdate(kind, ref, patch, metaOf(ctx, commits), { ...(editorial ? { editorial } : {}), ...(changeSummary ? { changeSummary } : {}) });
         return sectionResult(ctx, out.value.id, parseRef(ref)!.sectionId!, { commits, warnings: out.warnings });
       },
     }),
@@ -353,9 +353,9 @@ Example: {"ref":"mandate://specs/login/sections/create-vm","codeRefs":["app:src/
       input: withExtras(S.archive as unknown as z.ZodObject),
       trailers: docEditTrailers,
       run: async (a, ctx) => {
-        const { ref, reason } = S.archive.parse(strip(a));
+        const { ref, reason, changeSummary } = S.archive.parse(strip(a));
         const commits: string[] = [];
-        const out = await writes(ctx).sectionArchive(kind, ref, metaOf(ctx, commits), reason);
+        const out = await writes(ctx).sectionArchive(kind, ref, metaOf(ctx, commits), reason, changeSummary);
         return sectionResult(ctx, out.value.id, parseRef(ref)!.sectionId!, { commits, warnings: out.warnings });
       },
     }),
@@ -965,4 +965,39 @@ export function withApprovalProof(def: AnyToolDef): AnyToolDef {
   } as AnyToolDef;
 }
 
-export const writeTools: AnyToolDef[] = [...docWriteTools('specs').map(withApprovalProof), ...docWriteTools('standards').map(withUserConfirmation).map(withApprovalProof), ...docWriteTools('components').map(withApprovalProof), ...workOrderTools, ...requestTools, ...legacyRequestTools, ...verificationTools];
+const acceptTools: AnyToolDef[] = [
+  defineTool({
+    name: 'section_link_ack',
+    title: 'Acknowledge an upstream change (no impact)',
+    kind: 'write',
+    uiAllowed: true,
+    description: `"Upstream changed" on a section: the item it depends on (depends_on / extends / follows / deviates_from / affects) was edited since this section was implemented or last acknowledged, and the change has NO impact on this section: this sets seenAt = the current commit on its link(s) (to: one link, else every upstream link of the section). If it does have impact, cover it with a work order task instead. Agents and the web UI ("Accept") may call it.
+Example: {"ref":"mandate://specs/login/sections/session","to":"mandate://specs/auth/sections/tokens"}`,
+    input: z.object({ ref: z.string().trim().min(1).max(600), to: z.string().trim().min(1).max(600).optional(), reason: z.string().trim().max(500).optional() }).strict(),
+    run: async (a, ctx) => {
+      const r = parseRef(a.ref);
+      if (!r || !r.sectionId || (r.kind !== 'specs' && r.kind !== 'standards' && r.kind !== 'components')) throw new ToolError('validation', 'ref must be a spec / standard / component section', 'mandate://specs/<id>/sections/<sid>', 'ref');
+      const commits: string[] = [];
+      const out = await writes(ctx).sectionAccept(r.kind, a.ref, { outdated: false, ...(a.to ? { to: a.to } : {}), ...(a.reason ? { reason: a.reason } : {}) }, metaOf(ctx, commits));
+      return { ref: a.ref, ...commitsOf(commits), warnings: out.warnings };
+    },
+  }),
+  defineTool({
+    name: 'section_accept',
+    title: 'Accept a changed section (wording only / no impact)',
+    kind: 'write',
+    uiAllowed: true,
+    description: `An Outdated spec section (changed since implemented) is wording only and its upstream changes have no impact: the implemented marker moves to the current text (noted as an editorial acceptance with who and why) and the upstream links of the section are acknowledged. The web UI's "Accept" button; agents use section_update { editorial } / section_link_ack. If the change needs work, use a request or a work order instead.
+Example: {"ref":"mandate://specs/login/sections/session","reason":"typo fix"}`,
+    input: z.object({ ref: z.string().trim().min(1).max(600), reason: z.string().trim().max(500).optional() }).strict(),
+    run: async (a, ctx) => {
+      const r = parseRef(a.ref);
+      if (!r || !r.sectionId || (r.kind !== 'specs' && r.kind !== 'standards' && r.kind !== 'components')) throw new ToolError('validation', 'ref must be a spec / standard / component section', 'mandate://specs/<id>/sections/<sid>', 'ref');
+      const commits: string[] = [];
+      const out = await writes(ctx).sectionAccept(r.kind, a.ref, { outdated: true, ...(a.reason ? { reason: a.reason } : {}) }, metaOf(ctx, commits));
+      return { ref: a.ref, ...commitsOf(commits), warnings: out.warnings };
+    },
+  }),
+];
+
+export const writeTools: AnyToolDef[] = [...acceptTools, ...docWriteTools('specs').map(withApprovalProof), ...docWriteTools('standards').map(withUserConfirmation).map(withApprovalProof), ...docWriteTools('components').map(withApprovalProof), ...workOrderTools, ...requestTools, ...legacyRequestTools, ...verificationTools];

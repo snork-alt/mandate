@@ -103,6 +103,8 @@ export interface FlowSnapshot {
   inherited?: Map<string, InheritedCriterion[]>;
   /** Implemented sections that changed since (Outdated), per spec id: who changed them and the work order that implemented them. */
   outdated?: Map<string, Record<string, { implementedBy?: string; changedBy?: string; changedAt?: string; changedCommit?: string }>>;
+  /** Sections whose upstream item changed ("Upstream changed"), keyed by the upstream section URI: the dependent sections and the change summaries. */
+  dependents?: Map<string, { spec: string; section: string; summaries: (string | null)[] }[]>;
   /** Git / components context (project settings and what the agent reported); absent: no git guidance. */
   git?: FlowGit;
   /** The calling agent (claims by other agents are not yours); unknown: every claim is assumed to be yours. */
@@ -200,6 +202,9 @@ export function flowFor(f: Feedback, snap: FlowSnapshot): FlowItem {
   // A section the request changed was implemented before and now shows Outdated, yet no task of the request's work orders covers it.
   const gap = uncoveredOutdated(f, snap, mine);
   if (gap) return item('outdated', gap);
+  // The request changed an upstream item: every dependent section is reviewed (no impact: section_link_ack; impact: a task).
+  const review = dependentReview(f, snap, mine);
+  if (review) return item('outdated', review);
 
   // Drive open work orders first (their sections / steps / verification / completion).
   for (const w of live) {
@@ -312,6 +317,31 @@ function uncoveredOutdated(f: Feedback, snap: FlowSnapshot, mine: WorkOrder[]): 
         args: { ref, editorial: { reason: '<what was reworded>' } },
         why: `${spec}/${sid} was implemented${o.implementedBy ? ` (${o.implementedBy})` : ''} and this request changed it since${o.changedBy ? ` (${o.changedBy})` : ''}, but no task covers it, so it shows Outdated. Decide now: (a) wording only, no behaviour change: section_update { ref: "${ref}", editorial: { reason } } (any wording edit left: re-send it with editorial; the section stays implemented); (b) behaviour changed: add a task covering ${sid} to the request's work order (work_order_plan_set) or create an update work order (work_order_create kind update); (c) nothing to build, the code already matches: section_reverify { ref: "${ref}", codeRefs, verifications }.`,
       };
+    }
+  }
+  return null;
+}
+
+/**
+ * A section this request changed has dependent sections (depends_on / extends / follows / deviates_from / affects) that now
+ * show "Upstream changed": review each one. No impact -> section_link_ack; impact -> a task of the request's work order.
+ */
+function dependentReview(f: Feedback, snap: FlowSnapshot, mine: WorkOrder[]): FlowStep | null {
+  if (!snap.dependents) return null;
+  const wos = mine.filter((w) => w.status !== 'cancelled');
+  for (const [spec, sids] of changedSections(f)) {
+    for (const sid of sids) {
+      const up = secRef(spec, sid);
+      for (const d of snap.dependents.get(up) ?? []) {
+        const covered = wos.some((w) => w.spec === d.spec && (w.sections.some((x) => x.id === d.section && x.status !== 'obsolete') || ((w.planSteps ?? []) as PlanStep[]).some((t) => t.sections?.includes(d.section))));
+        if (covered) continue;
+        const said = d.summaries.filter(Boolean).join(' ');
+        return {
+          tool: 'section_link_ack',
+          args: { ref: secRef(d.spec, d.section), to: up },
+          why: `${d.spec}/${d.section} depends on ${spec}/${sid}, which this request changed${said ? ` ("${said}")` : ''}. Review it: no impact -> section_link_ack (this call); it does need work -> cover ${d.spec}/${d.section} with a task of the work order (work_order_plan_set), then acknowledge after implementing.`,
+        };
+      }
     }
   }
   return null;

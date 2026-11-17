@@ -5,12 +5,13 @@
  * and the document is serialized and validated (round trip) before anything is written: never a partial write.
  */
 import { diffDocs, IMAGE_EXT, IMAGE_FILE_FIELDS, imageBody, imageBodyProblems, parseImageBody, sectionAdvice, type DocFormat, type ImageMeta, type ImageMime, type Section } from '@mandate/doc';
-import { buildRef, idFromTitle, parseRef, slugify, touchedFromInput, type TouchedInput, type SectionCreate, type StoredComponent, type StoredSpec, type StoredStandard } from '@mandate/shared';
+import { userOfTrailers, buildRef, idFromTitle, parseRef, slugify, touchedFromInput, type TouchedInput, type SectionCreate, type StoredComponent, type StoredSpec, type StoredStandard } from '@mandate/shared';
 import { componentCodec, componentFormat, specCodec, specFormat, standardCodec, standardFormat } from './codecs.js';
 import { NotFoundError, type CommitMeta } from './GitBackedRepository.js';
 import { presetIds } from './preset-ids.js';
 import { applyCodeToSection } from './work-order-plan.js';
 import type { Storage } from './index.js';
+import { UPSTREAM_RELS } from './model.js';
 
 export type DocKind = 'specs' | 'standards' | 'components';
 type Doc = StoredSpec | StoredStandard | StoredComponent;
@@ -263,15 +264,41 @@ export class DocWriteService {
     return { ...out, sectionId: out.result! };
   }
 
-  async sectionUpdate(kind: DocKind, ref: string, patch: Partial<Record<(typeof SECTION_PATCH_KEYS)[number], unknown>>, meta: CommitMeta, opts: { image?: ImageUpload; editorial?: { reason: string } } = {}): Promise<WriteOutcome<Doc>> {
+  /** The change summary travels with the edit as a `Change-Summary` commit trailer (one line). */
+  private withSummary(meta: CommitMeta, summary?: string): CommitMeta {
+    const one = summary?.replace(/\s+/g, ' ').trim();
+    return one ? { ...meta, trailers: { ...meta.trailers, 'Change-Summary': one.slice(0, 400) } } : meta;
+  }
+
+  /**
+   * A section that is implemented, or that other sections depend on (incoming depends_on / extends / follows /
+   * deviates_from / affects), is not edited without saying what changed in 1-2 plain sentences (shown on the Outdated /
+   * Upstream changed badges of the sections that depend on it).
+   */
+  private async requireSummary(kind: DocKind, doc: Doc, section: Section, summary?: string): Promise<void> {
+    if (summary?.trim()) return;
+    const implemented = kind === 'specs' && !!section.implementedCommit;
+    let dependents = 0;
+    if (!implemented) {
+      const links = await this.storage.linkService.forDoc(kind, doc as never).catch(() => null);
+      dependents = (links?.sections[section.id]?.backlinks ?? []).filter((b) => UPSTREAM_RELS.has(b.rel)).length;
+    }
+    if (!implemented && !dependents) return;
+    throw new WriteError('change_summary_required', `change_summary_required: ${section.id} is ${implemented ? 'implemented' : `depended on by ${dependents} section(s)`}: say what changed`, 400, 'pass changeSummary: 1-2 plain sentences (no code) on what changed and why, e.g. "Sessions now last 30 days instead of 7."');
+  }
+
+  async sectionUpdate(kind: DocKind, ref: string, patch: Partial<Record<(typeof SECTION_PATCH_KEYS)[number], unknown>>, meta0: CommitMeta, opts: { image?: ImageUpload; editorial?: { reason: string }; changeSummary?: string } = {}): Promise<WriteOutcome<Doc>> {
     const editorial = opts.editorial;
+    const meta = this.withSummary(meta0, opts.changeSummary);
     let carried: { id: string; commit?: string } | null = null;
     const out = await this.editSections(
       kind,
       ref,
-      (doc, sectionId) => {
+      async (doc, sectionId) => {
         const current = this.section(kind, doc, sectionId!);
         if (current.archived) throw new WriteError('validation', `section '${sectionId}' is archived; archived sections are kept as they were`, 409, 'insert a new section instead');
+        // Only edits that change what the section says (not code refs / symbols / links bookkeeping) need a summary.
+        if (Object.keys(patch).some((k) => ['title', 'body', 'type', 'method', 'threshold', 'level', 'check', 'scope', 'rationale', 'examples'].includes(k))) await this.requireSummary(kind, doc, current, opts.changeSummary ?? editorial?.reason);
         if (editorial) {
           const behaviour = Object.keys(patch).filter((k) => !['title', 'summary', 'body'].includes(k));
           if (behaviour.length || current.type === 'acceptance' || current.type === 'rule') {
@@ -357,15 +384,43 @@ export class DocWriteService {
   }
 
   /** Archive (sections are never deleted): kept in the document, no longer in force. */
-  async sectionArchive(kind: DocKind, ref: string, meta: CommitMeta, reason?: string): Promise<WriteOutcome<Doc>> {
+  async sectionArchive(kind: DocKind, ref: string, meta0: CommitMeta, reason?: string, changeSummary?: string): Promise<WriteOutcome<Doc>> {
+    const meta = this.withSummary(meta0, changeSummary);
     return this.editSections(
       kind,
       ref,
-      (doc, sectionId) => {
+      async (doc, sectionId) => {
         const s = this.section(kind, doc, sectionId!);
+        await this.requireSummary(kind, doc, s, changeSummary ?? reason);
         if (s.archived) throw new WriteError('validation', `section '${sectionId}' is already archived`, 409);
         const sections = doc.sections.map((x) => (x.id === sectionId ? { ...x, archived: true } : x));
         return { sections, touched: [], message: `${label(kind)}(${doc.id}): archive section ${sectionId}${reason ? `\n\n${reason}` : ''}` };
+      },
+      meta,
+    );
+  }
+
+  /**
+   * The user (or an agent) accepts that a section needs no work: an Outdated spec section is wording only (its implemented
+   * marker moves to the current text, noted editorial with who and why) and / or the upstream changes of its links have no
+   * impact (`seenAt` = the current commit). `outdated: false` acknowledges links only.
+   */
+  async sectionAccept(kind: DocKind, ref: string, input: { reason?: string; outdated: boolean; to?: string }, meta: CommitMeta): Promise<WriteOutcome<Doc>> {
+    const to = input.to ? canonicalTarget(input.to) : null;
+    const who = userOfTrailers(meta.trailers) ?? meta.agent;
+    return this.editSections(
+      kind,
+      ref,
+      async (doc, sectionId) => {
+        const s = this.section(kind, doc, sectionId!);
+        const head = await this.storage.git.head();
+        let next: Section = s;
+        if (input.outdated && kind === 'specs' && s.implementedCommit) {
+          const base = (await this.storage.history.meta(this.repo(kind).pathOf(doc.id))).lastCommit;
+          if (base) next = { ...next, implementedCommit: base, implementationNotes: [...(s.implementationNotes ?? []), { kind: 'editorial' as const, commit: base, reason: input.reason?.trim() || 'accepted: wording only', ...(who ? { by: who } : {}), at: (meta.date ?? new Date()).toISOString() }] } as Section;
+        }
+        if (head) next = { ...next, links: next.links.map((l) => (UPSTREAM_RELS.has(l.rel) && (!to || l.to === to) ? { ...l, seenAt: head } : l)) };
+        return { sections: doc.sections.map((x) => (x.id === sectionId ? next : x)), touched: [], message: `${label(kind)}(${doc.id}): accept ${sectionId}${input.outdated ? ' (wording only)' : ' (upstream change has no impact)'}${input.reason ? `\n\n${input.reason}` : ''}` };
       },
       meta,
     );
