@@ -86,13 +86,13 @@ describe('decision 1: standards are linked at section level, spec level is deriv
 describe('decision 2 + I5: claims live on work orders; spec in_progress is derived', () => {
   it('claims, heartbeats, releases; two agents on different sections of one spec; reason links feedback', async () => {
     const { storage, spec, feedback } = await setup();
-    await spec('s', [sec('a'), sec('b')], { status: 'ready' });
+    await spec('s', [sec('a'), sec('b')], { status: 'active' });
     const fb = await feedback(S('s', 'a'), 'giulia');
     const w = storage.workOrderService;
     const one = await w.create({ spec: 's', kind: 'implement', status: 'pending', sections: [{ id: 'a' }], reason: [fb], plan: 'p' });
     const two = await w.create({ spec: 's', kind: 'implement', status: 'pending', sections: [{ id: 'b' }], plan: 'p' });
     await expect(w.create({ spec: 's', kind: 'review', status: 'pending', sections: [{ id: 'a' }], reason: ['fb-nope'] })).rejects.toThrow(/fb-nope/);
-    expect(derivedStatus(await storage.specs.get('s'), await storage.model())).toBe('ready');
+    expect(derivedStatus(await storage.specs.get('s'), await storage.model())).toBe('active');
     const c1 = await w.claim({ id: one.id, agent: 'agent-1', branch: 'b1' });
     expect(c1).toMatchObject({ status: 'in_progress', claim: { agent: 'agent-1', branch: 'b1' } });
     await w.claim({ id: two.id, agent: 'agent-2' });
@@ -114,7 +114,7 @@ describe('decision 2 + I5: claims live on work orders; spec in_progress is deriv
 
   it('a stale claim can be taken over', async () => {
     const { storage, spec } = await setup();
-    await spec('s', [sec('a')], { status: 'ready' });
+    await spec('s', [sec('a')], { status: 'active' });
     const w = storage.workOrderService;
     const o = await w.create({ spec: 's', kind: 'implement', status: 'pending', sections: [{ id: 'a' }], plan: 'p' });
     await w.claim({ id: o.id, agent: 'old' }, { date: new Date(Date.now() - 2 * 3600_000) });
@@ -175,7 +175,7 @@ describe('decision 4 + C6: spec dependencies are derived; one cycle check; broke
 describe('C1: gate snapshot, drift and criteria shrink', () => {
   it('records the snapshot at done, derives Drifted, and needs the user approval to shrink the criteria', async () => {
     const { storage, spec, std, patch, pass } = await setup();
-    await spec('s', [sec('a'), crit('ac-1')], { status: 'ready' });
+    await spec('s', [sec('a'), crit('ac-1')], { status: 'active' });
     await pass(S('s', 'ac-1'));
     const done = await setSpecStatus(storage, { id: 's', status: 'done' });
     expect(done.gate).toMatchObject({ commit: expect.stringMatching(/^[0-9a-f]{40}$/), criteria: [{ uri: S('s', 'ac-1'), state: 'verified' }] });
@@ -287,7 +287,7 @@ describe('I2 + I3: extends / supersedes acyclic, one live successor, no new link
 describe('I6: section_done, obsolete, archive cascade', () => {
   it('records implementedCommit = specCommit, supports obsolete, cancels on archive', async () => {
     const { storage, spec, patch } = await setup();
-    await spec('s', [sec('a'), sec('b'), sec('c')], { status: 'ready' });
+    await spec('s', [sec('a'), sec('b'), sec('c')], { status: 'active' });
     const w = storage.workOrderService;
     const o = await w.create({ spec: 's', kind: 'implement', status: 'pending', sections: [{ id: 'a' }, { id: 'b' }] });
     await patch('s', (x) => (x.id === 'a' ? { ...x, body: 'changed after pinning' } : x));
@@ -301,6 +301,40 @@ describe('I6: section_done, obsolete, archive cascade', () => {
     const o2 = await w.create({ spec: 's', kind: 'update', status: 'pending', sections: [{ id: 'c' }] });
     await setSpecStatus(storage, { id: 's', status: 'archived' });
     expect((await w.get(o2.id)).status).toBe('cancelled');
+  });
+});
+
+describe('delivery pin: a work order\'s own spec edits are part of its delivery', () => {
+  it('reconcile edits caused by the work order do not make its sections Outdated; later or foreign edits do', async () => {
+    const { storage, spec, patch } = await setup();
+    await spec('s', [sec('a'), sec('b')], { status: 'active' });
+    const w = storage.workOrderService;
+    const o = await w.create({ spec: 's', kind: 'implement', status: 'pending', sections: [{ id: 'a' }, { id: 'b' }] });
+    await w.sectionDone({ id: o.id, sections: ['a'] });
+    // The final "Reconcile the spec" task: an edit caused by the work order, before it completes.
+    const cause = { trailers: { 'Caused-By': `mandate://work-orders/${o.id}` } };
+    await patch('s', (x) => (x.id === 'a' ? { ...x, body: 'reconciled with what was built' } : x), {}, cause);
+    await w.sectionDone({ id: o.id, sections: ['b'] });
+    // A foreign edit of b (no trailer) stays a change after delivery.
+    await patch('s', (x) => (x.id === 'b' ? { ...x, body: 'someone else changed this' } : x));
+    expect((await w.implementation('s')).a).toMatchObject({ outdated: true }); // pinned at specCommit until completion
+    await w.complete(o.id, 'agent', { outcome: 'done' });
+    const impl = await w.implementation('s');
+    expect(impl.a).toMatchObject({ outdated: false });
+    expect(impl.b).toMatchObject({ outdated: true });
+    // After completion any edit makes the section Outdated again.
+    await patch('s', (x) => (x.id === 'a' ? { ...x, body: 'edited after completion' } : x), {}, cause);
+    expect((await w.implementation('s')).a).toMatchObject({ outdated: true });
+  });
+
+  it('an edit during the work order, before its tasks finish, is part of the delivery', async () => {
+    const { storage, spec, patch } = await setup();
+    await spec('s', [sec('a')], { status: 'active' });
+    const w = storage.workOrderService;
+    const o = await w.create({ spec: 's', kind: 'implement', status: 'pending', sections: [{ id: 'a' }] });
+    await patch('s', (x) => ({ ...x, body: 'refined while building' }), {}, { trailers: { 'Work-Order': o.id } });
+    await w.sectionDone({ id: o.id, sections: ['a'] });
+    expect((await w.implementation('s')).a).toMatchObject({ outdated: false });
   });
 });
 
@@ -360,7 +394,7 @@ describe('I10: transitions and the full done gate', () => {
   it('enforces the transition table and gates on blocked sections and open work', async () => {
     const { storage, spec } = await setup();
     await spec('b', [sec('t')]);
-    await spec('a', [sec('s', { links: [link(S('b', 't'), 'depends_on')] })], { status: 'ready' });
+    await spec('a', [sec('s', { links: [link(S('b', 't'), 'depends_on')] })], { status: 'active' });
     await expect(setSpecStatus(storage, { id: 'a', status: 'done' })).rejects.toMatchObject({ code: 'done_gate', details: [expect.objectContaining({ state: 'blocked' })] });
     await storage.specs.update('b', { sections: [{ ...(await storage.specs.get('b')).sections[0]!, implementedCommit: (await storage.git.log(1))[0]!.id }] });
     const o = await storage.workOrderService.create({ spec: 'a', kind: 'implement', status: 'pending', sections: [{ id: 's' }] });
@@ -368,8 +402,8 @@ describe('I10: transitions and the full done gate', () => {
     await storage.workOrderService.update(o.id, { status: 'cancelled' });
     expect((await setSpecStatus(storage, { id: 'a', status: 'done' })).status).toBe('done');
     await setSpecStatus(storage, { id: 'a', status: 'archived' });
-    await expect(setSpecStatus(storage, { id: 'a', status: 'ready' })).rejects.toMatchObject({ code: 'invalid_transition' });
-    expect((await setSpecStatus(storage, { id: 'a', status: 'draft' })).status).toBe('draft');
+    await expect(setSpecStatus(storage, { id: 'a', status: 'done' })).rejects.toMatchObject({ code: 'invalid_transition' });
+    expect((await setSpecStatus(storage, { id: 'a', status: 'active' })).status).toBe('active');
     // Work orders and feedback have their tables too.
     await expect(storage.workOrderService.update(o.id, { status: 'pending' })).rejects.toThrow(/not allowed/);
   });

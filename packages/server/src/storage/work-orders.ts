@@ -262,6 +262,52 @@ export class WorkOrderService {
     return effectiveHeartbeat(this.heartbeats, id, claim);
   }
 
+  /**
+   * The spec version a work order's implementation of a section matches (`implementedCommit`): the pinned specCommit, or the
+   * spec HEAD when every change to the section since then was part of the delivery (a commit of this work order or of the
+   * requests it acts on: Caused-By / Work-Order / Request / Feedback trailers), e.g. the final "Reconcile the spec" task.
+   * A change by anyone else keeps the pin (the section is then Outdated, with the change summary).
+   */
+  async deliveryBase(doc: Pick<StoredWorkOrderDoc, 'id' | 'spec' | 'specCommit' | 'reason'>, sectionId: string): Promise<string> {
+    try {
+      const head = await this.git.resolveCommit('HEAD');
+      const base = await this.git.resolveCommit(doc.specCommit);
+      if (!head || !base || head === base) return doc.specCommit;
+      const path = this.specs.pathOf(doc.spec);
+      const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
+      const hist = (await this.git.fileHistory([dir])).get(path) ?? [];
+      const chain: typeof hist = [];
+      for (const c of hist) {
+        if (c.id === base) break;
+        chain.push(c);
+      }
+      const mine = (m: string) => {
+        const lines = m.split('\n');
+        const val = (k: string) => lines.filter((l) => l.toLowerCase().startsWith(`${k.toLowerCase()}:`)).flatMap((l) => l.slice(k.length + 1).split(/[\s,]+/).filter(Boolean));
+        return (
+          val('Work-Order').includes(doc.id) ||
+          val('Caused-By').some((x) => x.replace(/^mandate:\/\//, '').replace(/^work-orders\//, '').split('#')[0] === doc.id || (doc.reason ?? []).includes(x.replace(/^mandate:\/\//, '').replace(/^(requests|feedback)\//, '').split('#')[0]!)) ||
+          [...val('Request'), ...val('Feedback')].some((x) => (doc.reason ?? []).includes(x))
+        );
+      };
+      const at = async (c: string) => (await this.specAt(doc.spec, c))?.sections.find((x) => x.id === sectionId);
+      let prev = await at(doc.specCommit);
+      let changed = false;
+      for (const c of chain.slice(-60).reverse()) {
+        const cur = await at(c.id);
+        if (!sameSection(prev, cur)) {
+          if (!mine(c.message)) return doc.specCommit;
+          changed = true;
+        }
+        prev = cur;
+      }
+      // Unchanged since the pin: the pin stays (stable); changed only by the work order itself: the spec as it is now.
+      return changed ? head : doc.specCommit;
+    } catch {
+      return doc.specCommit;
+    }
+  }
+
   /** The spec as stored at `commit` (null when it did not exist / does not parse there; undefined when the commit is unreadable). */
   async specAt(specId: string, commit: string): Promise<StoredSpec | null | undefined> {
     const full = await this.git.resolveCommit(commit).catch(() => null);
@@ -725,6 +771,8 @@ export class WorkOrderService {
       // section records the work order (implementedBy), in the same spec commit as implementedCommit.
       const codeFor = new Map(picked.map((p) => [targetSection(p), mergeTouched(p.codeRefs ?? [], code)] as const));
       const recordsCommit = current.kind === 'implement' || current.kind === 'update';
+      const bases = new Map<string, string>();
+      if (recordsCommit && status === 'done') for (const sid of specIds) bases.set(sid, await this.deliveryBase(current, sid));
       if (status === 'done' && (recordsCommit || (current.kind === 'fix' && [...codeFor.values()].some((c) => c.length)))) {
         await this.specs.modify(
           current.spec,
@@ -733,7 +781,7 @@ export class WorkOrderService {
             sections: spec.sections.map((s) => {
               if (!specIds.includes(s.id) || s.archived) return s;
               const applied = applyCodeToSection(s, codeFor.get(s.id) ?? []);
-              return { ...s, ...(recordsCommit ? { implementedCommit: current.specCommit } : {}), implementedBy: id, refs: applied.refs, symbols: applied.symbols } as typeof s;
+              return { ...s, ...(recordsCommit ? { implementedCommit: bases.get(s.id) ?? current.specCommit } : {}), implementedBy: id, refs: applied.refs, symbols: applied.symbols } as typeof s;
             }),
           }),
           {
@@ -912,6 +960,7 @@ export class WorkOrderService {
           this.keepClaimOnDone.delete(id);
         }
       }
+      await this.recordDelivery(id, meta);
       const d = await this.modify(
         id,
         (cur) => {
@@ -935,6 +984,30 @@ export class WorkOrderService {
       if (!(d.touched ?? []).length) warnings.push('no touched code recorded: report the files you changed with work_order_touch');
       return { workOrder: this.project(d), warnings };
     });
+  }
+
+  /**
+   * At completion: the sections this implement / update work order delivered match the spec as it is now, after the
+   * reconcile edits made within the work order (implementedCommit = "the spec version the implementation matches").
+   */
+  private async recordDelivery(id: string, meta: CommitMeta): Promise<void> {
+    const doc = await this.doc(id);
+    if (doc.kind !== 'implement' && doc.kind !== 'update') return;
+    const spec = await this.specs.get(doc.spec).catch(() => null);
+    if (!spec) return;
+    const ids = doc.sections.filter(isWoSection).filter((s) => s.status !== 'obsolete').map(targetSection);
+    const next = new Map<string, string>();
+    for (const s of spec.sections) {
+      if (!ids.includes(s.id) || s.archived || !s.implementedCommit || s.implementedBy !== id) continue;
+      const b = await this.deliveryBase(doc, s.id);
+      if (b !== s.implementedCommit) next.set(s.id, b);
+    }
+    if (!next.size) return;
+    await this.specs.modify(
+      doc.spec,
+      (sp) => ({ ...sp, sections: sp.sections.map((s) => (next.has(s.id) ? ({ ...s, implementedCommit: next.get(s.id)! } as typeof s) : s)) }),
+      { ...meta, message: `spec(${doc.spec}): delivery of ${[...next.keys()].join(', ')} recorded @${[...new Set(next.values())].map((x) => x.slice(0, 7)).join(', ')}`, trailers: { ...meta.trailers, 'Work-Order': id } },
+    );
   }
 
   /**
