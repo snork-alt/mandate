@@ -53,6 +53,8 @@ export interface NewsItem {
   /** Push delivery (events stream / pending): the consumer that claimed it and when (null: not pushed yet). */
   pushedTo?: string | null;
   pushedAt?: string | null;
+  /** How many times it was pushed (the first push counts 1; re-pushes stop after PUSH_MAX). */
+  pushCount?: number;
 }
 
 export interface NewsQuery {
@@ -216,6 +218,8 @@ export function readRefs(tool: string, args: Record<string, unknown>, result: Re
 export const NEWS_NOTICE_MAX = 10;
 /** An item pushed to a consumer but still unread after this long is pushed again (to anyone asking). */
 export const PUSH_REDELIVER_MS = 10 * 60_000;
+/** First push plus at most 2 re-pushes; after that the item is only listed (flow_next / news), never pushed again. */
+export const PUSH_MAX = 3;
 /** Max seconds a news_list call may wait. */
 export const NEWS_WAIT_MAX = 300;
 
@@ -333,7 +337,8 @@ export class NewsService {
     const staleBefore = new Date(Date.now() - PUSH_REDELIVER_MS).toISOString();
     const items = (await this.store.items(this.project, client, { unread: true })).filter((i) => i.seq > since).sort((a, b) => a.seq - b.seq).slice(0, o.limit ?? 100);
     if (o.peek) return items;
-    const eligible = items.filter((i) => !i.pushedTo || i.pushedTo === consumer || (i.pushedAt ?? '') < staleBefore);
+    // Delivered means delivered: the same consumer (re-armed hook, reconnected channel) never gets it again right away.
+    const eligible = items.filter((i) => !i.pushedTo || ((i.pushedAt ?? '') < staleBefore && (i.pushCount ?? 1) < PUSH_MAX));
     if (!eligible.length) return [];
     const won = new Set(await this.store.claim(this.project, client, eligible.map((i) => i.seq), consumer, staleBefore));
     return eligible.filter((i) => won.has(i.seq));
@@ -458,7 +463,8 @@ export class MemoryNewsStore implements NewsStore {
     const out: number[] = [];
     for (const r of this.rows) {
       if (r.project !== project || r.client !== client || !seqs.includes(r.seq) || r.readAt) continue;
-      if (r.pushedTo && r.pushedTo !== consumer && (r.pushedAt ?? '') >= staleBefore) continue;
+      if (r.pushedTo && ((r.pushedAt ?? '') >= staleBefore || (r.pushCount ?? 1) >= PUSH_MAX)) continue;
+      r.pushCount = r.pushedTo ? (r.pushCount ?? 1) + 1 : 1;
       r.pushedTo = consumer;
       r.pushedAt = at.toISOString();
       out.push(r.seq);
@@ -499,9 +505,13 @@ const newsSchemaV2 = (d: Dialect) => `
 ALTER TABLE ${d.table('news_items')} ADD COLUMN pushed_to TEXT;
 ALTER TABLE ${d.table('news_items')} ADD COLUMN pushed_at TEXT;
 `;
+const newsSchemaV3 = (d: Dialect) => `
+ALTER TABLE ${d.table('news_items')} ADD COLUMN push_count INTEGER NOT NULL DEFAULT 0;
+`;
 export const NEWS_MIGRATIONS: Migration[] = [
   { id: 1, name: 'news feed', sqlite: newsSchemaV1, postgres: newsSchemaV1 },
   { id: 2, name: 'news push delivery', sqlite: newsSchemaV2, postgres: newsSchemaV2 },
+  { id: 3, name: 'news push count', sqlite: newsSchemaV3, postgres: newsSchemaV3 },
 ];
 
 interface ItemRow {
@@ -516,8 +526,9 @@ interface ItemRow {
   read_at: string | null;
   pushed_to?: string | null;
   pushed_at?: string | null;
+  push_count?: number | string | null;
 }
-const fromItem = (r: ItemRow): NewsItem => ({ seq: Number(r.seq), client: r.client_id, session: r.session_id, eventId: r.event_id, kind: r.kind, ref: r.ref, summary: r.summary, at: r.at, readAt: r.read_at, pushedTo: r.pushed_to ?? null, pushedAt: r.pushed_at ?? null });
+const fromItem = (r: ItemRow): NewsItem => ({ seq: Number(r.seq), client: r.client_id, session: r.session_id, eventId: r.event_id, kind: r.kind, ref: r.ref, summary: r.summary, at: r.at, readAt: r.read_at, pushedTo: r.pushed_to ?? null, pushedAt: r.pushed_at ?? null, pushCount: Number(r.push_count ?? 0) || (r.pushed_to ? 1 : 0) });
 
 /** News on the server-state database (migration scope `news`). */
 export class DbNewsStore implements NewsStore {
@@ -590,7 +601,7 @@ export class DbNewsStore implements NewsStore {
     await this.ready;
     const out: number[] = [];
     for (const s of seqs) {
-      const n = (await this.db.run(`UPDATE ${this.t('news_items')} SET pushed_to = ?, pushed_at = ? WHERE project = ? AND client_id = ? AND seq = ? AND read_at IS NULL AND (pushed_to IS NULL OR pushed_to = ? OR pushed_at < ?)`, [consumer, at.toISOString(), project, client, s, consumer, staleBefore])).changes ?? 0;
+      const n = (await this.db.run(`UPDATE ${this.t('news_items')} SET pushed_to = ?, pushed_at = ?, push_count = CASE WHEN pushed_to IS NULL THEN 1 ELSE (CASE WHEN push_count < 1 THEN 1 ELSE push_count END) + 1 END WHERE project = ? AND client_id = ? AND seq = ? AND read_at IS NULL AND (pushed_to IS NULL OR (pushed_at < ? AND (CASE WHEN push_count < 1 THEN 1 ELSE push_count END) < ?))`, [consumer, at.toISOString(), project, client, s, staleBefore, PUSH_MAX])).changes ?? 0;
       if (n) out.push(s);
     }
     return out;

@@ -77,7 +77,7 @@ describe('events stream', () => {
     expect(resumed.events.map((e) => e.data.kind)).toEqual(['comment']);
   });
 
-  it('delivers an item to one consumer only; the same consumer gets unconfirmed ones again on reconnect', async () => {
+  it('delivers an item to one consumer only; and never again to that consumer on reconnect', async () => {
     const mark = await top();
     await add('drift', 4);
     const a = await sse(`${base}/events?consumer=A&since=${mark}`, 1);
@@ -85,7 +85,8 @@ describe('events stream', () => {
     const b = await sse(`${base}/events?consumer=B&since=${mark}`, 1, {}, 400);
     expect(b.events).toEqual([]);
     const a2 = await sse(`${base}/events?consumer=A&since=${mark}`, 1);
-    expect(a2.events.map((e) => e.data.kind)).toEqual(['drift']);
+    expect(a2.events).toEqual([]);
+    expect(await news.pushable(client, 'A', { since: mark })).toEqual([]);
   });
 
   it('only the client identity of the caller', async () => {
@@ -111,7 +112,7 @@ describe('events pending and ack', () => {
 
     const post = (ids: unknown[]) => fetch(`${base}/events/ack`, { method: 'POST', headers: { ...auth(), 'content-type': 'application/json' }, body: JSON.stringify({ ids }) });
     expect(await (await post([p.items[0]!.seq])).json()).toEqual({ acked: 1 });
-    expect((await get(`since=${mark}&consumer=P`)).items.map((i) => i.kind)).toEqual(['comment']);
+    expect((await get(`since=${mark}&consumer=P`)).items).toEqual([]); // delivered once: not again to P
     expect((await post(['x'])).status).toBe(400);
   });
 
@@ -123,5 +124,21 @@ describe('events pending and ack', () => {
     // age the claim (re-stamp it by its own consumer an hour ago)
     await news.store.claim('test', client, [pushed!.seq], 'old', new Date(Date.now() + 1000).toISOString(), new Date(Date.now() - 3_600_000));
     expect((await news.pushable(client, 'other', { since: mark })).map((i) => i.seq)).toEqual([pushed!.seq]);
+  });
+
+  it('a delivered item is re-pushed after the delay at most twice more, then only listed', async () => {
+    const mark = await top();
+    await add('drift', 8);
+    const [first] = await news.pushable(client, 'rw', { since: mark });
+    const seq = first!.seq;
+    const age = () => news.store.claim('test', client, [seq], 'rw', new Date(Date.now() + 1000).toISOString(), new Date(Date.now() - 3_600_000));
+    expect(await news.pushable(client, 'rw', { since: mark })).toEqual([]); // same consumer: not again at once
+    await age(); // 2nd push (re-stamped old)
+    expect((await news.pushable(client, 'rw', { since: mark })).map((i) => i.seq)).toEqual([seq]); // 2nd delivery of the same item to the same consumer after the delay
+    await age();
+    expect((await news.pushable(client, 'rw', { since: mark })).map((i) => i.seq)).toEqual([]); // 3 pushes used up
+    await age();
+    expect(await news.pushable(client, 'other', { since: mark })).toEqual([]);
+    expect((await news.store.items('test', client, { unread: true })).some((i) => i.seq === seq)).toBe(true); // still listed
   });
 });

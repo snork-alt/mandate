@@ -269,6 +269,37 @@ describe('mandate watch --rewake', () => {
     // Not set up (no token): quiet exit 0.
     expect(await cmdWatch(tempCtx(), parseArgs(['watch', '--rewake', '--project', 'web', '--url', fake.base]), capture(), input())).toBe(0);
   });
+
+  it('cmdWatch: never wakes a session again for what it already delivered (stop_hook_active), and the loop guard stops 3 wakes within 60 s', async () => {
+    const ctx = tempCtx();
+    const c = { ...ctx, env: { ...ctx.env, MANDATE_CHANNEL_TOKEN: TOKEN } };
+    const a = () => parseArgs(['watch', '--rewake', '--project', 'web', '--url', fake.base]);
+    const input = (active = false, session = 'sess-loop') => {
+      const s = new PassThrough();
+      s.end(JSON.stringify({ session_id: session, hook_event_name: 'Stop', stop_hook_active: active }));
+      return s;
+    };
+    fake.pending.push(ev(40));
+    expect(await cmdWatch(c, a(), capture(), input())).toBe(2);
+    // The same item shows up again on re-arm (e.g. a server that re-sends): suppressed for this session.
+    fake.pending.push(ev(40));
+    expect(await cmdWatch(c, { ...a(), }, capture(), input(true))).toBe(0);
+    fake.pending.push(ev(40));
+    expect(await cmdWatch(c, a(), capture(), input(false))).toBe(0);
+    // Something new does wake it.
+    fake.pending.push(ev(41));
+    expect(await cmdWatch(c, a(), capture(), input(true))).toBe(2);
+    // Third wake within a minute; the fourth does not even look.
+    fake.pending.push(ev(42));
+    expect(await cmdWatch(c, a(), capture(), input())).toBe(2);
+    fake.pending.push(ev(43));
+    expect(await cmdWatch(c, a(), capture(), input())).toBe(0);
+    expect(fake.pending).toHaveLength(1);
+    fake.pending.splice(0);
+    // Another session is independent.
+    fake.pending.push(ev(44));
+    expect(await cmdWatch(c, a(), capture(), input(false, 'sess-other'))).toBe(2);
+  });
 });
 
 describe('mandate events --pending (SessionStart catch-up)', () => {

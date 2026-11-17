@@ -52,9 +52,9 @@ export async function waitForEvents(ep: Endpoint, o: { timeoutMs: number; signal
   }
 }
 
-/** The hook input (JSON on stdin) session id, when there is one within a moment. */
-async function sessionId(stdin: Readable): Promise<string | undefined> {
-  if ((stdin as NodeJS.ReadStream).isTTY) return undefined;
+/** Hook input (JSON on stdin) within a moment: the session id and whether this Stop hook runs inside a Stop continuation. */
+async function hookInput(stdin: Readable): Promise<{ session?: string; stopHookActive: boolean }> {
+  if ((stdin as NodeJS.ReadStream).isTTY) return { stopHookActive: false };
   const chunks: Buffer[] = [];
   const done = new Promise<void>((r) => {
     stdin.on('data', (c: Buffer) => chunks.push(Buffer.from(c)));
@@ -63,19 +63,39 @@ async function sessionId(stdin: Readable): Promise<string | undefined> {
   });
   await Promise.race([done, sleep(500)]);
   try {
-    const id = (JSON.parse(Buffer.concat(chunks).toString('utf8')) as { session_id?: unknown }).session_id;
-    return typeof id === 'string' && /^[A-Za-z0-9_-]{1,80}$/.test(id) ? id : undefined;
+    const j = JSON.parse(Buffer.concat(chunks).toString('utf8')) as { session_id?: unknown; stop_hook_active?: unknown };
+    const id = j.session_id;
+    return { session: typeof id === 'string' && /^[A-Za-z0-9_-]{1,80}$/.test(id) ? id : undefined, stopHookActive: j.stop_hook_active === true };
   } catch {
-    return undefined;
+    return { stopHookActive: false };
   }
 }
+
+/** Per (project, session): the last seq this hook delivered and when it woke the session (loop guard). */
+interface WatchState {
+  lastSeq: number;
+  lastAt: number;
+  wakes: number[];
+}
+export const LOOP_WINDOW_MS = 60_000;
+export const LOOP_MAX_WAKES = 3;
+const REPUSH_MS = 10 * 60_000;
+const readState = (f: string): WatchState => {
+  try {
+    const j = JSON.parse(readFileSync(f, 'utf8')) as Partial<WatchState>;
+    return { lastSeq: Number(j.lastSeq) || 0, lastAt: Number(j.lastAt) || 0, wakes: Array.isArray(j.wakes) ? j.wakes.filter((n) => typeof n === 'number') : [] };
+  } catch {
+    return { lastSeq: 0, lastAt: 0, wakes: [] };
+  }
+};
 
 export async function cmdWatch(ctx: Ctx, a: Args, out: Out, stdin: Readable = process.stdin): Promise<number> {
   if (!bool(a, 'rewake')) {
     out.err('usage: mandate watch --rewake --project <id> --url <server> [--timeout <seconds>]');
     return 2;
   }
-  const session = (await sessionId(stdin)) ?? 'default';
+  const input = await hookInput(stdin);
+  const session = input.session ?? 'default';
   const r = endpointFrom(ctx, a, `rewake-${session}`);
   if ('error' in r) return 0; // not set up (yet): never an error for the session
   if (activeChannel(ctx, r.ep.project, ancestors(process.pid))) return 0; // the channel delivers
@@ -89,12 +109,26 @@ export async function cmdWatch(ctx: Ctx, a: Args, out: Out, stdin: Readable = pr
   }
   mkdirSync(runDir(ctx), { recursive: true, mode: 0o700 });
   writeFileSync(lock, String(process.pid));
+  const stateFile = path.join(runDir(ctx), `watch-state-${r.ep.project}-${session}.json`);
+  const state = readState(stateFile);
+  const now = Date.now();
+  const recent = state.wakes.filter((t) => now - t < LOOP_WINDOW_MS);
+  if (recent.length >= LOOP_MAX_WAKES) return 0; // loop guard: it woke this session in a tight loop; let it rest
   const ac = new AbortController();
   for (const sig of ['SIGTERM', 'SIGINT'] as const) process.once(sig, () => ac.abort());
   try {
     const seconds = Number(str(a, 'timeout')) || 55 * 60;
-    const items = await waitForEvents(r.ep, { timeoutMs: seconds * 1000, signal: ac.signal });
+    const got = await waitForEvents(r.ep, { timeoutMs: seconds * 1000, signal: ac.signal });
+    // Delivered is delivered: only what is newer than the last delivery wakes this session (an older item only again after
+    // the re-push delay, which the server enforces); inside a Stop continuation only strictly newer items count.
+    const settled = Date.now();
+    const items = got.filter((i) => i.seq > state.lastSeq || (!input.stopHookActive && settled - state.lastAt >= REPUSH_MS));
     if (!items.length) return 0;
+    try {
+      writeFileSync(stateFile, JSON.stringify({ lastSeq: Math.max(state.lastSeq, ...items.map((i) => i.seq)), lastAt: settled, wakes: [...recent, settled] } satisfies WatchState), { mode: 0o600 });
+    } catch {
+      // best effort
+    }
     out.err(eventsText(items, `Mandate events for your work (${items.length}); they stay unread until you read the referenced item or news_ack them:`));
     return 2;
   } finally {
