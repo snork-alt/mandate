@@ -73,7 +73,7 @@ describe('tools/list', () => {
     const expected = [
       'create', 'update_meta', 'archive', 'status_set',
       'section_insert', 'section_update', 'section_move', 'section_link_add', 'section_link_remove',
-      'work_order_create', 'work_order_claim', 'work_order_heartbeat', 'work_order_release', 'work_order_section_done', 'work_order_complete', 'work_order_fail', 'work_order_cancel', 'work_order_next',
+      'work_order_create', 'work_order_claim', 'work_order_heartbeat', 'work_order_release', 'work_order_task_set', 'work_order_complete', 'work_order_fail', 'work_order_cancel', 'work_order_next',
       'request_create', 'request_update', 'request_close', 'verification_record', 'spec_diff_since_implemented',
     ];
     expect(names).toEqual(expect.arrayContaining(expected));
@@ -419,7 +419,7 @@ describe('read-your-write', () => {
 describe('full agent workflow', () => {
   it('next -> claim -> read -> edit -> verify -> section_done -> complete, with feedback filed and closed', async () => {
     const id = await newSpec();
-    const wo = await ok('work_order_create', { plan: { tasks: [{ text: 'The plan.', sections: ['design', 'ac-works'] }], files: ['src/works.ts'], tests: [{ name: 'works', ref: 'app:tests/works.spec.ts', proves: ['ac-works'] }], risks: ['none'] }, spec: id, sections: ['design', 'ac-works'], kind: 'implement', priority: 'p0', note: 'build it' });
+    const wo = await ok('work_order_create', { plan: { tasks: [{ text: 'The plan.', sections: ['design', 'ac-works'], proves: ['ac-works'] }], files: ['src/works.ts'], tests: [{ name: 'works', ref: 'app:tests/works.spec.ts', proves: ['ac-works'] }], risks: ['none'] }, spec: id, sections: ['design', 'ac-works'], kind: 'implement', priority: 'p0', note: 'build it' });
     const agent = 'workflow-agent@ci';
     const next = await ok('work_order_next', { agent, spec: id, branch: 'feat/flow' });
     expect(next.ref).toBe(wo.ref);
@@ -438,7 +438,7 @@ describe('full agent workflow', () => {
     // Verify, finish the sections, complete.
     await ok('verification_record', { agent, criterion: `mandate://specs/${id}/sections/ac-works`, code: { repo: 'app', commit: 'feedc0de12', branch: 'feat/flow' }, result: 'pass', method: 'test', evidence: { test: 'tests/works.spec.ts' } });
     const sd = await ok('work_order_section_done', { agent, ref: wo.ref, sections: ['design'] });
-    expect(sd.commits.length).toBe(2); // spec (implementedCommit) + work order
+    expect(sd.commits.length).toBe(3); // the covering task done + spec (implementedCommit) + work order
     expect(git('log', '-2', '--format=%B')).toMatch(/Work-Order:/);
     const complete = await ok('work_order_complete', { agent, ref: wo.ref, outcome: 'Delivered.' });
     expect(complete.workOrder.item.status).toBe('done');

@@ -911,6 +911,14 @@ export const requestSpecMatchSchema = z.object({
   decision: z.enum(['extend_section', 'new_section', 'new_spec']).optional(),
 });
 export type RequestSpecMatch = z.infer<typeof requestSpecMatchSchema>;
+/** The component_match / standard_match recorded on a request: matched refs, the suggested decision, who and when. */
+export const requestKindMatchSchema = z.object({
+  at: z.string().min(1),
+  by: z.string().min(1),
+  refs: z.array(z.string().min(1)).max(20).default([]),
+  decision: z.enum(['extend_component', 'new_component', 'follow', 'none']).optional(),
+});
+export type RequestKindMatch = z.infer<typeof requestKindMatchSchema>;
 /** A decision the agent took without asking the user (ask only when necessary): what, why, when, by whom. */
 export const requestDecisionSchema = z.object({ text: z.string().trim().min(1).max(500), reason: z.string().trim().min(1).max(500), at: z.string().min(1), by: z.string().min(1) });
 export type RequestDecision = z.infer<typeof requestDecisionSchema>;
@@ -918,6 +926,9 @@ export type RequestDecision = z.infer<typeof requestDecisionSchema>;
 const feedbackFields = {
   /** The spec_match that placed this request (server-set by spec_match { for }). */
   specMatch: requestSpecMatchSchema.optional(),
+  /** The component_match / standard_match that placed this request (server-set by component_match / standard_match { for }). */
+  componentMatch: requestKindMatchSchema.optional(),
+  standardMatch: requestKindMatchSchema.optional(),
   /** Decisions the agent took on its own while handling the request (append-only; request_decision_add). */
   decisions: z.array(requestDecisionSchema).max(100).optional(),
   /** Empty only for an intake request (improvement / bug) filed before its sections are known. */
@@ -1047,6 +1058,8 @@ export const updateFeedbackSchema = z.object({
   body: z.string().min(1).optional(),
   targets: z.array(feedbackTargetSchema.refine(isSectionTarget, SECTION_HINT)).min(1).optional(),
   specMatch: requestSpecMatchSchema.optional(),
+  componentMatch: requestKindMatchSchema.optional(),
+  standardMatch: requestKindMatchSchema.optional(),
   decisions: z.array(requestDecisionSchema).max(100).optional(),
   assignee: z.string().min(1).max(200).nullable().optional(),
   assignedAt: z.string().nullable().optional(),

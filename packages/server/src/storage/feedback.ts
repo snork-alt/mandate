@@ -380,6 +380,14 @@ export class FeedbackService {
     await this.repo.update(id, { specMatch: { at: (meta.date ?? new Date()).toISOString(), by: match.by, refs: match.refs.slice(0, 20), ...(match.decision ? { decision: match.decision } : {}) } } as never, meta);
   }
 
+  /** Record the component_match / standard_match that placed a request (no-op for closed requests). */
+  async recordKindMatch(id: string, kind: 'component' | 'standard', match: { by: string; refs: string[]; decision?: 'extend_component' | 'new_component' | 'follow' | 'none' }, meta: CommitMeta = {}): Promise<void> {
+    const current = await this.repo.get(id);
+    if (current.status === 'closed') return;
+    const value = { at: (meta.date ?? new Date()).toISOString(), by: match.by, refs: match.refs.slice(0, 20), ...(match.decision ? { decision: match.decision } : {}) };
+    await this.repo.update(id, (kind === 'component' ? { componentMatch: value } : { standardMatch: value }) as never, meta);
+  }
+
   /** Assign an unstarted request to a client id / `any` (the UI picker; reassign while not started). */
   async assign(id: string, assignee: string, meta: CommitMeta = {}): Promise<Feedback> {
     const current = await this.repo.get(id);

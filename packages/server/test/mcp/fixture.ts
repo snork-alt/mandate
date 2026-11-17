@@ -164,3 +164,12 @@ export async function finishAllSteps(storage: Storage, ref: string, agent?: stri
   const open = doc ? stepsOf(doc, sectionBody(doc, 'plan')).filter((x) => x.status === 'pending' || x.status === 'in_progress') : [];
   if (doc && open.length) await storage.workOrderService.stepSet(id, doc.claim?.agent ?? agent ?? 'agent', open.map((x) => ({ step: x.id, status: 'done' as const })), {}, { sync: false }).catch(() => undefined);
 }
+
+/** The standard / component matches of a request, recorded and acted on by decisions (the work-order gate needs them). */
+export async function recordMatches(fx: { call: (name: string, args: Record<string, unknown>) => Promise<{ isError: boolean; body: Record<string, any> }> }, agent: string, rid: string): Promise<void> {
+  const id = rid.replace(/^mandate:\/\/requests\//, '');
+  await fx.call('standard_match', { request: 'Make the design better', for: id });
+  await fx.call('component_match', { request: 'Make the design better', for: id });
+  await fx.call('request_decision_add', { agent, ref: id, text: 'no matched standard applies: test fixture', reason: 'none in this project' });
+  await fx.call('request_decision_add', { agent, ref: id, text: 'no existing component covers this: test fixture', reason: 'none in this project' });
+}

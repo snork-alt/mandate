@@ -6,7 +6,7 @@
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { finishAllSteps, mcpFixture, type McpFixture } from './fixture.js';
+import { finishAllSteps, mcpFixture, recordMatches, type McpFixture } from './fixture.js';
 import { callTool, type ToolContext } from '../../src/mcp/define.js';
 import { TOOLS } from '../../src/mcp/server.js';
 import { MemoryClientStore, memorySettings } from '../../src/projects/settings.js';
@@ -133,6 +133,7 @@ describe('work orders in lineage (phase B)', () => {
     const fb = (await call(as('alice'), 'request_create', { targets: [`mandate://specs/${id}/sections/design`], kind: 'improvement', body: 'Do it.' })).ref;
     await call(as('dave'), 'spec_match', { request: 'Do it.', for: fb.split('/').pop() });
     await call(as('dave'), 'spec_section_update', { ref: `mandate://specs/${id}/sections/design`, body: 'Design v2.', addresses: [fb] });
+    await recordMatches(fx, 'dave@test', fb);
     const wo = (await call(as('dave'), 'work_order_create', { spec: id, kind: 'implement', sections: ['design', 'overview'], plan: { tasks: [{ text: '1. do', sections: ['design', 'overview'] }] }, reason: [fb.split('/').pop()] })).ref;
     await call(as('dave'), 'work_order_claim', { ref: wo, git: [{ repo: 'app', branch: 'wo/cache', baseBranch: 'main', pr: { number: 42, status: 'open', url: 'https://github.com/acme/app/pull/42' } }] });
     await call(as('dave'), 'work_order_section_done', { ref: wo, sections: ['design'], notes: 'done' }).catch(() => undefined);

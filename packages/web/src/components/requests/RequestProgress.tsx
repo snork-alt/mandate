@@ -97,6 +97,34 @@ export function activityOf(f: Feedback): FeedItem[] {
   return out.sort((a, b) => b.at.localeCompare(a.at));
 }
 
+/** "Fits spec X · component Y · follows standard Z": what the spec / component / standard matches of the request picked. */
+function MatchLine({ f }: { f: Feedback }) {
+  const spec = f.specMatch?.refs.find((r) => r.includes('/specs/'));
+  const comp = f.componentMatch?.refs[0];
+  const stds = f.standardMatch?.refs ?? [];
+  const part = (label: string, ref: string, route: string) => (
+    <span key={ref}>
+      {label} <Link to={`/${route}/${ref.split('/')[3]}`} className="plain-link">{ref.split('/')[3]}</Link>
+    </span>
+  );
+  const parts = [
+    ...(spec ? [part('Fits spec', spec, 'specs')] : []),
+    ...(comp ? [part('component', comp, 'components')] : []),
+    ...stds.slice(0, 3).map((r) => part('follows standard', r, 'standards')),
+  ];
+  if (!parts.length) return null;
+  return (
+    <div className="rq-matches faint small" data-testid="rq-matches" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+      {parts.map((p, i) => (
+        <span key={i}>
+          {i > 0 && ' · '}
+          {p}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 export function RequestProgress({ f, workOrderIds }: { f: Feedback; workOrderIds: string[] }) {
   const flow = useRequestFlow(f.id, f.status !== 'closed');
   const presence = useAgentsPresence(undefined);
@@ -120,6 +148,7 @@ export function RequestProgress({ f, workOrderIds }: { f: Feedback; workOrderIds
           <IconAlertTriangle size={14} aria-hidden /> <Ticks text={deliveryProblem(f, p)!} />
         </div>
       )}
+      <MatchLine f={f} />
       {planReady && <PlanReady id={f.id} />}
       <div className="rq-flow" role="list" aria-label="Progress" data-testid="rq-flow">
         {stages.map((s) => (

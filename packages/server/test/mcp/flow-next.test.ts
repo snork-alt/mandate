@@ -9,7 +9,7 @@ import { flowAll, flowFor, type FlowSnapshot } from '../../src/flow/next.js';
 import { callTool, type ToolContext } from '../../src/mcp/define.js';
 import { TOOLS } from '../../src/mcp/server.js';
 import { memorySettings } from '../../src/projects/settings.js';
-import { mcpFixture, type McpFixture } from './fixture.js';
+import { mcpFixture, recordMatches, type McpFixture } from './fixture.js';
 
 let fx: McpFixture;
 beforeAll(async () => {
@@ -90,6 +90,28 @@ describe('flow_next walks one request through every stage', () => {
     expect(half.body.error.message).toMatch(/spec \/ standard change/);
 
     await ok('spec_section_update', { ref: `mandate://specs/${spec}/sections/design`, body: 'The design, v2.', addresses: [ref] });
+    // The standards and components the request fits come before the work order: matched, then acted on.
+    n = await next(rid);
+    expect(n).toMatchObject({ state: 'standard_match', next: { tool: 'standard_match', args: { for: rid } } });
+    const refusedStd = await fx.call('work_order_create', { agent: AGENT, spec, kind: 'implement', sections: ['design'], reason: [ref], plan: PLAN() });
+    expect(refusedStd.body.error.code).toBe('flow_out_of_order');
+    expect(refusedStd.body.error.message).toMatch(/standard_match recorded/);
+    expect((await read('standard_match', { request: 'Make the design better', files: ['app:src/a.ts'], for: rid })).recordedOn).toBe(ref);
+    n = await next(rid);
+    if (n.state === 'follows') {
+      // A standard in force matched: its rules are inherited through a follows link (here: nothing applies).
+      await ok('request_decision_add', { ref: rid, text: 'no matched standard applies: test', reason: 'x' });
+      n = await next(rid);
+    }
+    expect(n).toMatchObject({ state: 'component_match', next: { tool: 'component_match', args: { for: rid } } });
+    const cm = await read('component_match', { request: 'Make the design better', files: ['app:src/a.ts'], for: rid });
+    expect(cm.recordedOn).toBe(ref);
+    expect((await read('request_get', { ref })).request.componentMatch).toMatchObject({ decision: expect.stringMatching(/component$/) });
+    n = await next(rid);
+    expect(n.state).toBe('component_update');
+    const refusedCmp = await fx.call('work_order_create', { agent: AGENT, spec, kind: 'implement', sections: ['design'], reason: [ref], plan: PLAN() });
+    expect(refusedCmp.body.error.message).toMatch(/matched component updated|no existing component covers/);
+    await ok('request_decision_add', { ref: rid, text: 'no existing component covers this: the sample project has none', reason: 'test' });
     n = await next(rid);
     expect(n.state).toBe('work_order');
     expect(n.next).toMatchObject({ tool: 'work_order_create', args: { kind: 'implement', reason: [ref] } });
@@ -151,6 +173,7 @@ describe('several requests in flight', () => {
     for (const rid of [r1, r2]) {
       await read('spec_match', { request: 'design', for: rid });
       await ok('spec_section_update', { ref: `mandate://specs/${spec}/sections/design`, body: `Design for ${rid}.`, addresses: [`mandate://requests/${rid}`] });
+      await recordMatches(fx, AGENT, rid);
     }
     const wo1 = await ok('work_order_create', { spec, kind: 'implement', sections: ['design', 'ac-works'], reason: [`mandate://requests/${r1}`], plan: PLAN() });
     expect((await next(r1)).state).toBe('claim');
@@ -210,6 +233,7 @@ describe('questions bound to requests', () => {
     await read('spec_match', { request: 'steps and sections', for: rid });
     await ok('spec_section_update', { ref: `mandate://specs/${spec}/sections/overview`, body: 'o2', addresses: [ref] });
     await ok('spec_section_update', { ref: `mandate://specs/${spec}/sections/design`, body: 'd2', addresses: [ref] });
+    await recordMatches(fx, AGENT, rid);
     const wo = await ok('work_order_create', { spec, kind: 'implement', sections: ['overview', 'design', 'ac-works'], reason: [ref], plan: { ...PLAN(['One', 'Two'], ['overview', 'design', 'ac-works']), tasks: [{ text: 'One', sections: ['overview'] }, { text: 'Two', sections: ['design'], proves: ['ac-works'] }] } });
     await ok('work_order_claim', { ref: wo.ref });
     const agent = agentCtx();
@@ -251,6 +275,7 @@ describe('gates', () => {
     const rid2 = await newRequest('Another.');
     await read('spec_match', { request: 'design', for: rid2 });
     await ok('spec_section_update', { ref: `mandate://specs/${spec}/sections/design`, body: 'v2', addresses: [`mandate://requests/${rid2}`] });
+    await recordMatches(fx, AGENT, rid2);
     const wo = await ok('work_order_create', { spec, kind: 'update', sections: ['design', 'ac-works'], reason: [`mandate://requests/${rid2}`], plan: PLAN() });
     const unclaimed = await fx.call('verification_record', { agent: AGENT, criterion: `mandate://specs/${spec}/sections/ac-works`, code: { repo: 'app', commit: 'abc1234' }, result: 'pass', method: 'test', evidence: { test: 't' } });
     expect(unclaimed.body.error.code).toBe('not_claimed');
@@ -271,6 +296,7 @@ describe('flow_edit_allowed (strict flow)', () => {
     const rid = await newRequest('Edit under strict flow.');
     await read('spec_match', { request: 'design', for: rid });
     await ok('spec_section_update', { ref: `mandate://specs/${spec}/sections/design`, body: 'v2', addresses: [`mandate://requests/${rid}`] });
+    await recordMatches(fx, AGENT, rid);
     const wo = await ok('work_order_create', { spec, kind: 'implement', sections: ['design', 'ac-works'], reason: [`mandate://requests/${rid}`], plan: PLAN() });
     await ok('work_order_claim', { ref: wo.ref });
     const claimedOnly = (await run('flow_edit_allowed', { path: 'src/a.ts' }, strict)).body;

@@ -160,6 +160,8 @@ const HAPPY: Record<string, { args: () => Record<string, unknown>; check: (b: Re
   audit_list: { args: () => ({ limit: 10 }), check: (b) => expect(b.audits.length).toBeGreaterThanOrEqual(2) },
   audit_findings: { args: () => ({ status: ['open'] }), check: (b) => expect(b.findings.length).toBeGreaterThan(0) },
   audit_overview: { args: () => ({}), check: (b) => expect(b.specs['user-sessions']).toMatchObject({ result: 'pass' }) },
+  component_match: { args: () => ({ request: 'single sign-on login with an identity provider', files: ['app:src/auth/sso.ts'] }), check: (b) => expect(Array.isArray(b.candidates)).toBe(true) },
+  standard_match: { args: () => ({ request: 'single sign-on login with an identity provider', files: ['app:src/auth/sso.ts'] }), check: (b) => expect(Array.isArray(b.candidates)).toBe(true) },
   spec_match: { args: () => ({ request: 'single sign-on login with an identity provider', limit: 3 }), check: (b) => expect(b.candidates.length).toBeGreaterThan(0) },
 };
 

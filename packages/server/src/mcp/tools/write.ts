@@ -48,6 +48,7 @@ import { sectionBody, targetSection } from '../../storage/work-order-docs.js';
 import { slugSchema } from '@mandate/doc';
 import { canonicalRef, extractRefs } from '@mandate/shared/refs';
 import { ANY, deliverAssigned, wakeableAny } from '../../flow/assign.js';
+import { matchGaps } from '../../flow/gates.js';
 import { componentsRequired, liveComponents, unownedOf, unownedPlanFiles } from '../component-gate.js';
 import { newsOfProject, seedKnownClients } from '../../comments/route.js';
 import { z } from 'zod';
@@ -474,7 +475,7 @@ const workOrderTools: AnyToolDef[] = [
       if (bad) throw Object.assign(new Error(`invalid section '${bad}'`), { statusCode: 400 });
       const needsPlan = (a.kind === 'implement' || a.kind === 'update' || a.kind === 'fix') && !a.fastPath;
       if (needsPlan && (!a.plan || typeof a.plan === 'string')) {
-        throw new ToolError('plan_required', `a ${a.kind} work order carries the full plan from creation: plan { steps, files, tests: [{ name, proves: [criterion ids] }], risks }`, ERROR_ACTIONS.plan_required!, 'plan');
+        throw new ToolError('plan_required', `a ${a.kind} work order carries the full plan from creation: plan { tasks (text, sections it implements, proves: criteria), files, tests: [{ name, proves: [criterion ids] }], risks }`, ERROR_ACTIONS.plan_required!, 'plan');
       }
       // Flow order: a request is matched against the specs and changed (spec / standard commits that address it) before
       // work orders exist for it. The fast-path fix route is exempt (no behaviour change).
@@ -483,7 +484,11 @@ const workOrderTools: AnyToolDef[] = [
           const f = await ctx.storage.feedbackService.get(rid).catch(() => null);
           if (!f || f.status === 'closed') continue;
           const hasChange = f.changes.some((c) => c.kind === 'specs' || c.kind === 'standards');
-          const missing = [...(f.specMatch ? [] : ['spec_match recorded on it (spec_match { request, for: "' + rid + '" })']), ...(hasChange ? [] : ['a spec / standard change that addresses it (edit with addresses: [mandate://requests/' + rid + '])'])];
+          // The three matches (spec / standard / component) are recorded and acted on, in flow order (flow/gates.ts).
+          const specs = new Map<string, StoredSpec>();
+          for (const c of f.changes) if (c.kind === 'specs' && !specs.has(c.id)) { const sp = await ctx.storage.specs.get(c.id).catch(() => null); if (sp) specs.set(c.id, sp); }
+          const gaps = matchGaps(f, specs);
+          const missing = [...(hasChange ? [] : ['a spec / standard change that addresses it (edit with addresses: [mandate://requests/' + rid + '])']), ...gaps.map((g) => g.need)];
           if (missing.length) {
             throw new ToolError('flow_out_of_order', `flow_out_of_order: request ${rid} is not ready for a work order: it needs ${missing.join(' and ')}`, `call flow_next { request: "${rid}" } and follow it; a bug fix without behaviour change: kind fix, fastPath: true`, 'reason', { kind: 'request', request: rid, missing });
           }

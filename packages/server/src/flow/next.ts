@@ -20,11 +20,16 @@ import {
   type WorkOrder,
 } from '@mandate/shared';
 import { coveredCriteria } from '../storage/work-order-plan.js';
+import { matchGaps } from './gates.js';
 
 export type FlowState =
   | 'matching'
   | 'specs'
   | 'criteria'
+  | 'standard_match'
+  | 'follows'
+  | 'component_match'
+  | 'component_update'
   | 'work_order'
   | 'claim'
   | 'tasks'
@@ -216,6 +221,26 @@ export function flowFor(f: Feedback, snap: FlowSnapshot): FlowItem {
     }
   }
 
+  // The standards / components the request fits (after the specs): matched, then acted on, before a work order.
+  if (!mine.length && changed.size) {
+    const gap = matchGaps(f, snap.specs as never)[0];
+    const files = 'files: [the files you plan to change, repo:path]';
+    if (gap?.stage === 'new_spec_decision') return item('specs', { tool: 'request_decision_add', args: { ref: f.id, text: 'no existing spec covers ...', reason: '<why>' }, why: `A new spec needs a recorded decision: ${gap.need}.` });
+    if (gap?.stage === 'standard_match') return item('standard_match', { tool: 'standard_match', args: { request: f.body.slice(0, 1500), for: f.id }, why: `Which standards must this change follow? Ranks them by appliesTo for the planned files and by meaning; records the match on ${f.id}. Pass ${files}. Then link the changed spec sections to the matching standards (follows). A rule you cannot meet: waiver (question_ask purpose approval).` });
+    if (gap?.stage === 'follows') {
+      const [spec, ids] = [...changed.entries()][0]!;
+      const sid = [...ids][0]!;
+      return item('follows', { tool: 'section_link_add', args: { ref: secRef(spec, sid), to: f.standardMatch?.refs[0], rel: 'follows', addresses: [reqRef(f.id)] }, why: `Link the changed sections to the matched standards: ${gap.need}. Changed sections inherit the standard's criteria. Does none apply: request_decision_add "no matched standard applies: <why>".` });
+    }
+    if (gap?.stage === 'component_match') return item('component_match', { tool: 'component_match', args: { request: f.body.slice(0, 1500), for: f.id }, why: `Which component does this change belong to? Ranks components by meaning and by the code they own; records the match on ${f.id}. Pass ${files}.` });
+    if (gap?.stage === 'component_update') {
+      if (f.componentMatch?.decision === 'new_component') {
+        return item('component_update', { tool: 'request_decision_add', args: { ref: f.id, text: 'no existing component covers ...', reason: '<why>' }, why: `No component fits: record the decision (request_decision_add), then component_create (owns, tldr, Responsibility + Interfaces sections; addresses: [${reqRef(f.id)}]; affects links from the changed spec sections). Otherwise extend the closest component.` });
+      }
+      return item('component_update', { tool: 'component_update', args: { ref: f.componentMatch?.refs[0], addresses: [reqRef(f.id)] }, why: `Update the matched component: ${gap.need}. Extend owns for the code you will add and its Interfaces section; link the changed spec sections with affects.` });
+    }
+  }
+
   if (todo.length) {
     const [spec, sections] = todo[0]!;
     const s = snap.specs.get(spec);
@@ -237,7 +262,7 @@ export function flowFor(f: Feedback, snap: FlowSnapshot): FlowItem {
       return item('work_order', {
         tool: 'work_order_create',
         args: { spec: specRef(spec), kind, sections: ids.map((sid) => secRef(spec, sid)), reason: [reqRef(f.id)] },
-        why: `Create the work order with the FULL plan now: plan { steps (ordered, each linked to sections), files, tests: one per criterion (${criteria.map((c) => c.id).join(', ') || 'none'}) as { name, ref, proves }, risks }.`,
+        why: `Create the work order with the FULL plan now: plan { tasks (ordered, concrete: files / functions; each with sections it implements and criteria it proves; every targeted section covered), files, tests: one per criterion (${criteria.map((c) => c.id).join(', ') || 'none'}) as { name, ref, proves }, risks }. First read the code to change, rules_for_code for those paths and the owning components; the plan names the components it creates / updates (the matched one) and the standards it follows (the matched ones).`,
       });
     }
   }

@@ -51,18 +51,19 @@ Call \`project_info\`; follow \`effective\` (\`reason\` says why).
 1. \`request_create\` (kind \`improvement\` | \`bug\`; the user's words in \`body\` / \`quote\`; \`targets\` may wait). It needs no
    approval: carry on. Doubts that change behaviour go to \`question_ask { request, blocks }\`; everything else: decide, \`request_decision_add\`.
 2. Fit: \`spec_match { request, for: <request id> }\` (records the match; the work-order gate needs it), then \`get\` (spec or section refs) / \`graph_neighbors\`. Decide: covered · extend section X · new
-   section in spec Y · new spec · cross-cutting rule (\`list { of: "standards" }\`, \`standard_usage\`) · several.
-3. Take it on: edit with \`addresses: [<request ref>]\`: \`create\`, \`section_insert\`, \`section_update\`. Every new or
+   section in spec Y · new spec · cross-cutting rule (\`list { of: "standards" }\`, \`standard_usage\`) · partial match (extend + a linked new spec for the uncovered part) · several. A NEW spec only with \`request_decision_add\` "no existing spec covers ...".
+   Then \`standard_match { request, files, for }\` (standards by appliesTo for the files and by meaning) and \`component_match { request, files, for }\` (components by meaning and by the code they own): each is recorded on the request.
+3. Take it on: update the matched spec sections (default), then link the changed sections to the matched standards (\`follows\`; inherited criteria; a standard you cannot meet: waiver via an \`approval\` question; a new convention: a draft standard proposal that needs the user's confirmation and never blocks). Edit with \`addresses: [<request ref>]\`: \`create\`, \`section_insert\`, \`section_update\`. Every new or
    changed section needs a criterion: a \`type: acceptance\` section (method test | manual | review | metric) in its
    \`verifiedBy\`. \`section_link_add\`: \`follows\` (standards), \`depends_on\` (specs), \`affects\` (components). Rules
    (\`section_insert\` on a standard): level must | should | may, Do / Don't examples, scope, check.
    Spec, standard, component: a \`tldr\` (2-5 plain sentences for a non-expert: what, why, key behaviours; no ids, jargon) on \`create\`; refresh via \`update_meta\` when a change alters what it does.
-4. Components (\`create { of: "components" }\`: owns globs, layer, parent): \`affects\` links from the spec sections that change it,
+4. Components: update the matched component (extend \`owns\` / its Interfaces section: \`update_meta\` / \`section_update\` on the component); a new one (\`create { of: "components" }\`: owns globs, layer, parent) only with \`request_decision_add\` "no existing component covers ...". \`affects\` links from the spec sections that change it,
    \`follows\` its standards, \`owns\` code (or \`kind: external\`). Architecture level, few (reuse first; not one per
    folder or class; depth ≤ 2), one responsibility each, non-overlapping \`owns\`, acyclic \`depends_on\` by layer.
-5. \`status_set\` ready → \`work_order_create\` (refused with \`flow_out_of_order\` until the request has its spec_match and a spec / standard change addressing it; fast path exempt) (kind implement | update, the sections, \`reason: [<request ref>]\`) with the
-   FULL \`plan\`: \`steps\`, \`files\`, \`tests\` (name, ref, \`proves\`: the acceptance criteria ids each test proves; every criterion
-   needs one) and \`risks\`. The request closes by itself when its work orders complete (else \`request_close\`).
+5. Plan first: read the code to change, \`rules_for_code\` for those paths and the owning components. Then \`status_set\` ready → \`work_order_create\` (refused with \`flow_out_of_order\` until spec_match, standard_match and component_match are recorded and acted on and a spec / standard change addresses the request; fast path exempt) (kind implement | update, the sections, \`reason: [<request ref>]\`) with the
+   FULL concrete \`plan\`: \`tasks\` (text naming files / functions, \`sections\` it implements, \`proves\` criteria; every targeted section needs a task, every criterion a test task), \`files\`, \`tests\` (name, ref, \`proves\`: the acceptance criteria ids each test proves; every criterion
+   needs one) and \`risks\`; the plan lists the components it creates / updates and the standards it follows. Keep it current: \`work_order_plan_set\` (task ids are kept). Never use your harness's plan mode and never ask "shall I proceed?" inside /mandate: plan only (\`planOnly\`) is the user's review point. The request closes by itself when its work orders complete (else \`request_close\`).
 
 **Fast path** (bug fix, no behaviour change): skip step 3; \`work_order_create\` kind \`fix\`, one section, \`fastPath: true\` (no plan).
 
@@ -71,7 +72,7 @@ Call \`project_info\`; follow \`effective\` (\`reason\` says why).
 1. \`work_order_next\` (picks and claims; then \`work_order_git_update\`) or \`work_order_claim { ref, git: [{ repo, branch,
    baseBranch, baseCommit, worktree: { path } }] }\`. Read it (\`get\`) and its comments (\`list\`). \`rules_for_code\` before
    editing a file: MUST is mandatory, SHOULD needs a stated reason to deviate.
-2. As you go: \`work_order_step_set\` per plan step (\`in_progress\` when you start it, \`done\` when finished with codeRefs, \`skipped\` with a note; \`work_order_complete\` refuses with \`steps_unfinished\` otherwise), \`work_order_section_done\` per section (notes, codeRefs: files / lines / symbols are copied to the spec section, marked implemented by this work order; deviations), \`work_order_touch\` (files),
+2. As you go: \`work_order_task_set\` per task (\`in_progress\` when you start it, \`done\` when finished with codeRefs, \`skipped\` with a note; \`work_order_complete\` refuses with \`tasks_unfinished\` otherwise). A spec section is implemented when every task covering it is done: its code refs are copied to the spec section, marked implemented by this work order. \`work_order_touch\` (files),
    \`work_order_git_update\` (commits, PR), \`work_order_heartbeat\` on long work.
 3. \`verification_record\` per acceptance criterion (pass, \`evidence.test\` = the test's name or \`repo:path#Lx-Ly\`, codeRefs). \`work_order_complete\` refuses (\`criteria_unproven\`) while a criterion it covers has no passing, test-linked result.
 4. Reconcile (\`section_update\`) spec and component text, code refs and symbols, owns globs with what was built (state deviations).
@@ -84,7 +85,7 @@ Call \`project_info\`; follow \`effective\` (\`reason\` says why).
 
 Your repo name: the \`project_info.codeRepos\` entry whose \`github\` matches \`git remote get-url origin\`. Call
 \`code_context_set { repo, commit, branch, dirty }\` at task start and after each commit or branch switch. Verifications,
-code locations (\`work_order_touch\` / \`work_order_section_done\` \`code\`), \`work_order_complete\` (\`git\` headCommit)
+code locations (\`work_order_touch\` / \`work_order_task_set\` codeRefs), \`work_order_complete\` (\`git\` headCommit)
 and audits carry repo + commit (uncommitted: \`dirty: true\`, base commit). Code refs: \`mandate://code/<repo>/<path>[#La-Lb]\`.
 
 ## Git

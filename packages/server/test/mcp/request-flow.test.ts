@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AGENT_TOOLS, TOOLS } from '../../src/mcp/server.js';
 import { applyCodeToSection, checkPlanTests, coveredCriteria, renderPlan } from '../../src/storage/work-order-plan.js';
 import { planProgress } from '@mandate/shared';
-import { connect, mcpFixture, type McpFixture } from './fixture.js';
+import { connect, mcpFixture, recordMatches, type McpFixture } from './fixture.js';
 
 let fx: McpFixture;
 beforeAll(async () => {
@@ -166,6 +166,7 @@ describe('criteria are proved by tests; sections point at their work order', () 
     const fb = await ok('request_create', { targets: [`mandate://specs/${id}/sections/design`], kind: 'improvement', body: 'Build the design.' });
     await read('spec_match', { request: 'Build the design.', for: fb.ref });
     await ok('spec_section_update', { ref: `mandate://specs/${id}/sections/design`, body: 'The design, v2.', addresses: [fb.ref] });
+    await recordMatches(fx, AGENT, fb.ref);
     const wo = await ok('work_order_create', { spec: id, sections: ['design', 'ac-works'], kind: 'implement', plan: planFor(['design', 'ac-works']), reason: [fb.ref] });
     const woId = wo.ref.split('/').pop()!;
     await ok('work_order_claim', { ref: wo.ref });

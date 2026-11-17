@@ -8,7 +8,7 @@ import { callTool, type ToolContext } from '../../src/mcp/define.js';
 import { TOOLS } from '../../src/mcp/server.js';
 import { memorySettings } from '../../src/projects/settings.js';
 import { newsFallback } from '../../src/news/index.js';
-import { mcpFixture, type McpFixture } from './fixture.js';
+import { mcpFixture, recordMatches, type McpFixture } from './fixture.js';
 
 let fx: McpFixture;
 beforeAll(async () => {
@@ -134,6 +134,7 @@ describe('plan only', () => {
     await run('flow_next', { request: id }, agent('ada'));
     await read('spec_match', { request: 'Add SSO login', for: id });
     await ok('spec_section_update', { ref: `mandate://specs/${spec}/sections/design`, body: 'v2', addresses: [ref] });
+    await recordMatches(fx, 'impl@test', id);
     expect((await run('flow_next', { request: id }, agent('ada'))).body.state).toBe('work_order');
     const wo = await ok('work_order_create', { spec, kind: 'implement', sections: ['design', 'ac-works'], reason: [ref], plan: { tasks: [{ text: 'a', sections: ['design', 'ac-works'], proves: ['ac-works'] }], files: ['src/a.ts'], tests: [{ name: 't', ref: 'app:t.test.ts#L1-L2', proves: ['ac-works'] }], risks: ['none'] } });
     const n = await run('flow_next', { request: id }, agent('ada'));
