@@ -18,6 +18,7 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { str, type Args } from './args.js';
 import { PUSH_ENV } from './channel.js';
+import { withoutMandateRules } from './claude-flow.js';
 import { BIN, type Ctx } from './context.js';
 import { change, jsonGet, jsonRemove, jsonSet, readText, type Change } from './edits.js';
 import { readManifest } from './wiring.js';
@@ -127,8 +128,10 @@ export function pushRemoveAll(ctx: Ctx): { names: string[]; changes: (Change | n
   let changes: (Change | null)[] = [];
   if (st !== null) {
     try {
-      const after = hooksText(sj, st, undefined, []);
-      changes = [change(sj, after !== null && after.trim() === '{}' ? null : after, 'Claude Code event hooks')];
+      // One read-modify-write: our hooks, then our allow rules (permissions are claude-flow.ts's).
+      let after = hooksText(sj, st, undefined, []);
+      after = withoutMandateRules(sj, after);
+      changes = [change(sj, after !== null && after.trim() === '{}' ? null : after, 'Claude Code event hooks and Mandate allow rules')];
     } catch {
       // JSONC settings: left alone
     }

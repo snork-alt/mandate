@@ -2,6 +2,11 @@
 
 exports[`connect: Claude Code event delivery wiring > writes the channel server and the hooks (snapshot), idempotently 1`] = `
 "{
+  "permissions": {
+    "allow": [
+      "mcp__mandate-web__*"
+    ]
+  },
   "hooks": {
     "SessionStart": [
       {

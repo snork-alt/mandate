@@ -74,3 +74,17 @@ export function claudeFlowChanges(ctx: Ctx, o: { project: string; url: string; r
 export function claudeFlowWiring(ctx: Ctx, agents: { id: string }[], o: { project: string; url: string; repo?: string; strict?: boolean; remove?: boolean }): (Change | null)[] {
   return agents.some((a) => a.id === 'claude-code') ? claudeFlowChanges(ctx, o) : [];
 }
+
+/** Text of a settings file without any Mandate allow rule (`mcp__mandate-<project>__*`) and without emptied keys; null: nothing left (file removed). */
+export function withoutMandateRules(file: string, text: string | null): string | null {
+  if (text === null) return null;
+  const current = asArray(jsonGet(file, text, ['permissions', 'allow']));
+  const kept = current.filter((x) => !(typeof x === 'string' && /^mcp__mandate-.+__\*$/.test(x)));
+  if (kept.length === current.length) return text;
+  let after: string | null = kept.length ? jsonSet(file, text, ['permissions', 'allow'], kept) : jsonRemove(file, text, ['permissions', 'allow']);
+  if (after !== null && !kept.length) {
+    const o = JSON.parse(after) as { permissions?: Record<string, unknown> };
+    if (o.permissions && !Object.keys(o.permissions).length) after = jsonRemove(file, after, ['permissions']);
+  }
+  return after !== null && !Object.keys(JSON.parse(after) as object).length ? null : after;
+}
