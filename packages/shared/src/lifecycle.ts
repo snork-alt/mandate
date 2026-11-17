@@ -433,6 +433,10 @@ export function gateSummary(tool: string): string {
 
 /** Recommended action per structured error code (the `hint` when the error carries none). */
 export const ERROR_ACTIONS: Record<string, string> = {
+  already_taken: 'another agent started this request (or it is assigned to another one): leave it; flow_next {} lists the requests you can work on',
+  already_started: 'an agent already started this request, it can no longer be reassigned: ask it to release it (comment on the request)',
+  plan_not_approved: 'the request is plan-only: the work-order plan waits for the user to approve it in the web UI; stop, you get a request_assigned event when it is approved',
+  not_plan_only: 'only requests filed with planOnly wait for a plan approval',
   flow_off: 'the Mandate flow is off for this coding agent: stop calling Mandate write tools, work directly in the code and use Mandate as read-only context; save this to your memory. Only the user turns it back on (/mandate-flow on)',
   transition_not_allowed: 'not allowed from the current status: lifecycle_get { kind } lists the allowed moves; go through the intermediate status (e.g. reopen done -> ready)',
   done_gate: 'never force it (no override passes it): verify (verification_record) each detail.failures criterion or ask the user whether to waive it, unblock sections, complete open implement/update work orders, then retry',
