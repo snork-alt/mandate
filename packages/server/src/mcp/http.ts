@@ -26,6 +26,7 @@ import { listDecisions } from '../storage/decisions.js';
 import { createMcpServer, MCP_VERSION } from './server.js';
 import { parseToolSets } from './tool-sets.js';
 import { registerEventRoutes } from './events.js';
+import { CliLogins, cleanHostname, RateLimit } from '../auth/cli-login.js';
 
 export type { ActivityEvent };
 
@@ -68,6 +69,8 @@ export interface McpRouteOptions {
    * are also released as soon as the client disconnects, so a reopened tab never hits "only one SSE stream".
    */
   sseKeepAliveMs?: number;
+  /** Browser logins of the CLI (default: in-memory, from the personal-token store). Tests inject one with a clock. */
+  cliLogins?: CliLogins;
 }
 
 export const samePrincipal = (a: Principal, b: Principal) =>
@@ -412,6 +415,7 @@ function registerUiRoutes(app: FastifyInstance, opts: McpRouteOptions, hostOk: (
   // Team: the signed-in user's personal agent tokens for a project (shown once at creation; hashed at rest).
   if (opts.auth.agentTokens) {
     const tokens = opts.auth.agentTokens;
+    registerCliLoginRoutes(app, opts, hostOk, readable, opts.cliLogins ?? new CliLogins(tokens));
     app.get('/ui/p/:projectId/tokens', async (req, reply) => {
       const project = (req.params as { projectId: string }).projectId;
       const r = await readable(req, reply, project);
@@ -442,3 +446,65 @@ function registerUiRoutes(app: FastifyInstance, opts: McpRouteOptions, hostOk: (
     });
   }
 }
+
+/** Browser login of `mandate channel login` (auth/cli-login.ts): start / poll (public, rate limited), approve / deny (UI only). */
+function registerCliLoginRoutes(
+  app: FastifyInstance,
+  opts: McpRouteOptions,
+  hostOk: (req: FastifyRequest) => boolean,
+  readable: (req: FastifyRequest, reply: FastifyReply, project: string) => Promise<{ user: { login: string }; access: Access; cfg: { id: string; name: string } } | null>,
+  logins: CliLogins,
+) {
+  const startLimit = new RateLimit(20, 10 * 60_000);
+  const pollLimit = new RateLimit(600, 10 * 60_000);
+  const codeLimit = new RateLimit(60, 10 * 60_000);
+  const err = (reply: FastifyReply, status: number, code: string, message: string) => reply.code(status).send({ error: { code, message } });
+  const body = (req: FastifyRequest) => (req.body && typeof req.body === 'object' ? (req.body as Record<string, unknown>) : {});
+
+  app.post('/auth/cli/start', async (req, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    if (!hostOk(req)) return err(reply, 403, 'forbidden', 'forbidden host');
+    if (!startLimit.take(req.ip)) return err(reply, 429, 'rate_limited', 'too many login attempts; wait a few minutes');
+    const project = String(body(req).project ?? '');
+    if (!opts.projects.config(project)) return err(reply, 404, 'not_found', `unknown project '${project}'`);
+    const s = logins.start(project, cleanHost(body(req).hostname));
+    if (!s) return err(reply, 429, 'rate_limited', 'too many pending logins; try again in a few minutes');
+    return reply.code(201).send({ ...s, project, verificationPath: `/cli-login?code=${s.userCode}`, ...(opts.publicUrl ? { verificationUrl: `${opts.publicUrl}/cli-login?code=${s.userCode}` } : {}) });
+  });
+  app.post('/auth/cli/poll', async (req, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    if (!hostOk(req)) return err(reply, 403, 'forbidden', 'forbidden host');
+    if (!pollLimit.take(req.ip)) return err(reply, 429, 'rate_limited', 'polling too fast');
+    const code = body(req).deviceCode;
+    if (typeof code !== 'string' || code.length < 20 || code.length > 100) return err(reply, 400, 'invalid_input', 'deviceCode required');
+    return logins.poll(code);
+  });
+
+  // The approval page: the signed-in user sees what they authorize (project, host, code) and decides.
+  const page = async (req: FastifyRequest, reply: FastifyReply, write: boolean) => {
+    if (write && !originOk(req, opts.auth.uiOrigins)) return void rpcError(reply, 403, -32000, 'forbidden: Origin must be same-origin');
+    const code = String((req.params as { code: string }).code);
+    if (!codeLimit.take(req.ip)) return void err(reply, 429, 'rate_limited', 'too many attempts');
+    const s = logins.byUserCode(code);
+    if (!s) return void err(reply, 404, 'not_found', 'this code is unknown or expired: run the command again');
+    const r = await readable(req, reply, s.project);
+    if (!r) return void 0;
+    return { s, r };
+  };
+  app.get('/ui/cli-login/:code', async (req, reply) => {
+    const x = await page(req, reply, false);
+    if (!x) return reply;
+    reply.header('Cache-Control', 'no-store');
+    return { code: x.s.userCode, project: { id: x.r.cfg.id, name: x.r.cfg.name }, hostname: x.s.hostname, user: x.r.user.login, status: x.s.status, expiresAt: new Date(x.s.expiresAt).toISOString() };
+  });
+  for (const approve of [true, false]) {
+    app.post(`/ui/cli-login/:code/${approve ? 'approve' : 'deny'}`, async (req, reply) => {
+      const x = await page(req, reply, true);
+      if (!x) return reply;
+      const s = logins.decide(x.s.userCode, x.r.user.login, approve);
+      if (!s) return err(reply, 409, 'conflict', 'this login was already decided');
+      return { status: s.status, project: s.project, hostname: s.hostname };
+    });
+  }
+}
+const cleanHost = cleanHostname;

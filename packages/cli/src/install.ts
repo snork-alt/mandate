@@ -21,6 +21,8 @@ export interface Runtime {
   out: Out;
   prompt: Prompter;
   dryRun: boolean;
+  /** Test seams of the browser login (http client, opener, clock). */
+  login?: import('./login.js').LoginDeps;
 }
 
 /* ------------------------------------------------------------------ the server address */

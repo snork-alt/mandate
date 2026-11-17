@@ -30,7 +30,8 @@ ${c.bold('Commands')}
           [--agents a,b] [--agents-only] [--no-global] [--dry-run]
   connect [--project <id>] [--url <server>] [--agents a,b] [--push channels|rewake|off] [--remove] [--dry-run]
   claude [claude args]             Claude Code with the Mandate event channel (answered questions wake an idle session)
-  channel login --project <id>     store a personal token for the event stream (channel / hooks)
+  channel login [--project <id>] [--url <server>] [--paste]
+                                   approve this computer in the browser (event channel / hooks token); --paste: paste a token
   events --pending [--format claude|text|json] --project <id> --url <server>   events missed (SessionStart hook)
   watch --rewake --project <id> --url <server>   asyncRewake hook: block until an event arrives, exit 2 with its text
   start [--foreground] [--port N] · stop · restart · status [--json]

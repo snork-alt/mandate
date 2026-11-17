@@ -930,7 +930,7 @@ export class WorkOrderService {
    * first), then age. Concurrent callers never get the same item (the claim check runs inside the write lock).
    */
   async next(
-    filters: { kinds?: WorkOrder['kind'][]; spec?: string; priority?: string[]; specs?: (s: StoredSpec) => boolean },
+    filters: { kinds?: WorkOrder['kind'][]; spec?: string; priority?: string[]; specs?: (s: StoredSpec) => boolean; /** A reason to skip a work order (e.g. its plan-only request is not approved yet). */ hold?: (w: WorkOrder) => string | null },
     claim: { agent: string; branch?: string; worktree?: string },
     meta: CommitMeta = {},
   ): Promise<{ workOrder: WorkOrder | null; skipped: { id: string; reason: string }[] }> {
@@ -953,6 +953,11 @@ export class WorkOrderService {
         continue;
       }
       if (filters.specs && !filters.specs(spec)) continue;
+      const held = filters.hold?.(w);
+      if (held) {
+        skipped.push({ id: w.id, reason: held });
+        continue;
+      }
       if (!w.hasPlan && !isFastPath(w)) {
         skipped.push({ id: w.id, reason: 'no plan yet (work_order_plan_set, then claim)' });
         continue;

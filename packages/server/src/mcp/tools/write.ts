@@ -516,8 +516,14 @@ const workOrderTools: AnyToolDef[] = [
     run: async (a, ctx) => {
       const commits: string[] = [];
       const specOk = (s: StoredSpec) => (!a.repo || s.repo === a.repo) && (!a.category || s.category === a.category) && (!a.tags || a.tags.some((t) => s.tags.includes(t)));
+      // Plan-only requests: their work orders are not taken until the user approved the plan in the web UI.
+      const planOnly = (await ctx.storage.feedbackService.list()).filter((f) => f.status !== 'closed' && f.planOnly);
+      const hold = (w: { reason: string[] }) => {
+        const f = planOnly.find((x) => w.reason.includes(x.id));
+        return f ? `plan_not_approved: request ${f.id} is plan-only; the user approves the plan in the web UI first (flow_next { request: "${f.id}" } says plan_ready)` : null;
+      };
       const { workOrder, skipped } = await ctx.storage.workOrderService.next(
-        { kinds: a.kinds, spec: a.spec ? idOf(a.spec) : undefined, priority: a.priority, specs: specOk },
+        { kinds: a.kinds, spec: a.spec ? idOf(a.spec) : undefined, priority: a.priority, specs: specOk, hold },
         { agent: ctx.commit!.agent, ...(ctx.commit!.branch ? { branch: ctx.commit!.branch } : {}), ...(a.worktree ? { worktree: a.worktree } : {}) },
         metaOf(ctx, commits),
       );

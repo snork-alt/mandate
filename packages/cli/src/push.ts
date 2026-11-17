@@ -174,6 +174,10 @@ export async function cmdClaude(ctx: Ctx, a: Args, err: (s: string) => void): Pr
   }
   const names = mode === 'channels' ? channelNames(ctx, a) : [];
   if (mode === 'channels' && !names.length) err(`${BIN}: no Mandate event channel is set up (run \`${BIN} connect --url <server> --project <id>\` with Claude Code, then \`${BIN} channel login --project <id>\`); starting Claude Code without it`);
+  // The channel can only listen with a personal token: say how to get one (a browser approval) instead of failing silently.
+  for (const p of new Set(readManifest(ctx).repos.map((r) => r.project))) {
+    if (names.includes(channelName(p)) && !resolveToken(ctx, p)) err(`${BIN}: the event channel of '${p}' has no token yet, so it cannot wake the agent: run \`${BIN} channel login --project ${p}\` (approve in the browser), then start again`);
+  }
   const args = names.length ? ['--dangerously-load-development-channels', ...names.map((n) => `server:${n}`), ...passthrough] : passthrough;
   const bin = ctx.env.MANDATE_CLAUDE_BIN || 'claude';
   const child = spawn(bin, args, { stdio: 'inherit', env: { ...ctx.env, ...(names.length ? { [PUSH_ENV]: 'channels', MCP_PROTOCOL_NEGOTIATION: 'legacy' } : {}) } });

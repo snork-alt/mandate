@@ -14,6 +14,7 @@ import { disconnectChanges, pickAgents, type Runtime } from './install.js';
 import { askAgentChange, claudeFlowWiring } from './claude-flow.js';
 import { resolveToken } from './events.js';
 import { channelName, pushChanges, pushMode, type PushMode } from './push.js';
+import { browserLogin, finishLogin, ttyAvailable } from './login.js';
 import { publicUrlProblem, readSettings } from './settings.js';
 import { c, fail, info, ok, warn } from './ui.js';
 import { envChange, instructionFiles, listProjects, rcChanges, readEnvKeys, readManifest, repoSection, sectionChange, writeManifest } from './wiring.js';
@@ -244,7 +245,14 @@ async function connectRemote(rt: Runtime, a: Args, repo: string, url: string): P
     out.log(`\n${c.bold('Event delivery (Claude Code)')}`);
     if (push === 'channels') out.log(`  start Claude Code with ${c.cyan(`${BIN} claude`)} ${c.dim(`(= claude --dangerously-load-development-channels server:${channelName(project)}): answered questions and other news wake an idle session`)}`);
     out.log(`  ${push === 'channels' ? 'plain `claude` sessions' : 'sessions'} get the same through hooks (wake-up at the next turn end / start, and a catch-up at session start)`);
-    if (!rt.dryRun && !resolveToken(ctx, project)) out.log(warn(`events need a personal token (the sign-in of your agent cannot be shared): web UI → Connect agent → Personal tokens, then ${c.cyan(`${BIN} channel login --project ${project}`)}`));
+    if (!rt.dryRun && !resolveToken(ctx, project)) {
+      // The event stream needs a personal token: approve it in the browser now when someone is at the terminal.
+      if (a.flags.login !== false && ttyAvailable(rt)) {
+        const r = await browserLogin(rt, { project, base });
+        if (r.ok) finishLogin(rt, project, r.token, `stored${r.login ? ` for ${r.login}` : ''}`);
+        else out.log(warn(`${r.message}; run ${c.cyan(`${BIN} channel login --project ${project} --url ${base}`)} to enable the event channel`));
+      } else out.log(warn(`the event channel needs a one-time approval: run ${c.cyan(`${BIN} channel login --project ${project} --url ${base}`)}`));
+    }
   }
   out.log(`\n${c.bold('Verify')}`);
   if (agents.some((x) => x.id === 'claude-code')) out.log(`  ${c.cyan('claude mcp list')}   ${c.dim(`shows ${server.name} as connected${oauth ? ' (after signing in)' : ''}`)}`);

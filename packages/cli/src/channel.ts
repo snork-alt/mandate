@@ -153,7 +153,7 @@ export async function serveChannel(o: ChannelOptions): Promise<number> {
       } catch (e) {
         if (ac.signal.aborted) break;
         if (e instanceof AuthError) {
-          log(`${(e as Error).message}; create a personal token (web UI -> Connect agent) and run: mandate channel login --project ${endpoint.project}`);
+          log(`${(e as Error).message}; run: mandate channel login --project ${endpoint.project} (approve in the browser)`);
           failures = Math.max(failures, 6); // slow retries: the token may be fixed meanwhile
         } else if (failures === 0) log(`stream lost (${(e as Error).message}); reconnecting`);
       }
