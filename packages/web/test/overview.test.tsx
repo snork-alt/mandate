@@ -318,7 +318,7 @@ describe.each(['light', 'dark'] as const)('overview page (%s)', (scheme) => {
     render(<R scheme={scheme} path="/actions" />);
     // Nothing pending: only the Questions tab, with its empty state.
     expect(await screen.findByText('All questions answered')).toBeTruthy();
-    expect(screen.getByTestId('show-answered').getAttribute('href')).toBe('/questions?tab=answered');
+    expect(screen.getByTestId('show-answered').getAttribute('href')).toBe('/waiting/history?tab=answered');
     expect(screen.getAllByRole('tab').map((t) => t.getAttribute('data-testid'))).toEqual(['atab-questions']);
     cleanup();
     render(<R scheme={scheme} path="/actions?tab=blocked" />);

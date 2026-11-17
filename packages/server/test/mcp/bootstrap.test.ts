@@ -52,13 +52,13 @@ describe('bootstrap skill', () => {
 });
 
 describe('MCP prompts', () => {
-  it('lists mandate-flow and mandate-bootstrap; renders the arguments', async () => {
+  it('lists mandate, mandate-flow and mandate-bootstrap; renders the arguments', async () => {
     const server = createMcpServer({} as ToolContext);
     const [a, b] = InMemoryTransport.createLinkedPair();
     await server.connect(a);
     const c = new Client({ name: 't', version: '0' });
     await c.connect(b);
-    expect((await c.listPrompts()).prompts.map((p) => p.name)).toEqual(['mandate-flow', 'mandate-bootstrap']);
+    expect((await c.listPrompts()).prompts.map((p) => p.name)).toEqual(['mandate', 'mandate-flow', 'mandate-bootstrap']);
     const r = await c.getPrompt({ name: 'mandate-bootstrap', arguments: { args: 'distill --run 20261112-101500-ab12' } });
     expect((r.messages[0]!.content as { text: string }).text).toContain('Arguments: "distill --run 20261112-101500-ab12"');
     await c.close();

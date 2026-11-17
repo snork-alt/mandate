@@ -61,7 +61,7 @@ beforeAll(async () => {
   await call(as('dave'), 'work_order_touch', { ref: wo, section: 'design', files: [`app${S}:src/cc/file.ts#L1-L9`] });
   const comment = await call(as('bob'), 'comment_add', { target: wo, body: 'Check the edge case.' });
   // gina's agent asks a question about the spec; hank answers it in the web UI
-  const question = (await call(as('gina'), 'question_ask', { purpose: 'decision', context: [`mandate://specs/${spec}`], questions: [{ header: 'Scope', question: 'Ship design v2?', options: [{ label: 'Yes', description: 'Now' }, { label: 'No', description: 'Later' }], recommended: 'Yes' }] })).ref as string;
+  const question = (await call(as('gina'), 'question_ask', { purpose: 'decision', request: fb.split('/').pop(), context: [`mandate://specs/${spec}`], questions: [{ header: 'Scope', question: 'Ship design v2?', options: [{ label: 'Yes', description: 'Now' }, { label: 'No', description: 'Later' }], recommended: 'Yes' }] })).ref as string;
   await call({ ...as(null), principal: { kind: 'ui', user: { login: 'hank', avatarUrl: '' } }, uiAccess: 'write' } as ToolContext, 'question_answer', { id: question, answers: { q1: 'Yes' } });
   const ver = (await call(as('erin'), 'verification_record', { criterion: `mandate://specs/${spec}/sections/ac-works`, code: { repo: 'app', commit: 'abcdef1234' }, result: 'pass', method: 'test' })).ref;
   // audit by frank with a finding
