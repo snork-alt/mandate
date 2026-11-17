@@ -74,7 +74,7 @@ Call \`project_info\`; follow \`effective\` (\`reason\` says why).
    editing a file: MUST is mandatory, SHOULD needs a stated reason to deviate.
 2. As you go: \`work_order_task_set\` per task (\`in_progress\` when you start it, \`done\` when finished with codeRefs, \`skipped\` with a note; \`work_order_complete\` refuses with \`tasks_unfinished\` otherwise). A spec section is implemented when every task covering it is done: its code refs are copied to the spec section, marked implemented by this work order. \`work_order_touch\` (files),
    \`work_order_git_update\` (commits, PR), \`work_order_heartbeat\` on long work.
-3. \`verification_record\` per acceptance criterion (pass, \`evidence.test\` = the test's name or \`repo:path#Lx-Ly\`, codeRefs). \`work_order_complete\` refuses (\`criteria_unproven\`) while a criterion it covers has no passing, test-linked result.
+3. \`verification_record\` per acceptance criterion (pass, \`evidence.test\` = the test's name or \`repo:path#Lx-Ly\`, codeRefs). \`work_order_complete\` refuses (\`criteria_unproven\`) while a criterion it covers has no passing, test-linked result. That includes the must rules of the standards the sections follow (inherited criteria): the plan's tasks prove them too (\`proves\` = \`<standard>/<rule>\`), \`verification_record { criterion: <standard rule>, appliedTo: <spec> }\`; a rule you cannot meet needs a user-approved waiver.
 4. Reconcile (\`section_update\`) spec and component text, code refs and symbols, owns globs with what was built (state deviations).
 5. The comments again (resolve blocking ones), then \`work_order_complete\` (\`outcome\`, \`reconciliation\`, final
    git). The last section done releases your claim; completing needs no claim. Cite \`@mandate:<ref>\` in code comments and commits.
@@ -112,6 +112,20 @@ Follow \`effective\` \`commit\` / \`branch\` / \`push\` (\`instructions\` has th
 Anyone \`comment_add\`s on any object (sections, steps, requests, work orders; \`blocking: true\` = must-fix); the addressed or
 responsible agent replies (\`parent\`), fixes, \`comment_resolve\` (\`comment_reopen\` if not fixed). A change asked for in a
 comment becomes a request (\`request_create\` with source "comment"). Append-only.
+
+Every comment on an object carries \`view\`: what the user saw (implementation state incl. Outdated and the implemented
+commit, status, the badges with their meaning, the text they selected). Answer from it; never say you cannot see the UI.
+Badges: **Outdated** = an implemented section whose text changed since: wording only \`section_update { editorial: { reason } }\`
+(stays implemented); same behaviour, checked \`section_reverify { ref, codeRefs, verifications }\`; new behaviour: a work order task
+(\`flow_next\` says so); **Implemented @x** = implemented at spec commit x, unchanged;
+**Not implemented** = no work order has implemented it; **Waiting for you** = needs a decision only the user can make;
+**Plan ready** = a plan-only request awaiting the user's approval; **Queued** = assigned to an agent that has not
+started; **Can't be woken** = the agent cannot be pushed to by a comment, it sees it at its next \`flow_next\`.
+
+Reply style: at most 3 short sentences unless asked for detail. Act on the obvious intent: a bare link or reference
+posted right after your question means "this one, answer it". Ask only when genuinely ambiguous. When you offer actions,
+propose the recommended one and do it when the thread's intent is clear and it is within the flow (mark the edit
+editorial, re-verify, start the request).
 
 ## Audits (when asked; set \`review\`; preferably not the implementing agent)
 

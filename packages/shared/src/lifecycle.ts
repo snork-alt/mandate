@@ -445,6 +445,8 @@ export const ERROR_ACTIONS: Record<string, string> = {
   flow_out_of_order: 'a step of the flow came too early: call flow_next { request } and do the step it names (spec_match { for }, spec / standard edits with addresses, then the work order); a bug fix without behaviour change: kind fix, fastPath: true',
   request_required: 'questions inside the Mandate flow belong to a request: pass request (the request id) and, if the answer gates work, blocks: [the request / work order / step / section it blocks]; flow_next lists the requests in flight',
   edit_not_allowed: 'strict flow: edit code only while you hold a claimed work order with a step in progress: flow_next, work_order_claim, work_order_task_set in_progress',
+  editorial_not_allowed: 'editorial is for wording only (title, summary, body of a non-criterion section): drop editorial and cover the change with a task of a work order, or split the wording edit from the behaviour edit',
+  not_implemented: 'section_reverify is for implemented sections: implement it through a work order (flow_next)',
   plan_invalid: 'every targeted spec section needs a task that implements it (tasks[].sections), every acceptance criterion a task that proves it (tasks[].proves) and a planned test (plan.tests[].proves); ids must exist in the targeted sections (the message lists them): fix the plan and retry',
   open_comments: 'answer, fix and comment_resolve each blocking comment in detail.threads, then retry',
   outcome_required: 'pass outcome (what was delivered)',

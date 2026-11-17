@@ -10,7 +10,7 @@ import { BOOTSTRAP_COMMAND, BOOTSTRAP_SKILL_BODY } from './bootstrap.js';
 import { FLOW_COMMAND, MANDATE_COMMAND, SKILL_BODY } from './guide.js';
 
 /** Version of the installed stub files (stamped into each one). */
-export const STUB_VERSION = 7;
+export const STUB_VERSION = 8;
 
 export const INSTRUCTION_NAMES = ['core', 'bootstrap', 'flow', 'mandate'] as const;
 export type InstructionName = (typeof INSTRUCTION_NAMES)[number];
