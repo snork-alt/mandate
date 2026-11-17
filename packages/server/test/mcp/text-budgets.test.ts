@@ -14,15 +14,15 @@ const tok = (s: string) => Math.ceil(s.length / 4);
 
 describe('working agreement budgets', () => {
   it('master skill (was ~3250 tokens before the lifecycle registry, 2055 before the prompts review)', () => {
-    expect(tok(SKILL_BODY)).toBeLessThanOrEqual(2220); // +15: last section done frees the claim; +55: tldr guidance; +9: instructions_get pointer; +50: tool sets (tools_enable)
+    expect(tok(SKILL_BODY)).toBeLessThanOrEqual(2330); // +105: request flow (no approval, full plan, criteria -> tests, implemented-by), -15 approval; +15: last section done frees the claim; +55: tldr guidance; +9: instructions_get pointer; +50: tool sets (tools_enable)
     expect(SKILL_BODY.split('\n').length).toBeLessThanOrEqual(113);
     expect(tok(SKILL_DESCRIPTION)).toBeLessThanOrEqual(87);
     expect(SKILL_BODY).toContain('lifecycle_get');
   });
 
   it('server instructions (CORE_RULES mirror)', () => {
-    expect(tok(CORE_RULES)).toBeLessThanOrEqual(1110); // +55: tldr guidance; +46: CURRENT TEXT (instructions_get beats local copies); +15: TOOLS (tool sets)
-    expect(tok(INSTRUCTIONS)).toBeLessThanOrEqual(1360);
+    expect(tok(CORE_RULES)).toBeLessThanOrEqual(1140); // +30: requests, full plan, test proof; +55: tldr guidance; +46: CURRENT TEXT (instructions_get beats local copies); +15: TOOLS (tool sets)
+    expect(tok(INSTRUCTIONS)).toBeLessThanOrEqual(1390);
     expect(INSTRUCTIONS).toContain('lifecycle_get');
   });
 
@@ -48,10 +48,11 @@ describe('total tool descriptions', () => {
 
   it('the default list (core) stays small: descriptions and schemas', () => {
     const core = listedTools(new Set(DEFAULT_SETS));
-    expect(core.length).toBeLessThanOrEqual(30);
-    // 3,624 description and 9,335 schema tokens over the 29 core tools (was every tool: ~11,221 / ~26,870).
-    expect(core.reduce((n, t) => n + tok(t.description as string), 0)).toBeLessThanOrEqual(3800);
-    expect(core.reduce((n, t) => n + tok(JSON.stringify(toolJsonSchema(t))), 0)).toBeLessThanOrEqual(9700);
+    expect(core.length).toBeLessThanOrEqual(50);
+    // 5,883 description and 16,137 schema tokens over the 47 core tools (the whole request flow: the former intake set moved into core;
+    // before that 3,624 / 9,335 over 29 tools; every tool: ~11,221 / ~26,870).
+    expect(core.reduce((n, t) => n + tok(t.description as string), 0)).toBeLessThanOrEqual(6200);
+    expect(core.reduce((n, t) => n + tok(JSON.stringify(toolJsonSchema(t))), 0)).toBeLessThanOrEqual(16900);
   });
 
   it('input schemas served to agents stay within budget (edge kinds as strings, per-kind section fields and link rels)', () => {

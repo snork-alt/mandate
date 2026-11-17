@@ -51,3 +51,12 @@ describe('comments replay', () => {
     expect(replayComments([...lines, { id: 'cs-3', type: 'resolve', commentId: 'c-1', by: 'r', at: '6' }])[0]).toMatchObject({ status: 'resolved', resolvedBy: 'r', resolvedAt: '6' });
   });
 });
+
+import { planProgress } from '../src/overview.js';
+describe('planProgress with a structured plan', () => {
+  it('counts only the Steps of a work_order_create plan (files, tests and risks are lists too)', () => {
+    const md = '**Steps**\n- [x] Write the code\n- [ ] Write the test\n\n**Files to change**\n- src/a.ts\n- tests/a.test.ts\n\n**Tests**\n- it works proves: ac-1\n\n**Risks**\n- flaky';
+    expect(planProgress(md)).toEqual({ total: 2, done: 1, current: { index: 2, text: 'Write the test' } });
+    expect(planProgress('1. one\n2. two')).toEqual({ total: 2 });
+  });
+});

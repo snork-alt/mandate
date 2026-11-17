@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { TLDR_MAX_CHARS, appliesToSchema, exemptionSchema, FEEDBACK_KINDS, FEEDBACK_RESOLUTIONS, PRIORITIES, STORED_SPEC_STATUSES, VERIFICATION_METHODS, VERIFICATION_RESULTS, WORK_ORDER_KINDS, STANDARD_STATUSES } from './base.js';
 import { docRefSchema, sectionRefSchema } from './read-schemas.js';
 import { parseNodeUri, parseRef, type RefKind } from './refs.js';
-import { woDeliveryExtras } from './work-orders.js';
+import { planTestSchema, woDeliveryExtras } from './work-orders.js';
 import { auditCodeRefSchema } from './audits.js';
 import { codeClaimSchema } from './code-context.js';
 
@@ -158,8 +158,6 @@ const sectionTools = (kind: WritableDocKind) => ({
       to: z.string().trim().min(1).max(400).refine((v) => !!parseRef(v), 'expected a mandate:// section reference'),
       rel: z.enum(LINK_RELS_BY_KIND[kind]),
       note: line(2000).optional(),
-      /** deviates_from waivers: the accepted feedback item approving it. */
-      feedback: slugSchema.optional(),
     })
     .strict(),
   linkRemove: z
@@ -180,8 +178,23 @@ export const componentDocRefSchema = writeDocRef('components');
 
 const woRef = docRefSchema(['work-orders']);
 const fbRef = docRefSchema(['feedback']);
-/** relatedTo entries (DF-7): a feedback id / reference or any element reference (resolved by the server). */
-const relatedRef = z.string().trim().min(1).max(400).refine((v) => /^[a-z0-9][a-z0-9-]*$/.test(v) || !!parseNodeUri(v), 'a feedback id or an element reference (mandate://...)');
+/** relatedTo entries (DF-7): a request id / reference or any element reference (resolved by the server). */
+const relatedRef = z.string().trim().min(1).max(400).refine((v) => /^[a-z0-9][a-z0-9-]*$/.test(v) || !!parseNodeUri(v), 'a request id or an element reference (mandate://...)');
+/** The structured plan of a work order (rendered to the plan section; `tests` are checked at work_order_complete). */
+export const workOrderPlanInputSchema = z
+  .object({
+    /** What you will do, in order. */
+    steps: z.array(line(2000)).min(1).max(50),
+    /** Files to change or add (`path`, or `repo:path` / `path: why`). */
+    files: z.array(line(500)).max(200).default([]),
+    /** Tests to write: name, where (optional), and the acceptance criteria (section ids of the spec) each proves. */
+    tests: z.array(planTestSchema).max(200).default([]),
+    /** What could go wrong. */
+    risks: z.array(line(2000)).max(30).default([]),
+  })
+  .strict();
+export type WorkOrderPlanInput = z.input<typeof workOrderPlanInputSchema>;
+
 export const workOrderCreateInputSchema = z
   .object({
     spec: writeDocRef('specs'),
@@ -190,14 +203,17 @@ export const workOrderCreateInputSchema = z
     kind: z.enum(WORK_ORDER_KINDS),
     priority: z.enum(PRIORITIES).optional(),
     note: text(5000).optional(),
-    /** Feedback items this work order acts on (ids or references). */
+    /** Requests this work order acts on (ids or references). */
     reason: z.array(fbRef).max(50).optional(),
     /** Pin another version of the spec (default: its current version). */
     specCommit: z.string().regex(/^[0-9a-f]{4,40}$/).optional(),
     /** Title (default: derived from kind, spec and sections). */
     title: line(300).optional(),
-    /** The implementation plan (markdown; can also be set later with work_order_plan_set). */
-    plan: text(100_000).optional(),
+    /**
+     * The FULL plan, required for implement / update / fix (fastPath fix excepted): steps, files to change, tests (each mapped
+     * to the acceptance criteria it proves) and risks. A markdown string is accepted for review / verify work orders.
+     */
+    plan: z.union([workOrderPlanInputSchema, text(100_000)]).optional(),
     /** Fast-path fix: kind fix with exactly one section; can be claimed without a plan. */
     fastPath: z.boolean().optional(),
     /** Work orders that must be done first (ids or references). */
@@ -251,7 +267,7 @@ export const workOrderNextInputSchema = z
   })
   .strict();
 
-/* ------------------------------------------------------------------ feedback */
+/* ------------------------------------------------------------------ requests (stored as feedback) */
 
 const feedbackTarget = z
   .string()
@@ -259,15 +275,15 @@ const feedbackTarget = z
   .min(1)
   .max(400)
   .refine((t) => !!parseRef(t)?.sectionId || ['verifications', 'findings'].includes(parseNodeUri(t)?.kind ?? ''), 'targets are section references (#L ranges allowed; audit items too), mandate://verifications/<id> or audit findings');
-export const feedbackCreateInputSchema = z
+export const requestCreateInputSchema = z
   .object({
-    /** Sections it concerns. Optional for improvement / bug at intake (before spec_match): link them later (feedback_update) or let the writes that address it link it. */
+    /** Sections it concerns. Optional for improvement / bug at intake (before spec_match): link them later (request_update) or let the writes that address it link it. */
     targets: z.array(feedbackTarget).max(20).default([]),
     kind: z.enum(FEEDBACK_KINDS),
     body: text(20_000).min(1),
     quote: text(5000).optional(),
     relatedTo: z.array(relatedRef).max(20).optional(),
-    /** The audit finding this feedback comes from (spec_wrong / ambiguous): mandate://audits/<id>/findings/<fid>. */
+    /** The audit finding this request comes from (spec_wrong / ambiguous): mandate://audits/<id>/findings/<fid>. */
     fromFinding: z
       .string()
       .trim()
@@ -280,23 +296,11 @@ export const feedbackCreateInputSchema = z
   })
   .strict()
   .refine((v) => v.targets.length > 0 || v.kind === 'improvement' || v.kind === 'bug', { path: ['targets'], message: 'targets are required for this kind (only improvement / bug requests may be filed without a target at intake)' });
-export const feedbackUpdateInputSchema = z
+export const requestUpdateInputSchema = z
   .object({ ref: fbRef, body: text(20_000).min(1).optional(), targets: z.array(feedbackTarget).min(1).max(20).optional(), relatedTo: z.array(relatedRef).max(20).optional() })
   .strict()
   .refine((v) => Object.keys(v).some((k) => k !== 'ref'), 'nothing to change: pass body, targets or relatedTo');
-export const feedbackAcceptInputSchema = z
-  .object({
-    ref: fbRef,
-    /** Self-approval: this acceptance may approve your own waivers / exemptions / criteria removals (sole active user or admin only). */
-    override: z.boolean().optional(),
-    /** Required with override: why self-approval is acceptable (recorded as an Approval-Override trailer). */
-    overrideReason: line(500).optional(),
-  })
-  .strict()
-  .refine((v) => !v.override || !!v.overrideReason?.trim(), { message: 'override needs overrideReason', path: ['overrideReason'] });
-/** A second person confirms a self-approval override (`approval_override_confirm`, web UI). */
-export const approvalOverrideConfirmInputSchema = z.object({ ref: fbRef, note: line(500) }).strict();
-export const feedbackCloseInputSchema = z
+export const requestCloseInputSchema = z
   .object({ ref: fbRef, resolution: z.enum(FEEDBACK_RESOLUTIONS), resolutionNote: text(5000).optional(), duplicateOf: fbRef.optional() })
   .strict();
 
@@ -315,8 +319,10 @@ export const verificationRecordInputSchema = z
     result: z.enum(VERIFICATION_RESULTS),
     method: z.enum(VERIFICATION_METHODS),
     evidence: z.object({ test: line(1000).optional(), ci: line(2000).optional(), note: text(5000).optional() }).strict().optional(),
-    /** Where in the code the criterion / rule was checked (`repo:path#Lx-Ly`): feeds "where standards are used". */
+    /** Where in the code the criterion / rule was checked (`repo:path#Lx-Ly`): feeds "where standards are used". For a spec criterion: the test (file / lines). */
     codeRefs: z.array(auditCodeRefSchema).max(30).optional(),
+    /** The work order that delivered the test (default: your open work order on the spec that covers this criterion). */
+    workOrder: woRef.optional(),
   })
   .strict();
 
@@ -331,3 +337,8 @@ export const specDiffSinceImplementedInputSchema = z
   .refine((v) => (v.workOrder ? 1 : 0) + (v.sections ? 1 : 0) === 1, 'give exactly one of workOrder or sections');
 
 export { docKinds as WRITABLE_DOC_KINDS };
+
+/** Old (feedback) names of the request schemas. */
+export const feedbackCreateInputSchema = requestCreateInputSchema;
+export const feedbackUpdateInputSchema = requestUpdateInputSchema;
+export const feedbackCloseInputSchema = requestCloseInputSchema;

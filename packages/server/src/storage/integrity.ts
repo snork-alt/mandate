@@ -129,10 +129,6 @@ export function checkIntegrity(
       }
     }
   }
-  // Approval overrides (self-approval by the sole active user / an admin) stay visible until a second person confirms them.
-  for (const f of m.feedback ?? []) {
-    if (f.approvalOverride && !f.approvalOverride.confirmedAt) out.push(issue('self_approved_override', `mandate://feedback/${f.id}`, `${f.id} was accepted with an approval override by ${f.approvalOverride.by}: ${f.approvalOverride.reason}`));
-  }
   for (const [key, orders] of openChangingOrders(m.workOrders ?? [])) {
     if (orders.length > 1) out.push(issue('duplicate_open_work_order', `mandate://specs/${key.split('/')[0]}/sections/${key.split('/')[1]}`, `${orders.length} open implement/update work orders: ${orders.map((o) => o.id).join(', ')}`));
   }
@@ -149,7 +145,7 @@ export function checkIntegrity(
   for (const r of cov.unowned) out.push(issue('unowned_code_ref', r.uri, `${r.repo}:${r.path} is not owned by any component`));
   for (const g of cov.emptyGlobs) out.push(issue('owns_matches_nothing', `mandate://components/${g.component}`, `${g.component} owns ${g.repo}:${g.glob}, which matches no referenced code`));
   for (const [id, gaps] of componentGaps(m)) for (const g of gaps) out.push(issue(g.rule, `mandate://components/${id}`, g.message, g.hint));
-  for (const [id, warnings] of opts.feedbackWarnings ?? []) for (const w of warnings) if (w.startsWith('Tampered')) out.push(issue('feedback_tampered', `mandate://feedback/${id}`, w));
+  for (const [id, warnings] of opts.feedbackWarnings ?? []) for (const w of warnings) if (w.startsWith('Tampered')) out.push(issue('feedback_tampered', `mandate://requests/${id}`, w));
   return out;
 }
 

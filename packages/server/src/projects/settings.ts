@@ -1,8 +1,8 @@
 /**
  * The Mandate flow for coding agents, in two layers:
  * - Project POLICY (admin; `~/.mandate/projects.json` per project): `flowPolicy` required | optional | off (default
- *   optional) and `approvalPolicy` required | optional (default optional). Legacy `flow { enabled, approval }` entries
- *   are migrated (enabled false → off; otherwise optional).
+ *   optional). Legacy `approvalPolicy` / `flow { enabled, approval }` entries are parsed and ignored (requests need no
+ *   approval); legacy `flow.enabled: false` migrates to off.
  * - Per-CLIENT preference (server-state database, table `flow_clients`, both SQLite and Postgres): keyed by
  *   (project, client id). Client id: personal tokens / MCP OAuth = the user + normalised MCP client name; service-account
  *   keys (and older shared keys) = MCP client name + key name. Every client that calls the project is recorded (last seen, version), so it can be listed.
@@ -15,6 +15,7 @@ import type { ProjectsStore } from './store.js';
 import { codeRepoProblems, codeRepoSchema, type CodeRepo } from '@mandate/shared';
 
 export type FlowPolicy = 'required' | 'optional' | 'off';
+/** @deprecated Requests need no approval: stored values are parsed and ignored. */
 export type ApprovalPolicy = 'required' | 'optional';
 export type OnOff = 'on' | 'off';
 /** Where the client's agent asks the user: through Mandate (`question_ask`, default) or in chat. */
@@ -23,17 +24,14 @@ export const QUESTIONS_VIA = ['mandate', 'chat'] as const;
 /** A preference change (each field optional). */
 export interface PrefPatch {
   flow?: OnOff;
-  approval?: OnOff;
   questions?: QuestionsVia;
 }
 export const FLOW_POLICIES = ['required', 'optional', 'off'] as const;
-export const APPROVAL_POLICIES = ['required', 'optional'] as const;
 
 export interface Policy {
   flowPolicy: FlowPolicy;
-  approvalPolicy: ApprovalPolicy;
 }
-export const DEFAULT_POLICY: Policy = { flowPolicy: 'optional', approvalPolicy: 'optional' };
+export const DEFAULT_POLICY: Policy = { flowPolicy: 'optional' };
 
 /** A calling coding agent: who (the user) and which client (normalised MCP clientInfo name). */
 export interface ClientIdentity {
@@ -61,7 +59,6 @@ export interface ClientRecord extends ClientIdentity {
 
 export interface Effective {
   flow: OnOff;
-  approval: OnOff;
   questions: QuestionsVia;
   /** Why (policy or preference), one sentence. */
   reason: string;
@@ -108,7 +105,7 @@ export function clientIdentity(ctx: Pick<ToolContext, 'principal' | 'clientName'
 
 /* ------------------------------------------------------------------ effective setting */
 
-export function effective(policy: Policy, pref: (Pick<ClientRecord, 'flow' | 'approval'> & { questions?: QuestionsVia | null }) | undefined): Effective {
+export function effective(policy: Policy, pref: (Pick<ClientRecord, 'flow'> & { questions?: QuestionsVia | null }) | undefined): Effective {
   const reasons: string[] = [];
   let flow: OnOff;
   if (policy.flowPolicy === 'required') {
@@ -121,18 +118,9 @@ export function effective(policy: Policy, pref: (Pick<ClientRecord, 'flow' | 'ap
     flow = pref?.flow ?? 'on';
     reasons.push(pref?.flow ? `this client's preference is flow ${pref.flow}` : 'no preference set for this client (default: on)');
   }
-  let approval: OnOff;
-  if (policy.approvalPolicy === 'required') {
-    approval = 'on';
-    reasons.push('approval is required by the project policy');
-  } else {
-    // Default off: a request goes straight through the flow; the checkpoint is opt-in (approval on) or policy-required.
-    approval = pref?.approval ?? 'off';
-    if (pref?.approval) reasons.push(`approval ${pref.approval} by preference`);
-  }
   const questions = pref?.questions ?? 'mandate';
   if (pref?.questions) reasons.push(`questions via ${pref.questions} by preference`);
-  return { flow, approval, questions, reason: `${reasons.join('; ')}.`, flowByPolicy: policy.flowPolicy !== 'optional' };
+  return { flow, questions, reason: `${reasons.join('; ')}.`, flowByPolicy: policy.flowPolicy !== 'optional' };
 }
 
 /**
@@ -142,10 +130,9 @@ export function effective(policy: Policy, pref: (Pick<ClientRecord, 'flow' | 'ap
 export function flowInstructions(eff: Effective): string {
   const save = 'Save these instructions to your memory now, replacing any earlier Mandate-flow note.';
   if (eff.flow === 'off')
-    return `Mandate flow is OFF for this coding agent (${eff.reason.replace(/\.$/, '')}). From now on, until the setting changes: work directly in the code; use Mandate only to read context (search, get, list, lineage, graph, ask); do not create feedback, specs, standards, components or work orders and do not call any Mandate write tool (they are refused with flow_off). Plan and ask questions in chat. ${eff.flowByPolicy ? 'Only a Mandate admin can change this (project policy, Settings → Agent flow).' : 'The user turns it back on with /mandate-flow on.'} ${save}`;
-  const approval = eff.approval === 'on' ? 'approval checkpoint ON: show the plan with question_ask purpose approval and wait for the go before editing specs' : 'approval checkpoint OFF: do not wait for a go (standard writes still need the user\'s confirmation)';
+    return `Mandate flow is OFF for this coding agent (${eff.reason.replace(/\.$/, '')}). From now on, until the setting changes: work directly in the code; use Mandate only to read context (search, get, list, lineage, graph, ask); do not create requests, specs, standards, components or work orders and do not call any Mandate write tool (they are refused with flow_off). Plan and ask questions in chat. ${eff.flowByPolicy ? 'Only a Mandate admin can change this (project policy, Settings → Agent flow).' : 'The user turns it back on with /mandate-flow on.'} ${save}`;
   const questions = eff.questions === 'chat' ? 'ask the user in chat, not with question_ask' : 'ask the user with question_ask, not your harness\'s question tool';
-  return `Mandate flow is ON for this coding agent. From now on, until the setting changes: every feature, change or fix goes through Mandate. Call project_info at the start of each task; record the request (feedback_create) → spec_match → ${approval} → update specs → work_order_create → deliver through the work order (claim, section done, verification_record, work_order_complete). Questions: ${questions}. ${save}`;
+  return `Mandate flow is ON for this coding agent. From now on, until the setting changes: every instruction the user gives is a request and goes through Mandate (no approval needed). Call project_info at the start of each task; request_create → spec_match → update specs / standards (addresses: the request) → work_order_create with the FULL plan (steps, files, tests mapped to criteria, risks) → deliver through the work order (claim, work on, section_done with codeRefs, verification_record per criterion with its test, work_order_complete). Questions: ${questions}; keep working on what does not depend on the answer. ${save}`;
 }
 
 /** Message of the `flow_off` refusal (every Mandate write tool while the flow is off for the calling agent). */
@@ -160,7 +147,6 @@ export const FLOW_OFF_ALLOWED = new Set(['flow_set', 'project_flow_set']);
 export function refusal(policy: Policy, patch: PrefPatch): { code: 'policy_required' | 'policy_off'; message: string } | null {
   if (patch.flow === 'off' && policy.flowPolicy === 'required') return { code: 'policy_required', message: 'the project policy requires the Mandate flow; it cannot be turned off for one client (ask a Mandate admin to change Settings → Agent flow)' };
   if (patch.flow === 'on' && policy.flowPolicy === 'off') return { code: 'policy_off', message: 'the project policy turns the Mandate flow off (read-only context); it cannot be turned on for one client' };
-  if (patch.approval === 'off' && policy.approvalPolicy === 'required') return { code: 'policy_required', message: 'the project policy requires the approval checkpoint; it cannot be turned off for one client' };
   return null;
 }
 
@@ -173,8 +159,7 @@ export function policyOf(e: Entry | undefined): Policy {
   if (!e) return { ...DEFAULT_POLICY };
   return {
     flowPolicy: e.flowPolicy ?? (e.flow?.enabled === false ? 'off' : 'optional'),
-    approvalPolicy: e.approvalPolicy ?? 'optional',
-  };
+      };
 }
 
 /** Rewrite legacy `flow` fields as policies (idempotent). Returns the migrated project ids. */
@@ -186,7 +171,7 @@ export async function migrateFlowPolicies(store: ProjectsStore): Promise<string[
       if (!p.flow) continue;
       const pol = policyOf(p);
       p.flowPolicy = pol.flowPolicy;
-      p.approvalPolicy = pol.approvalPolicy;
+      delete p.approvalPolicy;
       delete p.flow;
       ids.push(p.id);
     }
@@ -296,7 +281,7 @@ export class DbClientStore implements ClientStore {
     const d = this.db.dialect;
     await this.db.run(
       d.upsert('flow_clients', ['project', 'client_id', 'label', 'client', 'user_login', 'user_lc', 'key_name', 'version', 'flow', 'approval', 'questions', 'updated_at', 'updated_via', 'last_seen_at'], ['project', 'client_id'], ['flow', 'approval', 'questions', 'updated_at', 'updated_via']),
-      [project, c.id, cur?.label ?? c.label, cur?.client ?? c.client, cur?.user ?? c.user ?? null, (cur?.user ?? c.user)?.toLowerCase() ?? null, cur?.keyName ?? c.keyName ?? null, cur?.version ?? c.version ?? null, patch.flow ?? cur?.flow ?? null, patch.approval ?? cur?.approval ?? null, patch.questions ?? cur?.questions ?? null, now, via, cur ? Date.parse(cur.lastSeenAt) : now],
+      [project, c.id, cur?.label ?? c.label, cur?.client ?? c.client, cur?.user ?? c.user ?? null, (cur?.user ?? c.user)?.toLowerCase() ?? null, cur?.keyName ?? c.keyName ?? null, cur?.version ?? c.version ?? null, patch.flow ?? cur?.flow ?? null, cur?.approval ?? null, patch.questions ?? cur?.questions ?? null, now, via, cur ? Date.parse(cur.lastSeenAt) : now],
     );
     return (await this.get(project, c.id))!;
   }
@@ -324,7 +309,7 @@ export class MemoryClientStore implements ClientStore {
   }
   async set(project: string, c: ClientIdentity, patch: PrefPatch, via: 'command' | 'ui') {
     const cur = this.rows.get(this.key(project, c.id));
-    const next: ClientRecord = { ...(cur ?? { ...c, project, lastSeenAt: new Date().toISOString(), flow: null, approval: null, questions: null, updatedAt: null, updatedVia: null }), flow: patch.flow ?? cur?.flow ?? null, approval: patch.approval ?? cur?.approval ?? null, questions: patch.questions ?? cur?.questions ?? null, updatedAt: new Date().toISOString(), updatedVia: via };
+    const next: ClientRecord = { ...(cur ?? { ...c, project, lastSeenAt: new Date().toISOString(), flow: null, approval: null, questions: null, updatedAt: null, updatedVia: null }), flow: patch.flow ?? cur?.flow ?? null, approval: cur?.approval ?? null, questions: patch.questions ?? cur?.questions ?? null, updatedAt: new Date().toISOString(), updatedVia: via };
     this.rows.set(this.key(project, c.id), next);
     return { ...next };
   }
@@ -384,9 +369,9 @@ export function projectSettings(store: ProjectsStore, id: string, clients: Clien
       store.mutate((reg) => {
         const e = reg.projects.find((p) => p.id === id) as Entry | undefined;
         if (!e) throw new Error(`project '${id}' is not in the project registry (${store.file})`);
-        const next = { ...policyOf(e), ...(patch.flowPolicy ? { flowPolicy: patch.flowPolicy } : {}), ...(patch.approvalPolicy ? { approvalPolicy: patch.approvalPolicy } : {}) };
+        const next = { ...policyOf(e), ...(patch.flowPolicy ? { flowPolicy: patch.flowPolicy } : {})  };
         e.flowPolicy = next.flowPolicy;
-        e.approvalPolicy = next.approvalPolicy;
+        delete e.approvalPolicy;
         delete e.flow;
         return next;
       }),

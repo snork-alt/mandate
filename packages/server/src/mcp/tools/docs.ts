@@ -1,4 +1,4 @@
-/** Document READ tools (specs, standards, sections, work orders, feedback, verifications, history, diff). */
+/** Document READ tools (specs, standards, sections, work orders, requests, verifications, history, diff). */
 import {
   diffGetInputSchema,
   feedbackGetInputSchema,
@@ -106,22 +106,25 @@ Example: {"ref":"q-0003","depth":2}`,
     run: (a, ctx) => ctx.reads.workOrderGet(a),
   }),
   defineTool({
-    name: 'feedback_list',
-    title: 'List feedback',
+    name: 'request_list',
+    title: 'List requests',
     kind: 'read',
-    description: `List feedback items with derived changes (Feedback-trailer commits) and closedAt. Filters: status (${FEEDBACK_STATUSES.join('|')}), kind (${FEEDBACK_KINDS.join('|')}), target (doc or section ref). Paginated.
+    description: `List requests with derived changes (Request-trailer commits) and closedAt. Filters: status (${FEEDBACK_STATUSES.join('|')}), kind (${FEEDBACK_KINDS.join('|')}), target (doc or section ref). Paginated.
 Example: {"status":["open"],"target":"mandate://specs/login-sso"}`,
     input: feedbackListInputSchema,
     run: (a, ctx) => ctx.reads.feedbackList(a),
   }),
   defineTool({
-    name: 'feedback_get',
-    title: 'Get feedback',
+    name: 'request_get',
+    title: 'Get a request',
     kind: 'read',
-    description: `Get one feedback item with resolved targets (section text, lines) and derived changes.
+    description: `Get one request with resolved targets (section text, lines) and derived changes.
 Example: {"ref":"fb-0004"}`,
     input: feedbackGetInputSchema,
-    run: (a, ctx) => ctx.reads.feedbackGet(a),
+    run: async (a, ctx) => {
+      const { feedback, targets } = (await ctx.reads.feedbackGet(a)) as { feedback: unknown; targets: unknown };
+      return { request: feedback, targets };
+    },
   }),
   defineTool({
     name: 'verification_list',
@@ -137,7 +140,7 @@ Example: {"spec":"login-sso","state":["failing","stale"]}`,
     name: 'history_get',
     title: 'Get history',
     kind: 'read',
-    description: `Commit history of a spec, standard, work order or feedback item, newest first (subject, author, trailers, change kinds). A section ref returns only commits changing it, with action and what changed.
+    description: `Commit history of a spec, standard, work order or request, newest first (subject, author, trailers, change kinds). A section ref returns only commits changing it, with action and what changed.
 Example: {"ref":"mandate://specs/login-sso","limit":20}`,
     input: historyGetInputSchema,
     run: (a, ctx) => ctx.reads.historyGet(a),
@@ -152,3 +155,8 @@ Example: {"ref":"mandate://specs/login-sso","from":"3f2a9c1"}`,
     run: (a, ctx) => ctx.reads.diffGet(a),
   }),
 ];
+
+/** The old `feedback_get` / `feedback_list` names: hidden, callable aliases of the request tools. */
+export const legacyRequestReadTools = docTools
+  .filter((t) => t.name === 'request_get' || t.name === 'request_list')
+  .map((t) => ({ ...t, name: t.name.replace('request_', 'feedback_') })) as typeof docTools;

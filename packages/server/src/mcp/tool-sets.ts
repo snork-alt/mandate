@@ -14,7 +14,7 @@ import type { ToolErrorBody } from './errors.js';
 
 /* ---------------------------------------------------------------- object types (`of`) */
 
-export const OF_TYPES = ['specs', 'standards', 'components', 'work-orders', 'feedback', 'audits', 'questions', 'verifications', 'comments', 'decisions'] as const;
+export const OF_TYPES = ['specs', 'standards', 'components', 'work-orders', 'requests', 'audits', 'questions', 'verifications', 'comments', 'decisions'] as const;
 export type OfType = (typeof OF_TYPES)[number];
 
 /** Singular / snake_case spellings accepted for `of`. */
@@ -27,6 +27,9 @@ const OF_ALIASES: Record<string, OfType> = {
   work_orders: 'work-orders',
   workorder: 'work-orders',
   audit: 'audits',
+  request: 'requests',
+  // The old name of requests.
+  feedback: 'requests',
   question: 'questions',
   verification: 'verifications',
   comment: 'comments',
@@ -65,10 +68,10 @@ export const MERGED: MergedSpec[] = [
     title: 'Get one item',
     kind: 'read',
     refField: 'ref',
-    description: `Get one item by ref: spec, standard, component, work order, feedback, audit or question, or one SECTION of a spec / standard / component / audit / work order (a .../sections/<id> ref, or doc + section). Bare ids need of.
-Documents: frontmatter, sections (bodies, lines, metadata) and, at HEAD, verification, section links and implementation state; metadataOnly: outline only; sections: only these ids; at: a commit. Work orders: covered sections at specCommit (headChanged / blocked) and the dependency tree (depth). Feedback: resolved targets and derived changes. Sections: body, type, metadata, lines; #Lx-Ly in the ref returns that excerpt; includeImage: the picture of an image section.
+    description: `Get one item by ref: spec, standard, component, work order, request, audit or question, or one SECTION of a spec / standard / component / audit / work order (a .../sections/<id> ref, or doc + section). Bare ids need of.
+Documents: frontmatter, sections (bodies, lines, metadata) and, at HEAD, verification, section links and implementation state; metadataOnly: outline only; sections: only these ids; at: a commit. Work orders: covered sections at specCommit (headChanged / blocked) and the dependency tree (depth). Requests: resolved targets and derived changes. Sections: body, type, metadata, lines; #Lx-Ly in the ref returns that excerpt; includeImage: the picture of an image section.
 Example: {"ref":"mandate://specs/login-sso","metadataOnly":true}`,
-    doc: { specs: 'spec_get', standards: 'standard_get', components: 'component_get', 'work-orders': 'work_order_get', feedback: 'feedback_get', audits: 'audit_get', questions: 'question_get' },
+    doc: { specs: 'spec_get', standards: 'standard_get', components: 'component_get', 'work-orders': 'work_order_get', requests: 'request_get', audits: 'audit_get', questions: 'question_get' },
     section: { specs: 'spec_section_get', standards: 'standard_section_get', components: 'component_section_get', audits: 'audit_section_get', 'work-orders': 'work_order_section_get' },
     rewrite: {
       audit_get: ({ ref, ...rest }) => ({ ...rest, auditId: ref }),
@@ -81,9 +84,9 @@ Example: {"ref":"mandate://specs/login-sso","metadataOnly":true}`,
     kind: 'read',
     refField: null,
     description: `List items of one type (of), with that type's filters; paginated (limit, cursor).
-specs: status, category, repo, tags, standard, blocked, verification, audit (never|stale|open_findings|fail|warn|pass), maturity, q; verification rollup, blocked sections, lastAudit, maturity. standards: tags, q. components: kind, status, repo, tags, q. work-orders: status, kind, spec. feedback: status, kind, target (doc or section ref). audits: target, status, stale. questions: status, mine, context, since. verifications: criterion, spec, state (verified|failing|stale|unverified|waived), result. comments: target (work order or section, required), includeResolved. decisions: open human decisions (kinds).
+specs: status, category, repo, tags, standard, blocked, verification, audit (never|stale|open_findings|fail|warn|pass), maturity, q; verification rollup, blocked sections, lastAudit, maturity. standards: tags, q. components: kind, status, repo, tags, q. work-orders: status, kind, spec. requests: status, kind, target (doc or section ref). audits: target, status, stale. questions: status, mine, context, since. verifications: criterion, spec, state (verified|failing|stale|unverified|waived), result. comments: target (work order or section, required), includeResolved. decisions: open human decisions (kinds).
 Example: {"of":"work-orders","status":["pending"],"spec":"login-sso"}`,
-    doc: { specs: 'spec_list', standards: 'standard_list', components: 'component_list', 'work-orders': 'work_order_list', feedback: 'feedback_list', audits: 'audit_list', questions: 'questions_list', verifications: 'verification_list', comments: 'comments_list', decisions: 'decisions_list' },
+    doc: { specs: 'spec_list', standards: 'standard_list', components: 'component_list', 'work-orders': 'work_order_list', requests: 'request_list', audits: 'audit_list', questions: 'questions_list', verifications: 'verification_list', comments: 'comments_list', decisions: 'decisions_list' },
   },
   {
     name: 'create',
@@ -152,7 +155,7 @@ Sections: one concept each, a one-sentence summary, under ~600 tokens (warnings 
     title: 'Link a section',
     kind: 'write',
     refField: 'ref',
-    description: `Add a typed link from a section (ref). Spec section -> spec section: depends_on, extends, relates_to, conflicts_with, supersedes; -> standard or standard section: follows, deviates_from (note required; a waiver needs feedback: an accepted item filed by someone else), relates_to; -> component or component section: affects. Component section -> component (section): depends_on (an architecture edge); -> standard (section): follows, deviates_from (note required). Standard section -> standard section: extends, relates_to, conflicts_with, supersedes.
+    description: `Add a typed link from a section (ref). Spec section -> spec section: depends_on, extends, relates_to, conflicts_with, supersedes; -> standard or standard section: follows, deviates_from (note required; a waiver needs the user's approval: cite an answered question_ask purpose approval as cause), relates_to; -> component or component section: affects. Component section -> component (section): depends_on (an architecture edge); -> standard (section): follows, deviates_from (note required). Standard section -> standard section: extends, relates_to, conflicts_with, supersedes.
 One link per target; cycles and superseded / archived targets are rejected (the hint names the successor).`,
     doc: {},
     section: { specs: 'spec_section_link_add', standards: 'standard_section_link_add', components: 'component_section_link_add' },
@@ -162,16 +165,22 @@ One link per target; cycles and superseded / archived targets are rejected (the 
     title: 'Unlink a section',
     kind: 'write',
     refField: 'ref',
-    description: `Remove a link from a section (to, optionally rel). Unfollowing a standard from a done or claimed spec needs addresses: [accepted feedback].`,
+    description: `Remove a link from a section (to, optionally rel). Unfollowing a standard from a done or claimed spec needs the user's approval (cite an answered question_ask purpose approval as cause).`,
     doc: {},
     section: { specs: 'spec_section_link_remove', standards: 'standard_section_link_remove', components: 'component_section_link_remove' },
   },
 ];
 
 /** Old per-type name -> the merged tool that serves it (hidden aliases: callable, never listed to agents). */
-export const ALIASES: Record<string, string> = Object.fromEntries(
-  MERGED.flatMap((m) => [...Object.values(m.doc), ...Object.values(m.section ?? {})].map((old) => [old, m.name])),
-);
+export const ALIASES: Record<string, string> = {
+  ...Object.fromEntries(MERGED.flatMap((m) => [...Object.values(m.doc), ...Object.values(m.section ?? {})].map((old) => [old, m.name]))),
+  // The old feedback names (renamed to requests): hidden, callable.
+  feedback_get: 'get',
+  feedback_list: 'list',
+  feedback_create: 'request_create',
+  feedback_update: 'request_update',
+  feedback_close: 'request_close',
+};
 
 /* ---------------------------------------------------------------- routing */
 
@@ -278,29 +287,29 @@ export const DEFAULT_SETS: readonly ToolSetName[] = ['core'];
 
 /** Set membership (a tool may be in several sets). Every tool listed to agents is in at least one. */
 export const TOOL_SETS: Record<ToolSetName, readonly string[]> = {
-  /** Implementing a work order (always on). */
+  /** The whole request flow (always on): record the request, match, edit specs / standards, create work orders, implement, verify. */
   core: [
     'project_info', 'instructions_get', 'lifecycle_get', 'flow_set', 'code_context_set', 'tools_enable',
     'search', 'get', 'list',
+    'request_create', 'request_update', 'request_close', 'spec_match',
+    'create', 'update_meta', 'archive', 'section_insert', 'section_move', 'section_link_add', 'section_link_remove',
+    'work_order_create', 'work_order_cancel',
     'work_order_next', 'work_order_claim', 'work_order_heartbeat', 'work_order_plan_set', 'work_order_touch', 'work_order_git_update', 'work_order_section_done', 'work_order_complete', 'work_order_fail', 'work_order_release',
-    'verification_record', 'feedback_create', 'question_ask', 'comment_add', 'comment_resolve',
+    'verification_record', 'question_ask', 'question_cancel', 'comment_add', 'comment_resolve',
     'status_set', 'section_update', 'rules_for_code', 'news_list', 'news_ack',
-  ],
-  /** A feature or change request: match, approve, edit specs / standards / components, create work orders. */
-  intake: [
-    'spec_match', 'create', 'update_meta', 'archive', 'section_insert', 'section_move', 'section_link_add', 'section_link_remove',
-    'feedback_update', 'feedback_accept', 'feedback_close', 'work_order_create', 'work_order_cancel', 'question_cancel',
     'upload_url_create', 'architecture_get', 'code_owner', 'standard_usage', 'graph_neighbors',
   ],
+  /** Legacy set name: its tools moved to core (listed by default). */
+  intake: [],
   /** /mandate-bootstrap: reverse-engineer a codebase into components, standards and specs. */
   bootstrap: [
     'spec_match', 'create', 'update_meta', 'archive', 'section_insert', 'section_move', 'section_link_add', 'section_link_remove',
-    'question_cancel', 'upload_url_create', 'architecture_get', 'code_owner', 'standard_usage', 'feedback_update',
+    'upload_url_create', 'architecture_get', 'code_owner', 'standard_usage', 'request_update',
   ],
   /** Audits, reviews and human decisions. */
   review: [
     'audit_plan', 'audit_start', 'audit_record_item', 'audit_complete', 'audit_abandon', 'audit_findings_to_work_orders', 'audit_recheck', 'audit_finding_relink', 'audit_findings', 'audit_overview',
-    'comment_reopen', 'rule_check_plan', 'spec_diff_since_implemented', 'feedback_accept', 'feedback_close', 'feedback_update', 'approval_override_confirm', 'integrity_snooze', 'question_answer', 'work_order_touch_from_commits', 'question_cancel',
+    'comment_reopen', 'rule_check_plan', 'spec_diff_since_implemented', 'request_close', 'request_update', 'integrity_snooze', 'question_answer', 'work_order_touch_from_commits',
   ],
   /** Why and impact: the knowledge graph, lineage, history and code / text search. */
   lineage: [
@@ -341,7 +350,7 @@ export const toolsEnableTool = defineTool({
   name: 'tools_enable',
   title: 'Enable tool sets',
   kind: 'ops',
-  description: `List more Mandate tools in this session (core is always on): intake (feature / change requests: spec_match, create, section_insert, links, feedback_accept / feedback_close, work_order_create), bootstrap (/mandate-bootstrap), review (audits, comment_reopen, decisions), lineage (graph_*, lineage, history, diffs, code and text search), admin (activity, ask, index, git sync); all = every set. Notifies the client that the tool list changed; any tool can still be called by name. A client that does not refresh its list: add ?tools=<sets> to the MCP URL.
+  description: `List more Mandate tools in this session (core, the whole request flow, is always on): bootstrap (/mandate-bootstrap), review (audits, comment_reopen, decisions), intake (legacy: already in core), lineage (graph_*, lineage, history, diffs, code and text search), admin (activity, ask, index, git sync); all = every set. Notifies the client that the tool list changed; any tool can still be called by name. A client that does not refresh its list: add ?tools=<sets> to the MCP URL.
 Example: {"sets":["intake"]}`,
   input: z.object({ sets: z.array(z.enum([...SET_NAMES, 'all'] as [string, ...string[]])).min(1).max(SET_NAMES.length + 1) }).strict(),
   run: async (a, ctx) => {

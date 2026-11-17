@@ -33,6 +33,8 @@ import {
   type TouchedFile,
   type TouchedInput,
   type UpdateWorkOrderInput,
+  type VerificationRecord,
+  type WorkOrderPlanInput,
   type WorkOrder,
   type WorkOrderDependenciesInput,
   type CodeLink,
@@ -48,6 +50,7 @@ import type { HistoryService } from './history.js';
 import { newId } from './ids.js';
 import type { MarkdownDirRepository } from './MarkdownDirRepository.js';
 import { openChangingOrders } from './model.js';
+import { applyCodeToSection, checkPlanTests, coveredCriteria, renderPlan } from './work-order-plan.js';
 import type { Mutex } from './Mutex.js';
 import {
   defaultTitle,
@@ -173,6 +176,10 @@ export class WorkOrderService {
   lock?: Mutex;
   /** Ids of the recorded verification results (wo-section `verifications` validation; set by createStorage). */
   verificationIds?: () => Promise<string[]>;
+  /** The recorded verification results (criteria proof at completion; set by createStorage). */
+  verificationRecords?: () => Promise<VerificationRecord[]>;
+  /** Called after a work order completed (the requests it acted on may close; set by createStorage). */
+  onCompleted?: (wo: WorkOrder, meta: CommitMeta) => Promise<void>;
 
   private locked<T>(fn: () => Promise<T>): Promise<T> {
     return this.lock ? this.lock.run(fn) : fn();
@@ -328,7 +335,7 @@ export class WorkOrderService {
   }
 
   async create(
-    input: CreateWorkOrderInput & { status: WorkOrder['status']; title?: string; plan?: string; fastPath?: boolean; dependencies?: string[] },
+    input: CreateWorkOrderInput & { status: WorkOrder['status']; title?: string; plan?: string | WorkOrderPlanInput; fastPath?: boolean; dependencies?: string[] },
     meta: CommitMeta = {},
   ): Promise<WorkOrder> {
     const head = (await this.history.meta(this.specs.pathOf(input.spec)).catch(() => null))?.lastCommit;
@@ -338,6 +345,16 @@ export class WorkOrderService {
     const titleOf = (sid: string) => at?.sections.find((s) => s.id === sid)?.title ?? sid;
     const dup = input.sections.map((s) => s.id).find((id, i, all) => all.indexOf(id) !== i);
     if (dup) throw new ValidationError(`section '${dup}' listed twice`);
+    // A structured plan: rendered to the plan section; its tests must prove every acceptance criterion the work order covers.
+    let planText = typeof input.plan === 'string' ? input.plan : '';
+    let planTests: WorkOrderPlanInput['tests'] | undefined;
+    if (input.plan && typeof input.plan === 'object') {
+      const criteria = coveredCriteria(at, input.sections.map((s) => s.id));
+      const problems = checkPlanTests(input.plan.tests ?? [], criteria);
+      if (problems.length) throw new WorkOrderError('plan_invalid', `plan_invalid: ${problems.join('; ')}`, { kind: 'plan', problems, criteria: criteria.map((c) => c.id) }, 400);
+      planText = renderPlan(input.plan);
+      planTests = input.plan.tests;
+    }
     const now = (meta.date ?? new Date()).toISOString();
     // Sequenced ids (`q-0001`, ...) are allocated by the repository inside the write lock.
     const id = input.id;
@@ -353,12 +370,13 @@ export class WorkOrderService {
       fastPath: input.fastPath || undefined,
       note: input.note,
       dependencies: input.dependencies,
+      planTests: planTests?.length ? planTests : undefined,
       reason: input.reason ?? [],
       findings: input.findings,
       createdBy: input.createdBy,
       createdAt: now,
       updatedAt: now,
-      sections: newWorkOrderSections(input.spec, secs, input.plan ?? ''),
+      sections: newWorkOrderSections(input.spec, secs, planText),
     } as unknown as Record<string, unknown>) as unknown as StoredWorkOrderDoc;
     doc.reason = doc.reason ?? [];
     const created = await this.docs.create(doc as never, { ...meta, message: meta.message ?? `work order: create ${id ?? '{id}'}` });
@@ -545,12 +563,27 @@ export class WorkOrderService {
       if (input.agent !== undefined && !(!current.claim && allSectionsDone(current))) this.requireClaim(current, input.agent);
       const picked = input.sections.map((k) => this.woSection(current, k));
       const specIds = picked.map(targetSection);
-      if (status === 'done' && (current.kind === 'implement' || current.kind === 'update')) {
-        await this.specs.modify(current.spec, (spec) => ({ ...spec, sections: spec.sections.map((s) => (specIds.includes(s.id) ? { ...s, implementedCommit: current.specCommit } : s)) }), {
-          ...meta,
-          message: `spec(${current.spec}): implemented ${specIds.join(', ')} @${current.specCommit.slice(0, 7)}`,
-          trailers: { ...meta.trailers, 'Work-Order': id },
-        });
+      // Implementation <-> work order: the code each wo-section touched goes into its spec section's refs / symbols and the
+      // section records the work order (implementedBy), in the same spec commit as implementedCommit.
+      const codeFor = new Map(picked.map((p) => [targetSection(p), mergeTouched(p.codeRefs ?? [], code)] as const));
+      const recordsCommit = current.kind === 'implement' || current.kind === 'update';
+      if (status === 'done' && (recordsCommit || (current.kind === 'fix' && [...codeFor.values()].some((c) => c.length)))) {
+        await this.specs.modify(
+          current.spec,
+          (spec) => ({
+            ...spec,
+            sections: spec.sections.map((s) => {
+              if (!specIds.includes(s.id) || s.archived) return s;
+              const applied = applyCodeToSection(s, codeFor.get(s.id) ?? []);
+              return { ...s, ...(recordsCommit ? { implementedCommit: current.specCommit } : {}), implementedBy: id, refs: applied.refs, symbols: applied.symbols } as typeof s;
+            }),
+          }),
+          {
+            ...meta,
+            message: `spec(${current.spec}): ${recordsCommit ? 'implemented' : 'fixed'} ${specIds.join(', ')} @${current.specCommit.slice(0, 7)}`,
+            trailers: { ...meta.trailers, 'Work-Order': id },
+          },
+        );
       }
       const finishes = allSectionsDone({ sections: current.sections.map((s) => (picked.some((p) => p.id === s.id) ? ({ ...s, status } as Section) : s)) });
       const d = await this.modify(
@@ -702,6 +735,7 @@ export class WorkOrderService {
           threads: blocking.map((t) => ({ id: t.id, uri: t.uri, target: t.target, author: t.author.agent, body: t.body.slice(0, 300) })),
         });
       }
+      await this.requireProvenCriteria(doc);
       if (open.length) warnings.push(`${open.length} open non-blocking comment thread(s): ${open.map((t) => t.uri).join(', ')}`);
       const pending = doc.sections.filter(isWoSection).filter((s) => (s.status ?? 'pending') === 'pending');
       if (pending.length) {
@@ -727,9 +761,45 @@ export class WorkOrderService {
         { ...meta, ...(doc.claim ? {} : { agent: meta.agent ?? agent }), message: meta.message ?? `work order: complete ${id}${doc.claim ? '' : ` (by ${agent}, no claim held: all sections were done)`}` },
       );
       this.heartbeats.clear(id);
+      try {
+        await this.onCompleted?.(this.project(d), meta);
+      } catch {
+        // closing the requests is a convenience: a failure leaves them open (request_close)
+      }
       if (!(d.touched ?? []).length) warnings.push('no touched code recorded: report the files you changed with work_order_touch');
       return { workOrder: this.project(d), warnings };
     });
+  }
+
+  /**
+   * Criteria <-> tests: every acceptance criterion an implement / update / fix work order covers needs a passing verification
+   * result recorded during the work order (`verification_record`), linked to a test (evidence.test or codeRefs) for `test` criteria.
+   */
+  private async requireProvenCriteria(doc: StoredWorkOrderDoc): Promise<void> {
+    if (!this.verificationRecords || !(doc.kind === 'implement' || doc.kind === 'update' || doc.kind === 'fix')) return;
+    const spec = await this.specs.get(doc.spec).catch(() => null);
+    const targets = doc.sections.filter(isWoSection).filter((s) => s.status !== 'obsolete').map(targetSection);
+    const criteria = coveredCriteria(spec, targets);
+    if (!criteria.length) return;
+    const specUri = buildRef({ kind: 'specs', id: doc.spec });
+    const recs = (await this.verificationRecords()).filter((r) => r.appliedTo === specUri && r.at >= doc.createdAt && r.result !== 'skipped');
+    const missing: { criterion: string; title: string; reason: string }[] = [];
+    for (const c of criteria) {
+      const uri = buildRef({ kind: 'specs', id: doc.spec, sectionId: c.id });
+      const mine = recs.filter((r) => r.criterion === uri);
+      const last = mine.at(-1);
+      const tested = mine.some((r) => r.result === 'pass' && (r.evidence?.test?.trim() || r.codeRefs?.length));
+      if (!last) missing.push({ criterion: uri, title: c.title, reason: 'no passing result recorded' });
+      else if (last.result === 'fail') missing.push({ criterion: uri, title: c.title, reason: 'the latest result is a failure' });
+      else if ((c.method ?? 'test') === 'test' && !tested) missing.push({ criterion: uri, title: c.title, reason: 'the passing result names no test (evidence.test or codeRefs)' });
+    }
+    if (missing.length) {
+      throw new WorkOrderError(
+        'criteria_unproven',
+        `criteria_unproven: work order ${doc.id} cannot complete: ${missing.length} acceptance criteri${missing.length === 1 ? 'on has' : 'a have'} no test proof: ${missing.map((m) => `${m.criterion.replace('mandate://', '')} (${m.reason})`).join('; ')}`,
+        { kind: 'criteria', missing },
+      );
+    }
   }
 
   /** Fail or cancel a work order (closing transitions never validate the pin; the claim is moved to `claims`). */

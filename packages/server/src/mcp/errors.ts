@@ -148,6 +148,6 @@ export function toWriteError(e: unknown, allowedKeys?: string[]): ToolErrorBody 
   } else if (code === 'done_gate') detail = { kind: 'gate', failures: (err.details as unknown[]) ?? [] };
   else if (code === 'section_referenced' || code === 'criteria_shrink') detail = { kind: code, problems: err.details ?? [] };
   else if (code === 'invalid_request' || code === 'invalid_document' || code === 'conflict' || code === 'unknown_section') code = WRITE_CODE_MAP[code]!;
-  const message = msg.replace(/^(invalid_transition|claimed|stale_claim|invalid_links|done_gate|feedback_closed|append_only|archive_only|section_referenced|id_reused|criteria_shrink|integrity_violation): /, '');
+  const message = msg.replace(/^(invalid_transition|claimed|stale_claim|invalid_links|done_gate|feedback_closed|request_closed|append_only|archive_only|section_referenced|id_reused|criteria_shrink|integrity_violation): /, '');
   return { ...base, code, message, ...(detail ? { detail } : {}), hint: base.hint && base.code === code ? base.hint : (ERROR_ACTIONS[code] ?? base.hint) };
 }

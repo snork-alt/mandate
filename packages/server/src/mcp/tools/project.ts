@@ -12,7 +12,7 @@ import { uploadInfo } from '../uploads.js';
 import { checkCodeRepos } from '../code-claims.js';
 import { INSTRUCTION_NAMES, instructionsFor, STUB_VERSION, stubUpdateNotice } from '../stubs.js';
 import { codeContextLabel, codeContextSetInputSchema } from '@mandate/shared';
-import { APPROVAL_POLICIES, QUESTIONS_VIA, type PrefPatch, clientIdentity, DEFAULT_POLICY, effective, FLOW_POLICIES, flowInstructions, flowChangedEvent, refusal, type OnOff, type ProjectSettings } from '../../projects/settings.js';
+import { QUESTIONS_VIA, type PrefPatch, clientIdentity, DEFAULT_POLICY, effective, FLOW_POLICIES, flowInstructions, flowChangedEvent, refusal, type OnOff, type ProjectSettings } from '../../projects/settings.js';
 
 const onOff = z.enum(['on', 'off']);
 
@@ -32,8 +32,8 @@ async function info(ctx: ToolContext, reportedStub?: number) {
   return {
     project: ctx.project ?? null,
     policy,
-    client: { id: c.id, label: c.label, flow: pref?.flow ?? null, approval: pref?.approval ?? null, questions: pref?.questions ?? null },
-    effective: { flow: eff.flow, approval: eff.approval, questions: eff.questions },
+    client: { id: c.id, label: c.label, flow: pref?.flow ?? null, questions: pref?.questions ?? null },
+    effective: { flow: eff.flow, questions: eff.questions },
     reason: eff.reason,
     instructions: flowInstructions(eff),
     ...(upload ? { upload } : {}),
@@ -51,22 +51,22 @@ function stubFields(reported?: number) {
 
 async function setPreference(a: PrefPatch, ctx: ToolContext) {
   const s = settingsOf(ctx);
-  if (a.flow === undefined && a.approval === undefined && a.questions === undefined) throw new ToolError('validation', 'pass flow, approval and/or questions', 'e.g. {"flow":"off"} or {"questions":"chat"}', 'flow');
+  if (a.flow === undefined && a.questions === undefined) throw new ToolError('validation', 'pass flow and/or questions', 'e.g. {"flow":"off"} or {"questions":"chat"}', 'flow');
   const policy = s.policy();
   const no = refusal(policy, a);
-  if (no) throw new ToolError(no.code, no.message, 'the project policy is set by a Mandate admin in Settings → Agent flow', a.flow !== undefined ? 'flow' : 'approval');
+  if (no) throw new ToolError(no.code, no.message, 'the project policy is set by a Mandate admin in Settings → Agent flow', 'flow');
   const c = clientIdentity(ctx);
   const before = await s.clients.get(s.project, c.id);
   const rec = await s.clients.set(s.project, c, a, 'command');
-  const fields = (['flow', 'approval', 'questions'] as const).filter((k) => a[k] && (before?.[k] ?? (k === 'questions' ? 'mandate' : k === 'approval' ? 'off' : 'on')) !== a[k]).map((k) => `${k} ${k === 'questions' ? `via ${a[k]}` : a[k]} for ${c.label}`);
+  const fields = (['flow', 'questions'] as const).filter((k) => a[k] && (before?.[k] ?? (k === 'questions' ? 'mandate' : 'on')) !== a[k]).map((k) => `${k} ${k === 'questions' ? `via ${a[k]}` : a[k]} for ${c.label}`);
   const user = ctx.principal?.kind === 'user' ? ctx.principal.login : undefined;
   const e = flowChangedEvent(s.project, fields, { agent: ctx.commit?.agent ?? c.client, ...(user ? { user } : {}), ...(ctx.principal?.kind === 'key' ? { source: ctx.principal.keyName } : {}) }, (await ctx.storage.git.head().catch(() => null)) ?? '');
   if (e) ctx.activity?.emit(e);
   const eff = effective(policy, rec);
-  return { policy, client: { id: c.id, label: c.label, flow: rec.flow, approval: rec.approval, questions: rec.questions }, effective: { flow: eff.flow, approval: eff.approval, questions: eff.questions }, reason: eff.reason, instructions: flowInstructions(eff), changed: fields };
+  return { policy, client: { id: c.id, label: c.label, flow: rec.flow, questions: rec.questions }, effective: { flow: eff.flow, questions: eff.questions }, reason: eff.reason, instructions: flowInstructions(eff), changed: fields };
 }
 
-const FLOW_SET_DESC = `Turn the Mandate flow or its approval checkpoint on / off, or questions mandate | chat, for THIS client only. Refused (policy_required / policy_off) when the project policy forbids it. Returns policy, preference, effective and instructions (follow them; save to memory). Works with the flow off.
+const FLOW_SET_DESC = `Turn the Mandate flow on / off, or questions mandate | chat, for THIS client only. Refused (policy_required / policy_off) when the project policy forbids it. Returns policy, preference, effective and instructions (follow them; save to memory). Works with the flow off.
 Example: {"flow":"off"}`;
 
 export const projectTools = [
@@ -74,8 +74,8 @@ export const projectTools = [
     name: 'project_info',
     title: 'Project info',
     kind: 'read',
-    description: `This project and the Mandate flow for your client: policy, client preference, effective { flow, approval, questions }, reason, instructions (follow them), upload (the curl for large files), codeRepos (code repo short names) and your codeContext.
-Call at the start of every task. flow off = read-only context (write tools refused: flow_off); approval off = skip the approval checkpoint; questions chat = ask in chat, not question_ask. stubVersion: your local skill's (update: re-run the installer).
+    description: `This project and the Mandate flow for your client: policy, client preference, effective { flow, questions }, reason, instructions (follow them), upload (the curl for large files), codeRepos (code repo short names) and your codeContext.
+Call at the start of every task. flow off = read-only context (write tools refused: flow_off); questions chat = ask in chat, not question_ask. stubVersion: your local skill's (update: re-run the installer).
 Example: {}`,
     input: z.object({ stubVersion }).strict(),
     run: (a, ctx) => info(ctx, a.stubVersion),
@@ -109,19 +109,19 @@ Example: {"repo":"web-app","commit":"3f9c2a1","branch":"main","dirty":true}`,
     title: 'Set my flow preference',
     kind: 'write',
     description: FLOW_SET_DESC,
-    input: z.object({ flow: onOff.optional(), approval: onOff.optional(), questions: z.enum(QUESTIONS_VIA).optional() }).strict(),
+    input: z.object({ flow: onOff.optional(), questions: z.enum(QUESTIONS_VIA).optional() }).strict(),
     run: (a, ctx) => setPreference(a, ctx),
   }),
   defineTool({
     name: 'project_flow_set',
     title: 'Set my flow preference (deprecated)',
     kind: 'write',
-    description: `DEPRECATED: use flow_set. enabled → flow, approval → approval (booleans).
+    description: `DEPRECATED: use flow_set. enabled → flow (boolean).
 Example: {"enabled":false}`,
-    input: z.object({ enabled: z.boolean().optional(), approval: z.boolean().optional() }).strict(),
+    input: z.object({ enabled: z.boolean().optional() }).strict(),
     run: async (a, ctx) => ({
-      ...(await setPreference({ ...(a.enabled !== undefined ? { flow: a.enabled ? 'on' : 'off' } : {}), ...(a.approval !== undefined ? { approval: a.approval ? 'on' : 'off' } : {}) }, ctx)),
-      deprecated: 'project_flow_set is deprecated: use flow_set { flow, approval }',
+      ...(await setPreference({ ...(a.enabled !== undefined ? { flow: a.enabled ? 'on' : 'off' } : {}) }, ctx)),
+      deprecated: 'project_flow_set is deprecated: use flow_set { flow }',
     }),
   }),
   defineTool({
@@ -129,15 +129,15 @@ Example: {"enabled":false}`,
     title: 'Set the project flow policy (admin)',
     kind: 'write',
     uiOnly: true,
-    description: `Web UI admins only: the project flow policy. flowPolicy: required | optional (default, each client chooses) | off (read-only); approvalPolicy: required | optional.
+    description: `Web UI admins only: the project flow policy. flowPolicy: required | optional (default, each client chooses) | off (read-only).
 Example: {"flowPolicy":"required"}`,
-    input: z.object({ flowPolicy: z.enum(FLOW_POLICIES).optional(), approvalPolicy: z.enum(APPROVAL_POLICIES).optional() }).strict(),
+    input: z.object({ flowPolicy: z.enum(FLOW_POLICIES).optional() }).strict(),
     run: async (a, ctx) => {
       const s = settingsOf(ctx);
-      if (!a.flowPolicy && !a.approvalPolicy) throw new ToolError('validation', 'pass flowPolicy and/or approvalPolicy', 'e.g. {"flowPolicy":"required"}', 'flowPolicy');
+      if (!a.flowPolicy) throw new ToolError('validation', 'pass flowPolicy', 'e.g. {"flowPolicy":"required"}', 'flowPolicy');
       const before = s.policy();
       const policy = await s.setPolicy(a);
-      const fields = (['flowPolicy', 'approvalPolicy'] as const).filter((k) => before[k] !== policy[k]).map((k) => `${k === 'flowPolicy' ? 'flow policy' : 'approval policy'} ${policy[k]}`);
+      const fields = (['flowPolicy'] as const).filter((k) => before[k] !== policy[k]).map((k) => `flow policy ${policy[k]}`);
       const login = ctx.principal?.kind === 'ui' ? ctx.principal.user.login : undefined;
       const e = flowChangedEvent(s.project, fields, { agent: 'mandate-ui', ...(login ? { user: login } : {}) }, (await ctx.storage.git.head().catch(() => null)) ?? '');
       if (e) ctx.activity?.emit(e);
@@ -160,7 +160,7 @@ Example: {}`,
       const policy = s.policy();
       const clients = (await s.clients.list(s.project, filter)).map((r) => {
         const eff = effective(policy, r);
-        return { ...r, effective: { flow: eff.flow, approval: eff.approval, questions: eff.questions }, you: r.id === me.id };
+        return { ...r, effective: { flow: eff.flow, questions: eff.questions }, you: r.id === me.id };
       });
       return { policy, clients };
     },

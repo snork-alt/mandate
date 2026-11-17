@@ -1,7 +1,7 @@
 /**
  * `mandate://` URIs as MCP resources, so `@mandate:mandate://...` mentions in MCP clients (coding agents) resolve to content.
  * A doc resource returns the stored file (at the pinned commit for `@sha`); a section returns its markdown plus a
- * metadata header; `#Lx-Ly` returns that excerpt; work orders and feedback return their resolved JSON; other graph
+ * metadata header; `#Lx-Ly` returns that excerpt; work orders and requests return their resolved JSON; other graph
  * nodes (symbols, code, commits, ...) return their graph node; `mandate://architecture[@sha][?focus=id]` the architecture view.
  */
 import { McpError, ErrorCode, type ReadResourceResult, type Resource, type ResourceTemplate } from '@modelcontextprotocol/sdk/types.js';
@@ -30,13 +30,13 @@ export const RESOURCE_TEMPLATES: ResourceTemplate[] = [
   { uriTemplate: 'mandate://work-orders/{id}/sections/{section}', name: 'work-order-section', title: 'A work-order section: plan, a targeted section (notes, code, deviations), reconciliation, outcome (markdown)', mimeType: 'text/markdown' },
   { uriTemplate: 'mandate://work-orders/{id}@{sha}', name: 'work-order-version', title: 'A work order document at a commit (markdown)', mimeType: 'text/markdown' },
   { uriTemplate: 'mandate://comments/{id}', name: 'comment', title: 'A comment thread (JSON)', mimeType: 'application/json' },
-  { uriTemplate: 'mandate://feedback/{id}', name: 'feedback', title: 'A feedback item (resolved, JSON)', mimeType: 'application/json' },
+  { uriTemplate: 'mandate://requests/{id}', name: 'feedback', title: 'A request (resolved, JSON)', mimeType: 'application/json' },
   { uriTemplate: 'mandate://{kind}/{name}', name: 'graph-node', title: 'Any other graph node (symbols, code, commits, repos, agents, verifications) as JSON', mimeType: 'application/json' },
 ];
 
 const MAX_LISTED = 2000;
 
-/** Concrete resources: every live spec / standard and their sections, work orders and feedback. */
+/** Concrete resources: every live spec / standard and their sections, work orders and requests. */
 export async function listResources(ctx: ToolContext): Promise<Resource[]> {
   const out: Resource[] = [];
   for (const [kind, label] of DOC_KINDS) {

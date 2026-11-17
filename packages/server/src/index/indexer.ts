@@ -620,7 +620,7 @@ export class Indexer {
     }
     // Only real trailers (the last paragraph), and only well-formed ids.
     for (const [k, v] of Object.entries(trailers)) {
-      if (k.toLowerCase() !== 'feedback') continue;
+      if (!['feedback', 'request'].includes(k.toLowerCase())) continue;
       for (const id of v.split(/[\s,]+/).filter((x) => /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(x))) edge.run(uri, buildRef({ kind: 'feedback', id }), 'resolves', null, seq);
     }
     for (const e of events) {

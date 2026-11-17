@@ -71,10 +71,9 @@ describe('contributors', () => {
   let wo: string;
   beforeAll(async () => {
     id = await newSpec(as('zed'));
-    fb = (await call(as('alice'), 'feedback_create', { targets: [`mandate://specs/${id}/sections/design`], kind: 'improvement', body: 'Cache it.' })).ref;
-    await call(as('bob'), 'feedback_accept', { ref: fb });
+    fb = (await call(as('alice'), 'request_create', { targets: [`mandate://specs/${id}/sections/design`], kind: 'improvement', body: 'Cache it.' })).ref;
     await call(as('carol'), 'spec_section_update', { ref: `mandate://specs/${id}/sections/design`, body: 'Cached.', cause: fb });
-    wo = (await call(as('dave'), 'work_order_create', { spec: id, kind: 'implement', sections: ['overview'], plan: '1. do', cause: fb })).ref;
+    wo = (await call(as('dave'), 'work_order_create', { spec: id, kind: 'implement', sections: ['overview'], plan: { steps: ['1. do'] }, cause: fb })).ref;
     await call(as('erin'), 'spec_section_update', { ref: `mandate://specs/${id}/sections/overview`, body: 'Overview v2.', cause: wo });
   }, 120_000);
 
@@ -85,8 +84,6 @@ describe('contributors', () => {
     expect(by(list, 'carol')!.roles).toContain('edited');
     expect(by(list, 'alice')).toMatchObject({ kind: 'via', via: [{ uri: fb, kind: 'feedback' }] });
     expect(by(list, 'alice')!.roles).toContain('filed');
-    expect(by(list, 'bob')).toMatchObject({ kind: 'via' });
-    expect(by(list, 'bob')!.roles).toContain('accepted');
     expect(list.findIndex((c: { kind: string }) => c.kind === 'via')).toBeGreaterThan(list.findIndex((c: { kind: string }) => c.kind === 'direct'));
   });
 
@@ -116,10 +113,9 @@ describe('contributors', () => {
     await call(as('frank'), 'spec_section_update', { ref: `mandate://specs/${id}/sections/design`, body: 'Cached, LRU, TTL.', cause: fb });
     const msg = git('log', '-1', '--format=%B');
     expect(msg).toMatch(/^Co-authored-by: alice <101\+alice@users\.noreply\.github\.com>$/m);
-    expect(msg).toMatch(/^Co-authored-by: bob <bob@users\.noreply\.github\.com>$/m);
     expect(msg).not.toMatch(/Co-authored-by: frank/);
     const h = await call(as(null), 'history_get', { ref: `mandate://specs/${id}`, limit: 1 });
-    expect(h.entries[0].coAuthors).toEqual(expect.arrayContaining(['alice', 'bob']));
+    expect(h.entries[0].coAuthors).toEqual(expect.arrayContaining(['alice']));
   });
 
   it('users_resolve: directory entries, GitHub avatar fallback, service accounts', async () => {
@@ -133,8 +129,8 @@ describe('contributors', () => {
 describe('work orders in lineage (phase B)', () => {
   it('changing: an open work order shows progress, claim, branch and its open PR; PRs link out', async () => {
     const id = await newSpec(as('zed'));
-    const fb = (await call(as('alice'), 'feedback_create', { targets: [`mandate://specs/${id}/sections/design`], kind: 'improvement', body: 'Do it.' })).ref;
-    const wo = (await call(as('dave'), 'work_order_create', { spec: id, kind: 'implement', sections: ['design', 'overview'], plan: '1. do', reason: [fb.split('/').pop()] })).ref;
+    const fb = (await call(as('alice'), 'request_create', { targets: [`mandate://specs/${id}/sections/design`], kind: 'improvement', body: 'Do it.' })).ref;
+    const wo = (await call(as('dave'), 'work_order_create', { spec: id, kind: 'implement', sections: ['design', 'overview'], plan: { steps: ['1. do'] }, reason: [fb.split('/').pop()] })).ref;
     await call(as('dave'), 'work_order_claim', { ref: wo, git: [{ repo: 'app', branch: 'wo/cache', baseBranch: 'main', pr: { number: 42, status: 'open', url: 'https://github.com/acme/app/pull/42' } }] });
     await call(as('dave'), 'work_order_section_done', { ref: wo, sections: ['design'], notes: 'done' }).catch(() => undefined);
     const r = await call(as(null), 'lineage', { ref: fb, direction: 'down', depth: 2 });
@@ -153,7 +149,7 @@ describe('work orders in lineage (phase B)', () => {
 
   it('blast_radius lists open work orders that touched the same files; comments carry the user', async () => {
     const id = await newSpec(as('zed'));
-    const wo = (await call(as('dave'), 'work_order_create', { spec: id, kind: 'implement', sections: ['design'], plan: '1. do' })).ref;
+    const wo = (await call(as('dave'), 'work_order_create', { spec: id, kind: 'implement', sections: ['design'], plan: { steps: ['1. do'] } })).ref;
     await call(as('dave'), 'work_order_claim', { ref: wo });
     await call(as('dave'), 'work_order_touch', { ref: wo, files: ['app:src/blast/radius.ts#L1-L20'] });
     const b = await call(as(null), 'blast_radius', { ref: 'mandate://code/app/src/blast/radius.ts' });
@@ -168,7 +164,7 @@ describe('work orders in lineage (phase B)', () => {
     await call(as('zed'), 'standard_create', { title: std, appliesTo: ['tag:zz-none'], sections: [{ title: 'R one', type: 'rule', rationale: 'Because.', level: 'must', summary: 'One.', body: 'Do it.' }], confirmedByUser: true });
     const id = await newSpec(as('zed'));
     await call(as('zed'), 'spec_section_link_add', { ref: `mandate://specs/${id}/sections/design`, rel: 'follows', to: `mandate://standards/${std}/sections/r-one` });
-    const wo = (await call(as('dave'), 'work_order_create', { spec: id, kind: 'implement', sections: ['design'], plan: '1. do' })).ref;
+    const wo = (await call(as('dave'), 'work_order_create', { spec: id, kind: 'implement', sections: ['design'], plan: { steps: ['1. do'] } })).ref;
     await call(as('dave'), 'work_order_claim', { ref: wo });
     await call(as('dave'), 'work_order_touch', { ref: wo, section: 'design', files: ['app:src/touched/rule.ts#L5-L9'] });
     await call(as('dave'), 'work_order_section_done', { ref: wo, sections: ['design'], notes: 'Built.' });

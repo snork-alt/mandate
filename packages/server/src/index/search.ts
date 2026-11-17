@@ -100,7 +100,8 @@ export function highlight(text: string, terms: string[], max = 240): string {
 const until = (d: string) => (/^\d{4}-\d{2}-\d{2}$/.test(d) ? `${d}T23:59:59.999Z` : d);
 
 interface Filters {
-  kinds?: SearchKind[];
+  /** `request` is the user-facing name of the `feedback` kind. */
+  kinds?: (SearchKind | 'request')[];
   status?: string[];
   category?: string[];
   repo?: string[];
@@ -122,7 +123,7 @@ export function filterSql(f: Filters, e = 'e'): { sql: string; params: unknown[]
     p.push(...vals);
   };
   if (f.kinds?.length) {
-    const docKinds = f.kinds.filter((k) => k !== 'section');
+    const docKinds = f.kinds.filter((k) => k !== 'section').map((k) => (k === 'request' ? 'feedback' : k));
     const parts: string[] = [];
     if (docKinds.length) {
       parts.push(`${e}.doc_kind IN (${docKinds.map(() => '?').join(', ')})`);
@@ -648,7 +649,7 @@ export function related(ctx: SearchContext, input: RelatedInput): RelatedRespons
   const base = ref && 'id' in ref ? inp.uri.replace(/[@#].*$/, '') : inp.uri;
   const sem = semanticStatus(ctx);
   if (!sem.ok) return { uri: base, items: [], reason: sem.reason };
-  const items = nearest(ctx, base, inp.limit, inp.kinds);
+  const items = nearest(ctx, base, inp.limit, inp.kinds?.map((k) => (k === 'request' ? 'feedback' : k)) as SearchKind[] | undefined);
   return { uri: base, items, reason: items.length ? undefined : 'no vector for this node yet (not a doc or section, or still embedding)' };
 }
 
@@ -802,7 +803,7 @@ export function historySearch(ctx: SearchContext, input: HistorySearchInput): Hi
   }
   if (inp.feedback) {
     c.push("EXISTS (SELECT 1 FROM edges r WHERE r.kind = 'resolves' AND r.from_uri = 'mandate://commits/' || c.sha AND r.to_uri = ?)");
-    p.push(`mandate://feedback/${inp.feedback}`);
+    p.push(`mandate://requests/${inp.feedback}`);
   }
   if (inp.changeKinds?.length) {
     c.push(`EXISTS (SELECT 1 FROM json_each(c.kinds) WHERE value IN (${inp.changeKinds.map(() => '?').join(', ')}))`);

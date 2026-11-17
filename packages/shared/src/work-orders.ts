@@ -76,6 +76,15 @@ export const gitContextSchema = z.object({
 });
 export type GitContext = z.infer<typeof gitContextSchema>;
 
+/** A test the plan promises: its name or code ref, and the acceptance criteria (section ids of the spec) it proves. */
+export const planTestSchema = z.object({
+  name: z.string().trim().min(1).max(300),
+  /** Where it will live: `repo:path#Lx-Ly` / `repo:path#symbol`, optional until written. */
+  ref: z.string().trim().min(1).max(400).optional(),
+  proves: z.array(z.string().trim().min(1).max(200)).min(1).max(50),
+});
+export type PlanTest = z.infer<typeof planTestSchema>;
+
 /** Work-order frontmatter (server-maintained; agents write through the work_order_* tools). */
 export const workOrderFrontmatterSchema = z.object({
   title: z.string().trim().min(1),
@@ -87,6 +96,8 @@ export const workOrderFrontmatterSchema = z.object({
   priority: z.enum(PRIORITIES).optional(),
   /** Fast-path fix: kind `fix` with a single section; can be claimed without a plan. */
   fastPath: z.boolean().optional(),
+  /** Tests promised by the plan, each mapped to the acceptance criteria it proves (checked at work_order_complete). */
+  planTests: z.array(planTestSchema).optional(),
   /** Why the work order exists (free text; the plan lives in the `plan` section). */
   note: z.string().optional(),
   /** Work orders that must be done first (ids). */

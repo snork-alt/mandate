@@ -354,7 +354,7 @@ export function createDocFormat<S extends z.ZodType<Record<string, unknown>, Rec
     const data: Record<string, unknown> = { ...frontmatter };
     delete data[RESERVED_KEY];
     if (sections.length) {
-      data[RESERVED_KEY] = sections.map(({ id, title, type, summary, archived, provenance, confidence, refs, symbols, links, verifiedBy, method, threshold, level, rationale, scope, check, examples, implementedCommit, ref, kind, result, hash, findings, itemRechecks, target, status, verifications, codeRefs, deviations }) => ({
+      data[RESERVED_KEY] = sections.map(({ id, title, type, summary, archived, provenance, confidence, refs, symbols, links, verifiedBy, method, threshold, level, rationale, scope, check, examples, implementedCommit, implementedBy, provedBy, ref, kind, result, hash, findings, itemRechecks, target, status, verifications, codeRefs, deviations }) => ({
         id,
         title,
         type,
@@ -385,6 +385,8 @@ export function createDocFormat<S extends z.ZodType<Record<string, unknown>, Rec
         links,
         verifiedBy,
         implementedCommit,
+        implementedBy,
+        provedBy,
       }));
     }
     let out = `---\n${toYaml(data)}---\n`;

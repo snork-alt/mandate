@@ -1,5 +1,6 @@
 import { diffDocs, type DocFormat } from '@mandate/doc';
 import {
+  buildNodeUri,
   buildRef,
   FEEDBACK_TRANSITIONS,
   feedbackSchema,
@@ -34,38 +35,17 @@ export class AppliedWithoutChangesError extends Error {
   readonly statusCode = 409;
   readonly code = 'applied_without_changes';
   constructor(id: string) {
-    super(`applied_without_changes: no change is linked to ${id}: no commit carries "Feedback: ${id}" (addresses) or "Caused-By: mandate://feedback/${id}" (cause), and relatedTo names no commit`);
+    super(`applied_without_changes: no change is linked to ${id}: no commit carries "Request: ${id}" (addresses) or "Caused-By: mandate://requests/${id}" (cause), and relatedTo names no commit`);
   }
 }
 
-/** Closed feedback is immutable (409 `feedback_closed`). */
+/** Closed requests are immutable (409 `request_closed`; the old code was `feedback_closed`). */
 export class FeedbackClosedError extends Error {
   readonly statusCode = 409;
-  readonly code = 'feedback_closed';
+  readonly code = 'request_closed';
   constructor(id: string, what: string) {
-    super(`feedback_closed: ${id} is closed and cannot be ${what}`);
+    super(`request_closed: ${id} is closed and cannot be ${what}`);
   }
-}
-
-/** approval_override_confirm refused (409): no override, already confirmed, or the overriding person confirming. */
-export class OverrideConfirmError extends Error {
-  readonly statusCode = 409;
-  constructor(
-    message: string,
-    readonly code: 'no_override' | 'already_confirmed' | 'same_person',
-  ) {
-    super(`${code}: ${message}`);
-  }
-}
-
-/** The one change allowed on a closed item: confirming its approval override (nothing else differs). */
-function onlyConfirmsOverride(current: StoredFeedback, next: StoredFeedback): boolean {
-  const o = current.approvalOverride;
-  const n = next.approvalOverride;
-  if (!o || o.confirmedAt || !n?.confirmedAt) return false;
-  const strip = (f: StoredFeedback) => JSON.stringify({ ...f, updatedAt: undefined, approvalOverride: undefined });
-  const { confirmedBy: _b, confirmedAt: _a, confirmNote: _n, ...rest } = n;
-  return strip(current) === strip(next) && JSON.stringify(rest) === JSON.stringify(o);
 }
 
 type Docs = { specs: MarkdownDirRepository<StoredSpec>; standards: MarkdownDirRepository<StoredStandard>; components?: MarkdownDirRepository<StoredComponent> };
@@ -74,12 +54,12 @@ const DIRS: Kind[] = ['specs', 'standards', 'components'];
 /** Docs a feedback item may target (component sections too). */
 const FEEDBACK_FILE = 'feedback.jsonl';
 
-/** `Feedback: fb-1, fb-2` trailer lines anywhere in a commit message. */
+/** `Request: fb-1, fb-2` trailer lines (the old `Feedback:` spelling is read too) anywhere in a commit message. */
 export function feedbackTrailerIds(message: string): string[] {
   const ids: string[] = [];
   // Trailers only: never the subject line (`feedback: create fb-0012` is not a trailer).
   const body = message.split('\n').slice(1).join('\n');
-  for (const m of body.matchAll(/^Feedback:[ \t]*(.+)$/gim)) ids.push(...m[1]!.split(/[\s,]+/).filter(Boolean));
+  for (const m of body.matchAll(/^(?:Request|Feedback):[ \t]*(.+)$/gim)) ids.push(...m[1]!.split(/[\s,]+/).filter(Boolean));
   return ids;
 }
 
@@ -242,7 +222,7 @@ export class FeedbackService {
       }
       if (ignored) d.warnings.push(`${ignored} commit(s) reference this item after it was closed and are ignored.`);
       if (item.resolution === 'applied' && !d.changes.length) {
-        d.warnings.push('Resolution is "applied" but no commit carries a "Feedback: ' + item.id + '" trailer.');
+        d.warnings.push('Resolution is "applied" but no commit carries a "Request: ' + item.id + '" trailer.');
       }
       d.changes.reverse(); // newest first
       map.set(item.id, d);
@@ -327,7 +307,7 @@ export class FeedbackService {
 
   /** Storage hook (inside the write lock): targets, references and status transitions. */
   async check(next: StoredFeedback, current: StoredFeedback | undefined): Promise<void> {
-    if (current?.status === 'closed' && !onlyConfirmsOverride(current, next)) throw new FeedbackClosedError(next.id, 'modified');
+    if (current?.status === 'closed') throw new FeedbackClosedError(next.id, 'modified');
     if (current && current.status !== next.status && !FEEDBACK_TRANSITIONS[current.status].includes(next.status)) {
       throw new ConflictError(`feedback ${next.id}: ${current.status} -> ${next.status} is not allowed`);
     }
@@ -363,7 +343,7 @@ export class FeedbackService {
     for (const other of [...(f.duplicateOf ? [f.duplicateOf] : []), ...(f.relatedTo ?? [])]) {
       // DF-7: relatedTo may name any element by reference; it must resolve.
       if (other.startsWith('mandate://')) {
-        if (other === `mandate://feedback/${selfId}`) throw new ValidationError(`feedback cannot reference itself`);
+        if (other === `mandate://requests/${selfId}`) throw new ValidationError(`feedback cannot reference itself`);
         if (this.resolveRef) await this.resolveRef(other).catch((e: Error) => { throw new ValidationError(`relatedTo ${other}: ${e.message}`); });
         continue;
       }
@@ -385,42 +365,11 @@ export class FeedbackService {
     return this.get(created.id);
   }
 
-  /**
-   * Update an item. Accepting stamps `acceptedBy` (the principal: the user, else agent). `override` (feedback_accept
-   * with override: eligibility checked by the caller) records `approvalOverride` and an `Approval-Override:` trailer.
-   */
-  async update(id: string, patch: UpdateFeedbackInput, meta: CommitMeta = {}, opts: { override?: string; acceptedBy?: string } = {}): Promise<Feedback> {
+  /** Update an item (requests need no approval: open -> closed only; legacy `accepted` items behave like open). */
+  async update(id: string, patch: UpdateFeedbackInput, meta: CommitMeta = {}): Promise<Feedback> {
     const current = await this.repo.get(id);
     if (current.status === 'closed') throw new FeedbackClosedError(id, 'modified');
-    // An answered approval question: the answering user approved it.
-    const who = (opts.acceptedBy ?? userOfTrailers(meta.trailers) ?? actorOf(meta)).trim();
-    const at = (meta.date ?? new Date()).toISOString();
-    const accepting = patch.status === 'accepted' && current.status !== 'accepted';
-    const stamped = {
-      ...patch,
-      ...(accepting ? { acceptedBy: who } : {}),
-      ...(opts.override ? { approvalOverride: { by: who, reason: opts.override, at } } : {}),
-    };
-    const m = opts.override ? { ...meta, trailers: { ...meta.trailers, 'Approval-Override': opts.override.replace(/[\r\n]+/g, ' ') } } : meta;
-    await this.repo.update(id, stamped as never, m);
-    if (accepting) this.acceptors.set(id, who);
-    return this.get(id);
-  }
-
-  /**
-   * A second person confirms a self-approval override (`approval_override_confirm`): stamps `confirmedBy / confirmedAt
-   * / confirmNote` on `approvalOverride` (also on closed items: the only change allowed there) with an
-   * `Approval-Override-Confirmed:` trailer. The overriding person cannot confirm their own override.
-   */
-  async confirmOverride(id: string, input: { by: string; note: string }, meta: CommitMeta = {}): Promise<Feedback> {
-    const current = await this.repo.get(id);
-    const o = current.approvalOverride;
-    if (!o) throw new OverrideConfirmError(`${id} was not accepted with an approval override`, 'no_override');
-    if (o.confirmedAt) throw new OverrideConfirmError(`${id}: the override was already confirmed by ${o.confirmedBy}`, 'already_confirmed');
-    if (input.by.trim().toLowerCase() === o.by.trim().toLowerCase()) throw new OverrideConfirmError(`${id}: ${o.by} made the override; a second person must confirm it`, 'same_person');
-    const note = input.note.replace(/[\r\n]+/g, ' ').trim();
-    const approvalOverride = { ...o, confirmedBy: input.by, confirmedAt: (meta.date ?? new Date()).toISOString(), confirmNote: note };
-    await this.repo.update(id, { approvalOverride } as never, { ...meta, message: meta.message ?? `feedback: confirm approval override of ${id}`, trailers: { ...meta.trailers, 'Approval-Override-Confirmed': note } });
+    await this.repo.update(id, patch as never, meta);
     return this.get(id);
   }
 
@@ -437,7 +386,7 @@ export class FeedbackService {
   async hasLinkedChange(f: Pick<StoredFeedback, 'id' | 'relatedTo'>): Promise<boolean> {
     if ((f.relatedTo ?? []).some((r) => parseNodeUri(r)?.kind === 'commits')) return true;
     const uri = buildRef({ kind: 'feedback', id: f.id });
-    return (await this.history.mentioning(f.id)).some((h) => h.trailers['Feedback-Item'] !== f.id && ((h.trailers['Feedback'] ?? '').split(/[\s,]+/).includes(f.id) || (h.causes ?? []).includes(uri)));
+    return (await this.history.mentioning(f.id)).some((h) => h.trailers['Feedback-Item'] !== f.id && (`${h.trailers['Request'] ?? ''} ${h.trailers['Feedback'] ?? ''}`.split(/[\s,]+/).includes(f.id) || (h.causes ?? []).some((c) => { const n = parseNodeUri(c); return (n ? buildNodeUri(n) : c) === uri; })));
   }
 
   /** An audit item or finding target: its kind, id and title, or null when missing. */

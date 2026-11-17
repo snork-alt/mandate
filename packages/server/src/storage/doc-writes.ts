@@ -314,16 +314,19 @@ export class DocWriteService {
     );
   }
 
-  async linkAdd(kind: DocKind, ref: string, link: { to: string; rel: Section['links'][number]['rel']; note?: string; feedback?: string }, meta: CommitMeta): Promise<WriteOutcome<Doc>> {
+  async linkAdd(kind: DocKind, ref: string, link: { to: string; rel: Section['links'][number]['rel']; note?: string }, meta: CommitMeta): Promise<WriteOutcome<Doc>> {
     const to = canonicalTarget(link.to);
     return this.editSections(
       kind,
       ref,
       (doc, sectionId) => {
         const s = this.section(kind, doc, sectionId!);
-        if (s.links.some((l) => l.to === to && l.rel === link.rel)) throw new WriteError('validation', `section '${sectionId}' already has ${link.rel} -> ${to}`, 409);
-        const added = { to, rel: link.rel, ...(link.note ? { note: link.note } : {}), ...(link.feedback ? { feedback: link.feedback } : {}) };
-        const sections = doc.sections.map((x) => (x.id === sectionId ? { ...x, links: [...x.links, added] } : x));
+        const existing = s.links.find((l) => l.to === to && l.rel === link.rel);
+        // A pending waiver (no approval yet) is approved by adding it again with the answered approval question as cause.
+        const approving = !!existing && link.rel === 'deviates_from' && !existing.feedback && !!meta.trailers?.['User-Approved'];
+        if (existing && !approving) throw new WriteError('validation', `section '${sectionId}' already has ${link.rel} -> ${to}`, 409);
+        const added = { to, rel: link.rel, ...(link.note ? { note: link.note } : existing?.note ? { note: existing.note } : {}) };
+        const sections = doc.sections.map((x) => (x.id === sectionId ? { ...x, links: approving ? x.links.map((l) => (l === existing ? added : l)) : [...x.links, added] } : x));
         return { sections, touched: [sectionId!], message: `${label(kind)}(${doc.id}): link ${sectionId} ${link.rel} ${to.replace('mandate://', '')}` };
       },
       meta,

@@ -51,13 +51,12 @@ beforeAll(async () => {
     ],
   })).document.id as string;
   const comp = (await call(as('zed'), 'component_create', { title: `Comp ccc ${S}`, kind: 'module' })).document.id as string;
-  // feedback by alice, accepted by bob -> carol edits the rule section (cause) and the spec design section
-  const fb = (await call(as('alice'), 'feedback_create', { targets: [`mandate://standards/${std}/sections/r-one`], kind: 'improvement', body: 'Tighten it.' })).ref;
-  await call(as('bob'), 'feedback_accept', { ref: fb });
+  // request by alice -> carol edits the rule section (cause) and the spec design section
+  const fb = (await call(as('alice'), 'request_create', { targets: [`mandate://standards/${std}/sections/r-one`], kind: 'improvement', body: 'Tighten it.' })).ref;
   await call(as('carol'), 'standard_section_update', { ref: `mandate://standards/${std}/sections/r-one`, body: 'Do it, always.', cause: fb, confirmedByUser: true });
   await call(as('carol'), 'spec_section_update', { ref: `mandate://specs/${spec}/sections/design`, body: 'Design v2.', branch: `feat/cc-${S}` });
   // work order by dave: claim with a branch + PR, touched code, a code commit; bob comments; erin verifies
-  const wo = (await call(as('dave'), 'work_order_create', { spec, kind: 'implement', sections: ['design'], plan: '1. do' })).ref;
+  const wo = (await call(as('dave'), 'work_order_create', { spec, kind: 'implement', sections: ['design'], plan: { steps: ['1. do'] } })).ref;
   await call(as('dave'), 'work_order_claim', { ref: wo, git: [{ repo: `app${S}`, branch: `wo/cc-${S}`, baseBranch: 'main', headCommit: 'abc1234', pr: { number: 77, status: 'open', url: 'https://example.com/pr/77' } }] });
   await call(as('dave'), 'work_order_touch', { ref: wo, section: 'design', files: [`app${S}:src/cc/file.ts#L1-L9`] });
   const comment = await call(as('bob'), 'comment_add', { target: wo, body: 'Check the edge case.' });
@@ -83,10 +82,10 @@ beforeAll(async () => {
   Object.assign(refs, {
     spec: { ref: `mandate://specs/${spec}`, expect: { zed: { ...D, role: 'created' }, carol: { ...D, role: 'edited' }, erin: { ...D, role: 'verified' } } },
     standard: { ref: `mandate://standards/${std}`, expect: { zed: D, carol: D } },
-    section: { ref: `mandate://standards/${std}/sections/r-one`, expect: { carol: { ...D, role: 'edited' }, alice: { kind: 'via', role: 'filed' }, bob: { kind: 'via', role: 'accepted' } } },
+    section: { ref: `mandate://standards/${std}/sections/r-one`, expect: { carol: { ...D, role: 'edited' }, alice: { kind: 'via', role: 'filed' } } },
     component: { ref: `mandate://components/${comp}`, expect: { zed: { ...D, role: 'created' } } },
     work_order: { ref: wo, expect: { dave: { ...D, role: 'claimed' }, bob: { ...D, role: 'commented' } } },
-    feedback: { ref: fb, expect: { alice: { ...D, role: 'filed' }, bob: { ...D, role: 'accepted' } } },
+    feedback: { ref: fb, expect: { alice: { ...D, role: 'filed' } } },
     verification: { ref: ver, expect: { erin: D } },
     comment: { ref: `mandate://comments/${commentId}`, expect: { bob: { ...D, role: 'commented' } } },
     question: { ref: question, expect: { gina: { ...D, role: 'asked' }, hank: { ...D, role: 'answered' } } },
@@ -151,8 +150,8 @@ describe('contributors contract', () => {
 
   it('get tools carry contributors in their derived data', async () => {
     const s = await call(as(null), 'standard_section_get', { ref: refs.section!.ref });
-    expect((s.contributors as Contributor[]).map((x) => x.user)).toEqual(expect.arrayContaining(['carol', 'alice', 'bob']));
-    const f = await call(as(null), 'feedback_get', { ref: refs.feedback!.ref });
-    expect((f.contributors as Contributor[]).map((x) => x.user)).toEqual(expect.arrayContaining(['alice', 'bob']));
+    expect((s.contributors as Contributor[]).map((x) => x.user)).toEqual(expect.arrayContaining(['carol', 'alice']));
+    const f = await call(as(null), 'request_get', { ref: refs.feedback!.ref });
+    expect((f.contributors as Contributor[]).map((x) => x.user)).toEqual(expect.arrayContaining(['alice']));
   });
 });

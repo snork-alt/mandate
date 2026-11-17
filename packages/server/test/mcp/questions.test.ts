@@ -242,22 +242,21 @@ describe('answers as proof', () => {
     expect(s.body.error.code).toBe('question_ineligible');
   });
 
-  it('feedback_accept citing an answered approval question records the approver; override eligibility is the approver\'s', async () => {
+  it('a waiver citing an answered approval question records the approver and is in force; an unanswered one is refused', async () => {
     const spec = (await fx.storage.specs.list()).find((x) => x.status !== 'archived' && x.sections.length)!;
-    const target = `mandate://specs/${spec.id}/sections/${spec.sections[0]!.id}`;
-    const fb = await run('feedback_create', { targets: [target], kind: 'improvement', body: 'Approve me through a question.', agent: 'asker' }, agent());
+    const sectionRef = `mandate://specs/${spec.id}/sections/${spec.sections[0]!.id}`;
+    const rule = await ruleRef();
     const unanswered = await confirm('team', null, 'approval');
-    expect((await run('feedback_accept', { ref: fb.body.ref, cause: `mandate://questions/${unanswered}`, agent: 'asker' }, agent())).body.error.code).toBe('question_not_answered');
-    // Without a question, an agent without a user cannot self-approve in a team.
-    expect((await run('feedback_accept', { ref: fb.body.ref, override: true, overrideReason: 'sole maintainer', agent: 'asker' }, agent())).body.error.code).toBe('override_not_allowed');
+    const link = (cause?: string) => run('spec_section_link_add', { ref: sectionRef, to: rule, rel: 'deviates_from', note: 'Justified.', ...(cause ? { cause: `mandate://questions/${cause}` } : {}), agent: 'asker' }, agent());
+    expect((await link(unanswered)).body.error.code).toBe('question_not_answered');
     const id = await confirm('team', 'ui', 'approval');
-    const r = await run('feedback_accept', { ref: fb.body.ref, override: true, overrideReason: 'sole maintainer', cause: `mandate://questions/${id}`, agent: 'asker' }, agent());
+    const r = await link(id);
     expect(r.isError, JSON.stringify(r.body)).toBe(false);
     const msg = lastCommit();
     expect(msg).toContain(`User-Approved: ${id}`);
     expect(msg).toContain('Approved-By: ada');
-    expect(msg).toContain('Approval-Override: sole maintainer');
-    expect((await fx.storage.feedback.get(fb.body.ref.split('/').pop())).acceptedBy).toBe('ada');
+    const stored = (await fx.storage.specs.get(spec.id)).sections[0]!.links.find((l) => l.rel === 'deviates_from')!;
+    expect(stored.feedback).toBe(id);
   });
 });
 

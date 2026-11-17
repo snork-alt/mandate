@@ -5,7 +5,7 @@ import { ERROR_ACTIONS, gateSummary, LIFECYCLE, LIFECYCLE_KINDS, lifecycleGetInp
 describe('lifecycle registry', () => {
   it('has an entry for every object kind', () => {
     expect(Object.keys(LIFECYCLE).sort()).toEqual([...LIFECYCLE_KINDS].sort());
-    for (const k of ['spec', 'spec_section', 'standard', 'standard_section', 'component', 'work_order', 'work_order_section', 'feedback', 'verification', 'comment', 'audit', 'audit_finding', 'flow_policy', 'maturity']) {
+    for (const k of ['spec', 'spec_section', 'standard', 'standard_section', 'component', 'work_order', 'work_order_section', 'request', 'verification', 'comment', 'audit', 'audit_finding', 'flow_policy', 'maturity']) {
       expect(LIFECYCLE_KINDS, k).toContain(k);
     }
   });
@@ -39,14 +39,15 @@ describe('lifecycle registry', () => {
     expect(s).toContain('spec ready -> done (DONE GATE');
     expect(s).toContain('standard active -> deprecated');
     expect(s).toContain('lifecycle_get { kind }');
-    expect(gateSummary('feedback_accept')).toContain('lifecycle_get { kind: "feedback" }');
+    expect(gateSummary('request_close')).toContain('lifecycle_get { kind: "request" }');
     expect(s).not.toContain('\n');
     expect(gateSummary('search')).toBe('');
   });
 
   it('lifecycle_get input: optional known kind, nothing else', () => {
     expect(lifecycleGetInputSchema.parse({})).toEqual({});
-    expect(lifecycleGetInputSchema.parse({ kind: 'feedback' })).toEqual({ kind: 'feedback' });
+    expect(lifecycleGetInputSchema.parse({ kind: 'request' })).toEqual({ kind: 'request' });
+    expect(lifecycleGetInputSchema.parse({ kind: 'feedback' })).toEqual({ kind: 'request' }); // the old name
     expect(lifecycleGetInputSchema.safeParse({ kind: 'x' }).success).toBe(false);
     expect(lifecycleGetInputSchema.safeParse({ kind: 'spec', more: 1 }).success).toBe(false);
   });

@@ -12,10 +12,9 @@ import {
   buildNodeUri,
   buildRef,
   componentSectionInputSchemas,
-  feedbackAcceptInputSchema,
-  feedbackCloseInputSchema,
-  feedbackCreateInputSchema,
-  feedbackUpdateInputSchema,
+  requestCloseInputSchema,
+  requestCreateInputSchema,
+  requestUpdateInputSchema,
   parseNodeUri,
   parseRef,
   specArchiveInputSchema,
@@ -47,6 +46,7 @@ import {
 import { slugSchema } from '@mandate/doc';
 import { z } from 'zod';
 import { DocWriteService, type DocKind } from '../../storage/doc-writes.js';
+import { coveredCriteria } from '../../storage/work-order-plan.js';
 import { resolveCauses } from '../../storage/causes.js';
 import { parseCommitMessage } from '../../storage/history.js';
 import type { CommitMeta } from '../../storage/index.js';
@@ -61,29 +61,6 @@ import { componentArchiveInputSchema, componentCreateInputSchema, componentStatu
 
 const SOFT_LIMIT = 600;
 const idOf = (refOrId: string) => parseRef(refOrId)?.id ?? (parseNodeUri(refOrId) as { id?: string } | null)?.id ?? refOrId;
-/** Active users: distinct server users (Mandate-User trailer, service accounts excluded) with a write in the last 90 days. */
-export const ACTIVE_USER_DAYS = 90;
-async function activeUsers(ctx: ToolContext): Promise<Set<string>> {
-  const since = Date.now() - ACTIVE_USER_DAYS * 86_400_000;
-  const out = new Set<string>();
-  for (const c of await ctx.storage.git.log(5000)) {
-    if (Date.parse(c.date) < since) continue;
-    const u = userOfTrailers(parseCommitMessage(c.message).trailers);
-    if (u && !u.startsWith(SERVICE_USER_PREFIX)) out.add(u.trim().toLowerCase());
-  }
-  return out;
-}
-/** Who may self-approve (approval override): an admin, or the sole active user. */
-
-export async function overrideEligibility(ctx: ToolContext): Promise<{ ok: boolean; why: string }> {
-  if (!ctx.settings) return { ok: true, why: 'no project settings' };
-  const user = ctx.commit?.user;
-  if (!user) return { ok: false, why: 'no authenticated user (shared key): self-approval needs a user principal' };
-  if (ctx.settings.isAdmin(user)) return { ok: true, why: 'admin' };
-  const others = [...(await activeUsers(ctx))].filter((u) => u !== user.trim().toLowerCase());
-  return others.length ? { ok: false, why: `${others.length} other active user(s) in the last ${ACTIVE_USER_DAYS} days: ask one of them to accept it` } : { ok: true, why: 'sole active user' };
-}
-
 /** DF-7: relatedTo entries: feedback as ids, any other element as its canonical (resolved) reference. */
 async function relatedOf(ctx: ToolContext, refs: string[]): Promise<string[]> {
   const out: string[] = [];
@@ -125,7 +102,7 @@ const docEditExtras = {
   workOrder: z.string().trim().min(1).max(400).optional(),
 };
 const docEditTrailers = (a: { addresses?: string[]; workOrder?: string }) => ({
-  Feedback: a.addresses?.length ? a.addresses.map(idOf).join(', ') : undefined,
+  Request: a.addresses?.length ? a.addresses.map(idOf).join(', ') : undefined,
   'Work-Order': a.workOrder ? idOf(a.workOrder) : undefined,
 });
 
@@ -195,7 +172,7 @@ function docWriteTools(kind: DocKind): AnyToolDef[] {
       title: `Create a ${k}`,
       kind: 'write',
       description: `Create a ${k} (Mandate assigns the id from the title: use the returned ref / ids; never pass id). ${kind === 'specs' ? 'Starts as draft; use spec_status_set to move it.' : kind === 'standards' ? 'appliesTo rules (repo:x, tag:x, category:x) make it apply to matching specs.' : 'kind service|module|library|datastore|external; owns: code path globs per repo (most specific glob wins in code_owner). layer (optional): ui|api|service|domain|data|infra or another slug; omitted, it is inherited from the parent or derived from depends_on. parent (optional): the containing component (a tree: one parent, no cycles, not archived). Architecture level, few: not one per folder or class; reuse first (architecture_get). Typical sections: responsibility, interfaces, context (mermaid), rationale.'} Sections are optional here (${k}_section_insert).${COMMON}${TLDR_GUIDE}`,
-      // DF-11: spec_create takes addresses / workOrder like the other doc writes (Feedback / Work-Order trailers).
+      // DF-11: spec_create takes addresses / workOrder like the other doc writes (Request / Work-Order trailers).
       input: (kind === 'specs' ? withExtras(createSchema as unknown as z.ZodObject) : createSchema) as unknown as z.ZodObject,
       ...(kind === 'specs' ? { trailers: docEditTrailers } : {}),
       run: async (a, ctx) => {
@@ -362,14 +339,14 @@ function docWriteTools(kind: DocKind): AnyToolDef[] {
       name: `${k}_section_link_add`,
       title: `Link a ${k} section`,
       kind: 'write',
-      description: `Add a typed link from a section. ${kind === 'specs' ? 'Spec section -> spec section: depends_on, extends, relates_to, conflicts_with, supersedes. Spec section -> standard section or whole standard: follows, deviates_from (note required; a waiver needs feedback: an accepted item filed by someone else), relates_to. Spec section -> component or component section: affects.' : kind === 'components' ? 'Component section -> component or component section: depends_on (an architecture edge). Component section -> standard or standard section: follows, deviates_from (note required).' : 'Standard section -> standard section: extends, relates_to, conflicts_with, supersedes.'}
+      description: `Add a typed link from a section. ${kind === 'specs' ? 'Spec section -> spec section: depends_on, extends, relates_to, conflicts_with, supersedes. Spec section -> standard section or whole standard: follows, deviates_from (note required; a waiver is in force only with the user approval of an answered question_ask (purpose approval) cited as cause), relates_to. Spec section -> component or component section: affects.' : kind === 'components' ? 'Component section -> component or component section: depends_on (an architecture edge). Component section -> standard or standard section: follows, deviates_from (note required).' : 'Standard section -> standard section: extends, relates_to, conflicts_with, supersedes.'}
 One link per target; cycles and superseded / archived targets are rejected (the hint names the successor).${COMMON}`,
       input: withExtras(S.linkAdd as unknown as z.ZodObject),
       trailers: docEditTrailers,
       run: async (a, ctx) => {
-        const { ref, to, rel, note, feedback } = S.linkAdd.parse(strip(a));
+        const { ref, to, rel, note } = S.linkAdd.parse(strip(a));
         const commits: string[] = [];
-        const out = await writes(ctx).linkAdd(kind, ref, { to, rel, note, feedback }, metaOf(ctx, commits));
+        const out = await writes(ctx).linkAdd(kind, ref, { to, rel, note }, metaOf(ctx, commits));
         return sectionResult(ctx, out.value.id, parseRef(ref)!.sectionId!, { commits, warnings: out.warnings });
       },
     }),
@@ -377,7 +354,7 @@ One link per target; cycles and superseded / archived targets are rejected (the 
       name: `${k}_section_link_remove`,
       title: `Unlink a ${k} section`,
       kind: 'write',
-      description: `Remove a link from a section (to, optionally rel). Unfollowing a standard from a done or claimed spec needs addresses: [accepted feedback].${COMMON}`,
+      description: `Remove a link from a section (to, optionally rel). Unfollowing a standard from a done or claimed spec needs the user's approval (cite an answered question_ask purpose approval as cause).${COMMON}`,
       input: withExtras(S.linkRemove as unknown as z.ZodObject),
       trailers: docEditTrailers,
       run: async (a, ctx) => {
@@ -461,6 +438,16 @@ async function completionCode(ctx: ToolContext, id: string, git: { repo: string;
   return { touched: touched || extra.length ? [...(touched ?? []), ...extra] : undefined, links, warnings };
 }
 
+/** The open work order on this spec that covers the criterion (the caller's, else the only one): where its test was delivered. */
+async function workOrderOf(ctx: ToolContext, specId: string, criterionId: string): Promise<string | undefined> {
+  const spec = await ctx.storage.specs.get(specId).catch(() => null);
+  const open = (await ctx.storage.workOrderService.list()).filter(
+    (w) => w.spec === specId && ['pending', 'in_progress'].includes(w.status) && ['implement', 'update', 'fix'].includes(w.kind) && coveredCriteria(spec, w.sections.map((s) => s.id)).some((c) => c.id === criterionId),
+  );
+  // Yours (the last section done releases the claim, so a finished-but-open one has none), else the only candidate.
+  return open.find((w) => w.claim?.agent === ctx.commit!.agent)?.id ?? (open.length === 1 ? open[0]!.id : undefined);
+}
+
 const WO_COMMON = COMMON;
 const GIT_NOTE = 'git (per repo, fields as work_order_git_update)';
 
@@ -469,7 +456,7 @@ const workOrderTools: AnyToolDef[] = [
     name: 'work_order_create',
     title: 'Create a work order',
     kind: 'write',
-    description: `Ask for work on sections of ONE spec, pinned to its current version (or specCommit): kind implement | update | review | verify | fix, priority p0..p3, note (why), reason (feedback items it acts on), plan (markdown; or later with work_order_plan_set), title, dependencies (work orders to finish first), fastPath (kind fix with one section: claimable without a plan). The work order is a markdown document work-orders/<id>.md (plan, one section per targeted spec section, reconciliation, outcome). At most one open implement/update work order per spec section.${COMMON}`,
+    description: `Ask for work on sections of ONE spec, pinned to its current version (or specCommit): kind implement | update | review | verify | fix, priority p0..p3, note (why), reason (requests it acts on), title, dependencies (work orders to finish first), fastPath (kind fix with one section: no plan needed). plan is REQUIRED for implement / update / fix and carries everything: { steps: [..], files: [files to change], tests: [{ name, ref?, proves: [acceptance criterion ids] }], risks: [..] }; every acceptance criterion of the targeted sections (own, or listed in verifiedBy) must be proved by a planned test (plan_invalid names the missing ones); review / verify take a markdown string. The work order cannot complete until each criterion has a passing verification_record naming its test. The work order is a markdown document work-orders/<id>.md (plan, one section per targeted spec section, reconciliation, outcome). At most one open implement/update work order per spec section.${COMMON}`,
     input: workOrderCreateInputSchema,
     // L-2: the feedback a work order acts on is its recorded cause (Caused-By), so lineage reaches it both ways.
     causes: (a) => a.reason?.map((r) => buildRef({ kind: 'feedback', id: idOf(r) })),
@@ -479,6 +466,10 @@ const workOrderTools: AnyToolDef[] = [
       const sections = a.sections.map((s) => parseRef(s)?.sectionId ?? s);
       const bad = sections.find((s) => !slugSchema.safeParse(s).success);
       if (bad) throw Object.assign(new Error(`invalid section '${bad}'`), { statusCode: 400 });
+      const needsPlan = (a.kind === 'implement' || a.kind === 'update' || a.kind === 'fix') && !a.fastPath;
+      if (needsPlan && (!a.plan || typeof a.plan === 'string')) {
+        throw new ToolError('plan_required', `a ${a.kind} work order carries the full plan from creation: plan { steps, files, tests: [{ name, proves: [criterion ids] }], risks }`, ERROR_ACTIONS.plan_required!, 'plan');
+      }
       const wo = await ctx.storage.workOrderService.create(
         {
           spec,
@@ -589,7 +580,16 @@ const workOrderTools: AnyToolDef[] = [
       );
       const warnings: string[] = [...checkCodeRepos(ctx, (a.git ?? []).map((g) => g.repo), 'git'), ...stamped.warnings];
       if (w.sections.every((s) => s.status !== 'pending')) warnings.push('every section is finished and your claim was released automatically: reconcile specs / components with the code, then call work_order_complete with the outcome (no claim needed)');
-      if (a.status === 'done' && !a.codeRefs?.length && !a.touched?.length) warnings.push('no code refs given for these sections: record the code you changed (codeRefs here, or work_order_touch with section)');
+      // Implementation <-> work order: implement / update / fix sections copy their code refs into the spec section. Without any, say why it matters.
+      if (a.status === 'done' && (w.kind === 'implement' || w.kind === 'update' || w.kind === 'fix') && !a.codeRefs?.length && !a.touched?.length) {
+        const doc = await ctx.storage.workOrderService.doc(id);
+        const noCode = doc.sections.filter((x) => x.type === 'wo-section' && a.sections.some((k) => k === x.id || parseRef(k)?.sectionId === x.id || x.target?.endsWith(`/${k}`))).some((x) => !(x.codeRefs ?? []).length);
+        if (noCode) {
+          warnings.push(
+            `no code refs for ${a.sections.join(', ')}: the spec section keeps no link to its code (its refs / symbols stay empty), so impact analysis, drift and code search cannot find the implementation. Likely cause: the code repo is not registered (unknown_code_repo: register it in Settings → Code repositories, then call code_context_set) or the work has no commit yet (commit first). Pass codeRefs ("repo:path#Lx-Ly") here, or record them with work_order_touch with section`,
+          );
+        }
+      }
       return woResult(ctx, id, commits, {}, warnings);
     },
   }),
@@ -641,9 +641,9 @@ const fbResult = async (ctx: ToolContext, id: string, commits: string[]) => ({
   ref: buildRef({ kind: 'feedback', id }),
   ...commitsOf(commits),
   warnings: [] as string[],
-  ...(await ctx.reads.feedbackGet({ ref: id }).then((r) => ({ feedback: (r as { feedback: unknown }).feedback, targets: (r as { targets: unknown }).targets }))),
+  ...(await ctx.reads.feedbackGet({ ref: id }).then((r) => ({ request: (r as { feedback: unknown }).feedback, targets: (r as { targets: unknown }).targets }))),
 });
-/** Feedback targets as stored: canonical refs (line ranges kept; `@mandate:` prefix dropped). */
+/** Request targets as stored: canonical refs (line ranges kept; `@mandate:` prefix dropped). */
 const target = (t: string) => {
   const r = parseRef(t);
   if (r) return buildRef({ kind: r.kind, id: r.id, sectionId: r.sectionId, ...(r.lines ? { lines: r.lines } : {}) });
@@ -651,16 +651,16 @@ const target = (t: string) => {
   return n ? buildNodeUri(n) : t;
 };
 
-const feedbackTools: AnyToolDef[] = [
+const requestTools: AnyToolDef[] = [
   defineTool({
-    name: 'feedback_create',
-    title: 'File feedback',
+    name: 'request_create',
+    title: 'Record a request',
     kind: 'write',
-    description: `File feedback on sections (#Lx-Ly ranges allowed) or verification results (improvement / bug at intake: targets may wait until spec_match; set them with feedback_update): kind ambiguity | conflict | bug | improvement | question, body (the why), quote (the exact text), relatedTo, fromFinding (the audit finding it comes from: spec_wrong / ambiguous findings). Starts open; the author is your agent identity (approvals of waivers need feedback from someone else).${COMMON}`,
-    input: feedbackCreateInputSchema,
+    description: `Record a REQUEST: every instruction the user gives (a feature, change, fix, wish) is one; it needs no approval and starts open. targets: sections it concerns (#Lx-Ly ranges allowed) or verification results (improvement / bug at intake: targets may wait until spec_match; set them with request_update). kind ambiguity | conflict | bug | improvement | question; body (the user's words and the why), quote (the exact text), relatedTo, fromFinding (the audit finding it comes from: spec_wrong / ambiguous findings). Then: spec_match, edit the specs / standards with addresses: [this request], work_order_create with the full plan. Questions for the user go through question_ask.${COMMON}`,
+    input: requestCreateInputSchema,
     run: async (a, ctx) => {
       const commits: string[] = [];
-      // From an audit finding (spec_wrong / ambiguous): the finding must exist; it records the feedback in its resolution.
+      // From an audit finding (spec_wrong / ambiguous): the finding must exist; it records the request in its resolution.
       const from = a.fromFinding ? await ctx.storage.auditService.requireFinding(a.fromFinding) : null;
       const relatedTo = await relatedOf(ctx, a.relatedTo ?? []);
       // MW-11: the item and the finding backlink are written under one hold of the (re-entrant) write lock.
@@ -676,11 +676,11 @@ const feedbackTools: AnyToolDef[] = [
     },
   }),
   defineTool({
-    name: 'feedback_update',
-    title: 'Update feedback',
+    name: 'request_update',
+    title: 'Update a request',
     kind: 'write',
-    description: `Edit an open or accepted feedback item (body, targets, relatedTo: feedback or any element reference). Closed items are immutable (code feedback_closed).${COMMON}`,
-    input: feedbackUpdateInputSchema,
+    description: `Edit an open request (body, targets, relatedTo: request or any element reference). Closed requests are immutable (code request_closed).${COMMON}`,
+    input: requestUpdateInputSchema,
     run: async (a, ctx) => {
       const commits: string[] = [];
       const id = idOf(a.ref);
@@ -693,40 +693,17 @@ const feedbackTools: AnyToolDef[] = [
     },
   }),
   defineTool({
-    name: 'feedback_accept',
-    title: 'Accept feedback',
+    name: 'request_close',
+    title: 'Close a request',
     kind: 'write',
     uiAllowed: true,
-    description: `Accept a feedback item: it will be acted on; it approves waivers / exemptions / criteria removals written by someone other than its filer and accepter. override: true + overrideReason lets it approve your own: only when the user explicitly says so (sole active user or admin; recorded); never to pass a gate. cause: an answered approval question records who approved.${COMMON}`,
-    input: feedbackAcceptInputSchema,
-    run: async (a, ctx) => {
-      const commits: string[] = [];
-      const id = idOf(a.ref);
-      // An answered `approval` question cited as cause: the answering user approved (and is the one checked for an override).
-      const proof = await questionProof(ctx, ['approval']);
-      if (proof) ctx = withTrailers({ ...ctx, commit: { ...ctx.commit!, ...(proof.user ? { user: proof.user } : {}) } }, { 'User-Approved': proof.id, 'Approved-By': proof.by });
-      if (a.override) {
-        if (!a.overrideReason?.trim()) throw Object.assign(new Error('override needs overrideReason (why self-approval is acceptable)'), { statusCode: 400, code: 'validation' });
-        const e = await overrideEligibility(ctx);
-        if (!e.ok) throw Object.assign(new Error(`override_not_allowed: ${e.why}`), { statusCode: 403, code: 'override_not_allowed' });
-      }
-      const cur = await ctx.storage.feedback.get(id);
-      await ctx.storage.feedbackService.update(id, cur.status === 'accepted' ? {} : { status: 'accepted' }, metaOf(ctx, commits), { ...(a.override ? { override: a.overrideReason!.trim() } : {}), ...(proof?.user ? { acceptedBy: proof.user } : {}) });
-      return fbResult(ctx, id, commits);
-    },
-  }),
-  defineTool({
-    name: 'feedback_close',
-    title: 'Close feedback',
-    kind: 'write',
-    uiAllowed: true,
-    description: `Close a feedback item: applied (changes come from commits with its Feedback trailer), rejected (resolutionNote) or duplicate (duplicateOf). Closed is immutable.${COMMON}`,
-    input: feedbackCloseInputSchema,
+    description: `Close a request: applied (changes come from commits with its Request trailer), rejected (resolutionNote) or duplicate (duplicateOf). A request whose work orders are all complete is closed automatically; use this for requests handled without a work order. Closed is immutable.${COMMON}`,
+    input: requestCloseInputSchema,
     run: async (a, ctx) => {
       const commits: string[] = [];
       const id = idOf(a.ref);
       // The UI records decisions only: "applied" means content changed, which agents write (and cite) themselves.
-      if (ctx.principal?.kind === 'ui' && a.resolution === 'applied') throw Object.assign(new Error('forbidden: the web UI can reject or mark duplicate; an agent closes an item as applied when its change is written'), { statusCode: 403, code: 'forbidden' });
+      if (ctx.principal?.kind === 'ui' && a.resolution === 'applied') throw Object.assign(new Error('forbidden: the web UI can reject or mark duplicate; an agent closes a request as applied when its change is written'), { statusCode: 403, code: 'forbidden' });
       await ctx.storage.feedbackService.update(
         id,
         { status: 'closed', resolution: a.resolution, ...(a.resolutionNote ? { resolutionNote: a.resolutionNote } : {}), ...(a.duplicateOf ? { duplicateOf: idOf(a.duplicateOf) } : {}) },
@@ -736,6 +713,9 @@ const feedbackTools: AnyToolDef[] = [
     },
   }),
 ];
+/** The old `feedback_*` names: hidden, callable aliases of the request tools. */
+const LEGACY_REQUEST_NAMES: Record<string, string> = { request_create: 'feedback_create', request_update: 'feedback_update', request_close: 'feedback_close' };
+const legacyRequestTools: AnyToolDef[] = requestTools.map((t) => ({ ...t, name: LEGACY_REQUEST_NAMES[t.name]! }) as AnyToolDef);
 
 /* ---------------------------------------------------------------- verification and diff */
 
@@ -744,7 +724,7 @@ const verificationTools: AnyToolDef[] = [
     name: 'verification_record',
     title: 'Record a verification result',
     kind: 'write',
-    description: `Append a verification result for an acceptance criterion (append-only; the server sets the time and the author = your agent identity): criterion (acceptance section ref), appliedTo (the spec; required for standard criteria), specCommit (default HEAD), code { repo (short name), commit, branch, dirty: uncommitted on top of commit }, result pass | fail | skipped (skipped verifies nothing), method test | manual | review | metric, evidence { test, ci, note }.${COMMON}`,
+    description: `Append a verification result for an acceptance criterion (append-only; the server sets the time and the author = your agent identity): criterion (acceptance section ref), appliedTo (the spec; required for standard criteria), specCommit (default HEAD), code { repo (short name), commit, branch, dirty: uncommitted on top of commit }, result pass | fail | skipped (skipped verifies nothing), method test | manual | review | metric, evidence { test (the test's name or repo:path#Lx-Ly), ci, note }, codeRefs (the test's file / lines), workOrder (default: yours). A passing result that names its test is stored on the criterion ("Proved by <test>"); work_order_complete needs one per criterion the work order covers.${COMMON}`,
     input: verificationRecordInputSchema,
     run: async (a, ctx) => {
       const commits: string[] = [];
@@ -765,7 +745,29 @@ const verificationTools: AnyToolDef[] = [
         },
         metaOf(ctx, commits),
       );
-      return { ref: buildNodeUri({ kind: 'verifications', id: r.id }), ...commitsOf(commits), warnings: cw, verification: r };
+      // Criteria <-> tests: a passing result that names its test is stored on the spec criterion (with the work order).
+      const warnings = [...cw];
+      const testRef = a.evidence?.test?.trim() || a.codeRefs?.[0];
+      if (a.result === 'pass' && testRef && c.kind === 'specs' && c.sectionId) {
+        try {
+          const wo = a.workOrder ? idOf(a.workOrder) : await workOrderOf(ctx, c.id, c.sectionId);
+          await ctx.storage.specs.modify(
+            c.id,
+            (spec) => ({
+              ...spec,
+              sections: spec.sections.map((s) => {
+                if (s.id !== c.sectionId || s.type !== 'acceptance') return s;
+                const entry = { test: testRef, ...(wo ? { workOrder: wo } : {}), verification: r.id, at: r.at };
+                return { ...s, provedBy: [...(s.provedBy ?? []).filter((p) => p.test !== testRef), entry] };
+              }),
+            }),
+            { ...metaOf(ctx, commits), message: `spec(${c.id}): criterion ${c.sectionId} proved by ${testRef}`, trailers: { ...ctx.commit!.trailers, ...(wo ? { 'Work-Order': wo } : {}) } },
+          );
+        } catch (e) {
+          warnings.push(`could not store the test on the criterion: ${(e as Error).message}`);
+        }
+      }
+      return { ref: buildNodeUri({ kind: 'verifications', id: r.id }), ...commitsOf(commits), warnings, verification: r };
     },
   }),
   defineTool({
@@ -850,4 +852,18 @@ export function withUserConfirmation(def: AnyToolDef): AnyToolDef {
   } as AnyToolDef;
 }
 
-export const writeTools: AnyToolDef[] = [...docWriteTools('specs'), ...docWriteTools('standards').map(withUserConfirmation), ...docWriteTools('components'), ...workOrderTools, ...feedbackTools, ...verificationTools];
+/**
+ * The user's approval for a waiver, exemption or criteria removal: an answered question_ask (purpose approval) cited as
+ * cause. Validated here (answered by a signed-in user); the storage rules look for the `User-Approved` trailer.
+ */
+export function withApprovalProof(def: AnyToolDef): AnyToolDef {
+  return {
+    ...def,
+    run: async (a: unknown, ctx: ToolContext) => {
+      const proof = await questionProof(ctx, ['approval']);
+      return def.run(a as never, proof ? withTrailers(ctx, { 'User-Approved': proof.id, 'Approved-By': proof.by }) : ctx);
+    },
+  } as AnyToolDef;
+}
+
+export const writeTools: AnyToolDef[] = [...docWriteTools('specs').map(withApprovalProof), ...docWriteTools('standards').map(withUserConfirmation).map(withApprovalProof), ...docWriteTools('components').map(withApprovalProof), ...workOrderTools, ...requestTools, ...legacyRequestTools, ...verificationTools];

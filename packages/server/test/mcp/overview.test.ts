@@ -86,8 +86,10 @@ describe('project_overview', () => {
     };
     const id = `ov-prog-${Date.now().toString(36)}`;
     await call('spec_create', { id, title: 'Progress spec', summary: 'Overview progress.', sections: [{ id: 'one', title: 'One', summary: 'One.', body: 'Body.' }, { id: 'two', title: 'Two', summary: 'Two.', body: 'Body.' }] });
-    const wo = await call('work_order_create', { spec: id, sections: ['one'], kind: 'implement', plan: '- [x] Read the spec\n- [ ] Write the tests\n- [ ] Ship it' });
+    const wo = await call('work_order_create', { spec: id, sections: ['one'], kind: 'implement', plan: { steps: ['Read the spec', 'Write the tests', 'Ship it'] } });
     await call('work_order_claim', { ref: wo.ref });
+    // The agent ticks the steps it has done (the plan is a checklist).
+    await call('work_order_plan_set', { ref: wo.ref, plan: '**Steps**\n- [x] Read the spec\n- [ ] Write the tests\n- [ ] Ship it\n\n**Files to change**\n- src/a.ts' });
     const fix = await call('work_order_create', { spec: id, sections: ['two'], kind: 'fix', fastPath: true, title: 'Quick fix' });
     await call('work_order_claim', { ref: fix.ref });
     await call('work_order_complete', { ref: fix.ref, outcome: 'Fixed.' });

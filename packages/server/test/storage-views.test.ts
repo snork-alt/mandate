@@ -209,7 +209,7 @@ describe('feedback', () => {
     const closed = await updFb('fb-0001', { status: 'closed', resolution: 'applied' });
     expect(closed).toMatchObject({ status: 'closed', resolution: 'applied', warnings: [] });
     expect(closed.closedAt).toBeTruthy();
-    await expect(updFb('fb-0001', { body: 'edit' })).rejects.toMatchObject({ code: 'feedback_closed' });
+    await expect(updFb('fb-0001', { body: 'edit' })).rejects.toMatchObject({ code: 'request_closed' });
     await expect(updFb('fb-0001', { status: 'closed', resolution: 'rejected', resolutionNote: 'n' })).rejects.toMatchObject({ statusCode: 409 });
     await expect(s.feedbackService.delete('fb-0001')).rejects.toMatchObject({ statusCode: 409 });
     await expect(updStd('std-b', { title: 'Std B2' }, tr)).rejects.toMatchObject({ statusCode: 409 });

@@ -2,8 +2,8 @@
  * Web UI endpoints for Settings → Agent flow and the sidebar badge (session cookie + X-Mandate-UI, Origin-checked
  * writes, allowed hosts only):
  * - GET  /ui/flow[?project=<id>]                       policy, my clients, and (team admins) every client
- * - PUT  /ui/flow/:project/policy                      { flowPolicy?, approvalPolicy? }   admins only
- * Client preferences (flow, approval, questions) are read-only here: only the agent changes them (flow_set,
+ * - PUT  /ui/flow/:project/policy                      { flowPolicy? }   admins only
+ * Client preferences (flow, questions) are read-only here: only the agent changes them (flow_set,
  * /mandate-flow), so the user's switch and the agent's memory never disagree.
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
@@ -11,7 +11,7 @@ import { z } from 'zod';
 import { authenticate, originOk, type AuthOptions } from '../auth/http.js';
 import type { ProjectConfig } from '../config.js';
 import type { ProjectRegistry } from './registry.js';
-import { APPROVAL_POLICIES, effective, FLOW_POLICIES, flowChangedEvent, type ClientRecord, type Policy, type ProjectSettings } from './settings.js';
+import { effective, FLOW_POLICIES, flowChangedEvent, type ClientRecord, type Policy, type ProjectSettings } from './settings.js';
 
 export interface FlowRouteDeps {
   auth: AuthOptions;
@@ -37,9 +37,9 @@ const row = (policy: Policy, r: ClientRecord) => {
   const eff = effective(policy, r);
   return {
     ...r,
-    effective: { flow: eff.flow, approval: eff.approval, questions: eff.questions },
+    effective: { flow: eff.flow, questions: eff.questions },
     // Locked = enforced by the project policy (the client preference has no effect).
-    locked: { flow: policy.flowPolicy !== 'optional', approval: policy.approvalPolicy === 'required' },
+    locked: { flow: policy.flowPolicy !== 'optional' },
   };
 };
 
@@ -111,12 +111,12 @@ export function registerFlowRoutes(app: FastifyInstance, d: FlowRouteDeps): void
       const { project } = req.params as { project: string };
       await visible(who.login, project);
       if (!who.admin) throw new HttpError(403, 'forbidden', 'only Mandate admins can change the project policy');
-      const b = z.object({ flowPolicy: z.enum(FLOW_POLICIES).optional(), approvalPolicy: z.enum(APPROVAL_POLICIES).optional() }).strict().parse(req.body);
-      if (!b.flowPolicy && !b.approvalPolicy) throw new HttpError(400, 'invalid_input', 'pass flowPolicy and/or approvalPolicy');
+      const b = z.object({ flowPolicy: z.enum(FLOW_POLICIES).optional() }).strict().parse(req.body);
+      if (!b.flowPolicy) throw new HttpError(400, 'invalid_input', 'pass flowPolicy');
       const s = d.settings(project);
       const before = s.policy();
       const policy = await s.setPolicy(b);
-      await emit(project, (['flowPolicy', 'approvalPolicy'] as const).filter((k) => before[k] !== policy[k]).map((k) => `${k === 'flowPolicy' ? 'flow policy' : 'approval policy'} ${policy[k]}`), who.login);
+      await emit(project, (['flowPolicy'] as const).filter((k) => before[k] !== policy[k]).map((k) => `flow policy ${policy[k]}`), who.login);
       return { policy };
     }),
   );

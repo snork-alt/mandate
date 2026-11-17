@@ -66,7 +66,7 @@ beforeAll(async () => {
   );
   // Server mode: the commit names its user (`Mandate-User`); feedback is filed and a work order created by users.
   const f = await storage.feedbackService.create({ targets: [S('login', 'flow')], kind: 'improvement', body: 'Retry the core call.' } as never, { agent: 'coding-agent', trailers: { 'Mandate-User': 'Alice' } });
-  fb = `mandate://feedback/${f.id}`;
+  fb = `mandate://requests/${f.id}`;
   const w = await storage.workOrderService.create({ spec: 'login', kind: 'implement', status: 'pending', sections: [{ id: 'flow' }], reason: [f.id], plan: 'p' }, { agent: 'coding-agent', trailers: { 'Mandate-User': 'BOB' } });
   wo = `mandate://work-orders/${w.id}`;
   index = new IndexService({ git, storage, index: indexCfg(path.join(dir, '..', `${path.basename(dir)}-v2.sqlite`)), embedding, provider: null });

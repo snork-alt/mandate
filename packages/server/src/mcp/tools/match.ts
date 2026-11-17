@@ -50,7 +50,7 @@ export const matchTools = [
     name: 'spec_match',
     title: 'Match a request to specs',
     kind: 'read',
-    description: `Where does a feature / change request fit? Pass it in the user's words; call right after feedback_create.
+    description: `Where does a feature / change request fit? Pass it in the user's words; call right after request_create.
 Returns top candidate specs (fit 0..1, reasons, best sections, affected components, standards, criteria count) and a suggestion extend_section | new_section | new_spec (you decide; also consider "already covered" or a standard).
 Example: {"request":"let users stay signed in for 30 days"}`,
     input: specMatchInputSchema,

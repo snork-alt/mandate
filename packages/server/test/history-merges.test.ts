@@ -49,7 +49,7 @@ describe('merged history', () => {
     const out = (name: string) => node.neighbors.find((g) => g.direction === 'out' && g.name === name)?.nodes.map((x) => x.uri) ?? [];
     expect(out('authored_by')).toEqual([`mandate://agents/${encodeURIComponent(agentA)}`]);
     expect(out('on_branch')).toEqual(['mandate://branches/spec%2Fdevice-limits']);
-    if (feedback) expect(out('resolves')).toEqual([`mandate://feedback/${feedback}`]);
+    if (feedback) expect(out('resolves')).toEqual([`mandate://requests/${feedback}`]);
     expect(out('changed')).toEqual(expect.arrayContaining(['mandate://specs/user-sessions/sections/device-limits']));
     const byAgent = await fx.index.historySearch({ agent: agentA });
     expect(new Set(byAgent.commits.map((c) => c.sha))).toEqual(new Set(sideCommits));

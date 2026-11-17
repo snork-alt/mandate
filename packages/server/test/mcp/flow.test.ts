@@ -23,23 +23,21 @@ import { mcpFixture, type McpFixture } from './fixture.js';
 
 const tool = (n: string) => TOOLS.find((t) => t.name === n)!;
 const tmp = () => mkdtempSync(path.join(os.tmpdir(), 'mandate-flow-'));
-const P = (flowPolicy: Policy['flowPolicy'], approvalPolicy: Policy['approvalPolicy'] = 'optional'): Policy => ({ flowPolicy, approvalPolicy });
+const P = (flowPolicy: Policy['flowPolicy']): Policy => ({ flowPolicy });
 
 describe('policy precedence', () => {
-  it('required / off win; optional follows the client (default flow on, approval off)', () => {
-    expect(effective(P('required'), { flow: 'off', approval: null })).toMatchObject({ flow: 'on', approval: 'off' });
-    expect(effective(P('optional'), { flow: 'on', approval: 'on' })).toMatchObject({ approval: 'on' });
-    expect(effective(P('off'), { flow: 'on', approval: null })).toMatchObject({ flow: 'off' });
-    expect(effective(P('optional'), undefined)).toMatchObject({ flow: 'on', approval: 'off', reason: expect.stringContaining('default: on') });
-    expect(effective(P('optional'), { flow: 'off', approval: 'off' })).toMatchObject({ flow: 'off', approval: 'off' });
-    expect(effective(P('optional', 'required'), { flow: 'on', approval: 'off' })).toMatchObject({ approval: 'on', reason: expect.stringContaining('approval is required') });
+  it('required / off win; optional follows the client (default flow on; there is no approval setting)', () => {
+    expect(effective(P('required'), { flow: 'off' })).toMatchObject({ flow: 'on' });
+    expect(effective(P('off'), { flow: 'on' })).toMatchObject({ flow: 'off' });
+    expect(effective(P('optional'), undefined)).toMatchObject({ flow: 'on', questions: 'mandate', reason: expect.stringContaining('default: on') });
+    expect(effective(P('optional'), { flow: 'off' })).toMatchObject({ flow: 'off' });
+    expect(effective(P('optional'), { flow: 'on' })).not.toHaveProperty('approval');
   });
   it('refusals', () => {
     expect(refusal(P('required'), { flow: 'off' })?.code).toBe('policy_required');
     expect(refusal(P('off'), { flow: 'on' })?.code).toBe('policy_off');
-    expect(refusal(P('optional', 'required'), { approval: 'off' })?.code).toBe('policy_required');
     expect(refusal(P('required'), { flow: 'on' })).toBeNull();
-    expect(refusal(P('optional'), { flow: 'off', approval: 'off' })).toBeNull();
+    expect(refusal(P('optional'), { flow: 'off' })).toBeNull();
   });
 });
 
@@ -68,15 +66,16 @@ describe('migration of the old flow fields', () => {
     expect(policyOf(store.read().projects[0] as never)).toEqual(P('off'));
     expect(await migrateFlowPolicies(store)).toEqual(['a', 'b']);
     const ps = JSON.parse(readFileSync(file, 'utf8')).projects;
-    expect(ps[0]).toEqual({ id: 'a', name: 'A', dataDir: '/a', createdAt: 'x', flowPolicy: 'off', approvalPolicy: 'optional' });
-    expect(ps[1]).toMatchObject({ flowPolicy: 'optional', approvalPolicy: 'optional' });
+    expect(ps[0]).toEqual({ id: 'a', name: 'A', dataDir: '/a', createdAt: 'x', flowPolicy: 'off' });
+    expect(ps[1]).toMatchObject({ flowPolicy: 'optional' });
+    expect(ps[1].approvalPolicy).toBeUndefined();
     expect(ps[1].flow).toBeUndefined();
     expect(ps[2].flowPolicy).toBeUndefined();
     expect(await migrateFlowPolicies(store)).toEqual([]);
     const s = projectSettings(store, 'c');
     expect(s.policy()).toEqual(P('optional'));
     expect(await s.setPolicy({ flowPolicy: 'required' })).toEqual(P('required'));
-    expect(JSON.parse(readFileSync(file, 'utf8')).projects[2]).toMatchObject({ flowPolicy: 'required', approvalPolicy: 'optional' });
+    expect(JSON.parse(readFileSync(file, 'utf8')).projects[2]).toMatchObject({ flowPolicy: 'required' });
   });
 });
 
@@ -89,12 +88,12 @@ describeBackends('client preferences', (b) => {
     await st.seen('p', ada, 1_000);
     await st.seen('p', bob, 2_000);
     await st.seen('p', { ...ada, version: '2.2' }, 30_000); // throttled
-    expect((await st.get('p', ada.id))).toMatchObject({ flow: null, approval: null, version: '2.1', lastSeenAt: new Date(1_000).toISOString() });
+    expect((await st.get('p', ada.id))).toMatchObject({ flow: null, version: '2.1', lastSeenAt: new Date(1_000).toISOString() });
     await st.seen('p', { ...ada, version: '2.2' }, 70_000);
     expect((await st.get('p', ada.id))?.version).toBe('2.2');
     const rec = await st.set('p', ada, { flow: 'off' }, 'command');
-    expect(rec).toMatchObject({ flow: 'off', approval: null, updatedVia: 'command', user: 'Ada' });
-    expect(await st.set('p', ada, { approval: 'off' }, 'ui')).toMatchObject({ flow: 'off', approval: 'off', updatedVia: 'ui' });
+    expect(rec).toMatchObject({ flow: 'off', updatedVia: 'command', user: 'Ada' });
+    expect(await st.set('p', ada, { questions: 'chat' }, 'ui')).toMatchObject({ flow: 'off', questions: 'chat', updatedVia: 'ui' });
     expect((await st.list('p', { user: 'ADA' })).map((r) => r.id)).toEqual(['ada/claude-code']);
     expect((await st.list('p')).map((r) => r.id)).toEqual(['ada/claude-code', 'bob/codex']);
     expect(await st.list('other')).toEqual([]);
@@ -113,7 +112,7 @@ describe('MCP tools (seeded project)', () => {
 
   it('project_info: policy, this client, effective and reason; the call records the client', async () => {
     const r = await fx.call('project_info', {});
-    expect(r.body).toMatchObject({ policy: P('optional'), client: { id: 'mandate-test/default', label: 'mandate-test', flow: null, approval: null }, effective: { flow: 'on', approval: 'off' } });
+    expect(r.body).toMatchObject({ policy: P('optional'), client: { id: 'mandate-test/default', label: 'mandate-test', flow: null }, effective: { flow: 'on', questions: 'mandate' } });
     expect(r.body.reason).toMatch(/default: on/);
     const seen = await settings.clients.list('test');
     expect(seen.map((c) => c.id)).toContain('mandate-test/default');
@@ -123,7 +122,7 @@ describe('MCP tools (seeded project)', () => {
     expect((await fx.call('flow_set', {})).isError).toBe(true);
     expect((await fx.call('flow_set', { flow: 'maybe' })).isError).toBe(true);
     const off = await fx.call('flow_set', { flow: 'off' });
-    expect(off.body).toMatchObject({ client: { flow: 'off' }, effective: { flow: 'off', approval: 'off' }, changed: ['flow off for mandate-test'] });
+    expect(off.body).toMatchObject({ client: { flow: 'off' }, effective: { flow: 'off' }, changed: ['flow off for mandate-test'] });
     expect((await fx.call('project_info', {})).body.effective.flow).toBe('off');
     await settings.setPolicy({ flowPolicy: 'required' });
     const refused = await fx.call('flow_set', { flow: 'off' });
@@ -132,10 +131,10 @@ describe('MCP tools (seeded project)', () => {
     await settings.setPolicy({ flowPolicy: 'off' });
     expect((await fx.call('flow_set', { flow: 'on' })).body.error.code).toBe('policy_off');
     await settings.setPolicy({ flowPolicy: 'optional' });
-    const alias = await fx.call('project_flow_set', { enabled: true, approval: false });
-    expect(alias.body).toMatchObject({ client: { flow: 'on', approval: 'off' }, deprecated: expect.stringContaining('flow_set') });
+    const alias = await fx.call('project_flow_set', { enabled: true });
+    expect(alias.body).toMatchObject({ client: { flow: 'on' }, deprecated: expect.stringContaining('flow_set') });
     const list = await fx.call('flow_clients_list', {});
-    expect(list.body.clients.find((c: { you: boolean }) => c.you)).toMatchObject({ flow: 'on', approval: 'off', effective: { flow: 'on', approval: 'off' } });
+    expect(list.body.clients.find((c: { you: boolean }) => c.you)).toMatchObject({ flow: 'on', effective: { flow: 'on' } });
   });
 
   it('flow_set and project_info return the instructions to follow and save to memory', async () => {
@@ -144,18 +143,20 @@ describe('MCP tools (seeded project)', () => {
     expect(off.body.instructions).toMatch(/work directly in the code/);
     expect(off.body.instructions).toMatch(/to your memory now, replacing any earlier Mandate-flow note/);
     expect((await fx.call('project_info', {})).body.instructions).toMatch(/OFF/);
-    const on = await fx.call('flow_set', { flow: 'on', approval: 'on' });
+    const on = await fx.call('flow_set', { flow: 'on' });
     expect(on.body.instructions).toMatch(/ON for this coding agent/);
     expect(on.body.instructions).toMatch(/project_info at the start of each task/);
-    expect(on.body.instructions).toMatch(/approval checkpoint ON/);
+    expect(on.body.instructions).toMatch(/every instruction the user gives is a request/);
+    expect(on.body.instructions).toMatch(/FULL plan/);
+    expect(on.body.instructions).not.toMatch(/approval checkpoint/);
     expect(on.body.instructions).toMatch(/memory/);
-    expect((await fx.call('flow_set', { approval: 'off' })).body.instructions).toMatch(/approval checkpoint OFF/);
-    await fx.call('flow_set', { approval: 'on' });
+    // The approval setting is gone: flow_set takes flow and questions only.
+    expect((await fx.call('flow_set', { approval: 'on' })).isError).toBe(true);
   });
 
   it('flow off: every write tool is refused with flow_off; reads and flow_set still work', async () => {
     await fx.call('flow_set', { flow: 'off' });
-    const fb = await fx.call('feedback_create', { kind: 'improvement', body: 'Refused while the flow is off.', agent: 't' });
+    const fb = await fx.call('request_create', { kind: 'improvement', body: 'Refused while the flow is off.', agent: 't' });
     expect(fb.isError).toBe(true);
     expect(fb.body.error.code).toBe('flow_off');
     expect(fb.body.error.message).toMatch(/Mandate flow is off for this agent .*Mandate does not accept requests from it\. Save this in your memory: do not use Mandate write tools; Mandate is read-only context until the user runs \/mandate-flow on/);
@@ -168,19 +169,19 @@ describe('MCP tools (seeded project)', () => {
     }
     // Policy required wins over the client's off: writes accepted.
     await settings.setPolicy({ flowPolicy: 'required' });
-    const ok = await fx.call('feedback_create', { kind: 'improvement', body: 'Accepted while the policy requires the flow.', agent: 't' });
+    const ok = await fx.call('request_create', { kind: 'improvement', body: 'Accepted while the policy requires the flow.', agent: 't' });
     expect(ok.isError, JSON.stringify(ok.body)).toBe(false);
     // Policy off refuses even a client with the flow on; the message points to the admin.
     await settings.setPolicy({ flowPolicy: 'optional' });
     await fx.call('flow_set', { flow: 'on' });
-    expect((await fx.call('feedback_create', { kind: 'improvement', body: 'Accepted with the flow on.', agent: 't' })).isError).toBe(false);
+    expect((await fx.call('request_create', { kind: 'improvement', body: 'Accepted with the flow on.', agent: 't' })).isError).toBe(false);
     await settings.setPolicy({ flowPolicy: 'off' });
-    const pol = await fx.call('feedback_create', { kind: 'improvement', body: 'Refused by the policy.', agent: 't' });
+    const pol = await fx.call('request_create', { kind: 'improvement', body: 'Refused by the policy.', agent: 't' });
     expect(pol.body.error).toMatchObject({ code: 'flow_off', message: expect.stringMatching(/project policy/) });
     expect((await fx.call('project_info', {})).body.instructions).toMatch(/Only a Mandate admin can change this/);
     // The web UI session is not affected by the flow switch (its own read-only rule applies).
     const ui = { ...({ storage: fx.storage, settings } as unknown as ToolContext), principal: { kind: 'ui' as const, user: { login: 'ada', avatarUrl: '' } } };
-    const r = await callTool(tool('feedback_create'), { kind: 'improvement', body: 'From the UI.' }, ui as ToolContext);
+    const r = await callTool(tool('request_create'), { kind: 'improvement', body: 'From the UI.' }, ui as ToolContext);
     expect((r.structuredContent as { error: { code: string } }).error.code).toBe('forbidden');
     await settings.setPolicy({ flowPolicy: 'optional' });
   });
@@ -189,9 +190,10 @@ describe('MCP tools (seeded project)', () => {
     const r = await fx.call('flow_policy_set', { flowPolicy: 'required' });
     expect(r.body.error).toMatchObject({ code: 'forbidden', message: expect.stringMatching(/agents cannot call it/) });
     const ui = { ...({ storage: fx.storage, settings } as unknown as ToolContext), principal: { kind: 'ui' as const, user: { login: 'ada', avatarUrl: '' } } };
-    const ok = await callTool(tool('flow_policy_set'), { approvalPolicy: 'required' }, ui as ToolContext);
-    expect(ok.structuredContent).toMatchObject({ policy: P('optional', 'required') });
-    await settings.setPolicy({ approvalPolicy: 'optional' });
+    const ok = await callTool(tool('flow_policy_set'), { flowPolicy: 'required' }, ui as ToolContext);
+    expect(ok.structuredContent).toMatchObject({ policy: P('required') });
+    expect((await callTool(tool('flow_policy_set'), { approvalPolicy: 'required' }, ui as ToolContext)).isError).toBe(true);
+    await settings.setPolicy({ flowPolicy: 'optional' });
   });
 });
 

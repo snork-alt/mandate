@@ -129,7 +129,7 @@ export const WRITE_FIELDS = {
   /** Retry key: the same key with the same arguments replays the first result instead of writing twice. */
   idempotencyKey: z.string().regex(/^[A-Za-z0-9_.:-]{8,128}$/, '8-128 chars of A-Z a-z 0-9 _ . : -').optional(),
   /**
-   * Why this write happens: one or more references (feedback item, audit finding, work order, spec / standard section,
+   * Why this write happens: one or more references (request, audit finding, work order, spec / standard section,
    * ...). Recorded as a `Caused-By:` trailer and `caused_by` lineage edges; always pass it in the Mandate flow.
    */
   cause: causeInputSchema.optional(),
@@ -181,7 +181,7 @@ export function principalUser(ctx: Pick<ToolContext, 'principal'>): string | und
 
 /**
  * Write tools that are steps of the Mandate flow: without a `cause` they succeed with a warning (the agent should pass
- * the feedback item / finding / work order it acts on). Origins (feedback_create, audits, claims, heartbeats) are not.
+ * the request / finding / work order it acts on). Origins (request_create, audits, claims, heartbeats) are not.
  */
 export const FLOW_CAUSE_TOOLS = /^(spec|standard|component)_(create|update_meta|status_set|archive|section_(insert|update|move|archive|link_add|link_remove))$|^(work_order_create|work_order_section_done|work_order_complete|verification_record)$/;
 
@@ -345,6 +345,7 @@ const CONTRIBUTOR_TOOLS: Record<string, string | null> = {
   standard_get: 'standards',
   component_get: 'components',
   work_order_get: 'work-orders',
+  request_get: 'feedback',
   feedback_get: 'feedback',
   audit_get: 'audits',
   doc_get: null,
@@ -454,7 +455,7 @@ async function flowNews(def: AnyToolDef, ctx: ToolContext): Promise<void> {
     const s = ctx.settings!;
     const policy = s.policy();
     const eff = effective(policy, await s.clients.get(s.project, me.id).catch(() => undefined));
-    const sig = `${eff.flow}|${eff.approval}|${eff.questions}`;
+    const sig = `${eff.flow}|${eff.questions}`;
     const prev = await news.store.flowSig(s.project, me.id);
     if (prev !== sig) {
       await news.store.setFlowSig(s.project, me.id, sig);
@@ -542,7 +543,7 @@ async function runCall(def: AnyToolDef, rawArgs: unknown, ctx: ToolContext): Pro
     const given = cause === undefined ? [] : Array.isArray(cause) ? cause : [cause];
     causes = [...new Set(await resolveCauses(ctx.storage, implied.length ? [...given, ...implied] : cause))];
   } catch (e) {
-    if (e instanceof CauseError) return errorResult({ code: 'invalid_cause', message: e.message, path: e.path, hint: 'pass existing references: a feedback item, audit finding, work order, spec / standard section, ...' });
+    if (e instanceof CauseError) return errorResult({ code: 'invalid_cause', message: e.message, path: e.path, hint: 'pass existing references: a request, audit finding, work order, spec / standard section, ...' });
     return errorResult(toToolError(e, keys));
   }
   if (causes.length) trailers = { ...trailers, [CAUSE_TRAILER]: causes.join(', ') };
@@ -563,9 +564,9 @@ async function runCall(def: AnyToolDef, rawArgs: unknown, ctx: ToolContext): Pro
   const wctx: ToolContext = { ...ctx, commit: { agent: who, ...(user ? { user } : {}), ...(causes.length ? { causes } : {}), ...(branch ? { branch } : {}), trailers, ...(idempotencyKey ? { idempotencyKey } : {}) } };
   const flowWarning =
     !causes.length && FLOW_CAUSE_TOOLS.test(def.name) && !!ctx.settings && ctx.settings.policy().flowPolicy !== 'off'
-      ? `missing_cause: ${def.name} is a step of the Mandate flow; pass cause (the feedback item, audit finding, work order or section this write acts on, e.g. "cause": "mandate://feedback/<id>") so lineage records why`
+      ? `missing_cause: ${def.name} is a step of the Mandate flow; pass cause (the request, audit finding, work order or section this write acts on, e.g. "cause": "mandate://requests/<id>") so lineage records why`
       : null;
-  // L-5: a `Feedback:` trailer (addresses) is recorded as the change's cause; warn when the item targets nothing in
+  // L-5: a `Request:` trailer (addresses) is recorded as the change's cause; warn when the item targets nothing in
   // the changed document (a wrong cause cannot be removed from history later).
   const addrWarning = await addressesWarning(ctx, rest).catch(() => null);
   const warns = [flowWarning, addrWarning].filter((w): w is string => !!w);
@@ -574,7 +575,7 @@ async function runCall(def: AnyToolDef, rawArgs: unknown, ctx: ToolContext): Pro
   return idempotencyKey ? remember(`${ctx.project ? `${ctx.project.id}:` : ''}${def.name}:${who}:${idempotencyKey}`, JSON.stringify({ ...rest, ...(cause === undefined ? {} : { cause }), ...(branch === undefined ? {} : { branch }) }), run, ctx.idempotency) : run();
 }
 
-/** `feedback_target_mismatch` when a doc edit `addresses` feedback that targets nothing in the edited document (L-5). */
+/** `request_target_mismatch` when a doc edit `addresses` feedback that targets nothing in the edited document (L-5). */
 async function addressesWarning(ctx: ToolContext, args: Record<string, unknown>): Promise<string | null> {
   const list = Array.isArray(args.addresses) ? (args.addresses as unknown[]).filter((x): x is string => typeof x === 'string') : [];
   const doc = typeof args.ref === 'string' ? parseRef(args.ref) : null;
@@ -587,7 +588,7 @@ async function addressesWarning(ctx: ToolContext, args: Record<string, unknown>)
     // An intake request filed without targets is linked by the changes that address it (no mismatch).
     if (fb && ((fb.targets ?? []) as string[]).length && !((fb.targets ?? []) as string[]).some((t) => t === docUri || t.startsWith(`${docUri}/`))) off.push(id);
   }
-  return off.length ? `feedback_target_mismatch: ${off.join(', ')} target${off.length === 1 ? 's' : ''} nothing in ${docUri.replace('mandate://', '')}; addresses records it as the cause of this change (lineage), so pass only the feedback this edit applies` : null;
+  return off.length ? `request_target_mismatch: ${off.join(', ')} target${off.length === 1 ? 's' : ''} nothing in ${docUri.replace('mandate://', '')}; addresses records it as the cause of this change (lineage), so pass only the request this edit applies` : null;
 }
 
 async function runTool(def: AnyToolDef, args: unknown, ctx: ToolContext, keys: string[], write = false, extraWarning: unknown = null): Promise<CallToolResult> {

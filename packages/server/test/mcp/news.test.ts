@@ -131,21 +131,9 @@ describe('news on user decisions about what the agent caused', () => {
     return r.body.question.uri as string;
   };
 
-  it('waiver declined, draft standard activated, stale claim released by a user', async () => {
+  it('draft standard activated, stale claim released by a user', async () => {
     const a = agent('ada', 'd1');
-    // Waiver: ada files feedback and links a deviation citing it; the user declines the feedback.
     const sc = await call(a, 'spec_create', { title: 'Waiver spec', summary: 'S.', sections: [{ title: 'Overview', summary: 'O.', body: 'O.' }] });
-    const st = await call(agent('bob', 'b1'), 'standard_create', { title: 'Waiver std', summary: 'S.', sections: [{ title: 'Rule', summary: 'R.', body: 'R.' }], cause: await confirmed(agent('bob', 'b1')) });
-    expect(st.isError, JSON.stringify(st.body)).toBe(false);
-    const fb = await call(agent('bob', 'b1'), 'feedback_create', { kind: 'improvement', body: 'Allow this deviation.', targets: [await firstSection(a, sc.body.ref, 'spec_get')] });
-    expect(fb.isError, JSON.stringify(fb.body)).toBe(false);
-    // The user approves the feedback; ada links the deviation citing it (a waiver it caused).
-    expect((await call(ui('carol'), 'feedback_accept', { ref: fb.body.ref })).isError).toBe(false);
-    const link = await call(a, 'spec_section_link_add', { ref: await firstSection(a, sc.body.ref, 'spec_get'), to: await firstSection(a, st.body.ref, 'standard_get'), rel: 'deviates_from', note: 'Justified.', feedback: fb.body.ref.split('/').pop() });
-    expect(link.isError, JSON.stringify(link.body)).toBe(false);
-    expect((await news.store.watchers('test', [fb.body.ref])).map((w) => `${w.client} ${w.role}`).sort()).toEqual(['ada/claude-code waiver', 'bob/claude-code created']);
-    // The user's later decision on the waiver (revisit / decline) arrives as a feedback event.
-    await news.ingest({ id: `t-waiver-${Date.now()}`, commit: 'x', type: 'feedback.closed', at: new Date().toISOString(), agent: 'mandate-ui', user: 'ada', refs: [fb.body.ref], summary: `ada closed ${fb.body.ref.split('/').pop()} (rejected)` });
     // Draft standard: ada creates it, the user activates it.
     const draft = await call(a, 'standard_create', { title: 'Draft std', summary: 'S.', sections: [{ title: 'Rule', summary: 'R.', body: 'R.' }], cause: await confirmed(a) });
     expect(draft.isError, JSON.stringify(draft.body)).toBe(false);
@@ -157,10 +145,8 @@ describe('news on user decisions about what the agent caused', () => {
     await news.ingest({ id: `t-release-${Date.now()}`, commit: 'x', type: 'work_order.released', at: new Date().toISOString(), agent: 'mandate-ui', user: 'carol', refs: [wo.body.ref], summary: `claude-code released ${wo.body.ref.split('/').pop()}` });
     await settle();
     const got = kinds({ news: { items: (await call(agent('ada', 'd1'), 'news_list', { unread: true, limit: 50 })).body.items } });
-    expect(got).toContain(`waiver_decided ${fb.body.ref}`);
     expect(got).toContain(`claim_released ${wo.body.ref}`);
     if (!act.isError) expect(got).toContain(`standard_draft_decided ${draft.body.ref}`);
-    expect((await call(agent('bob', 'b1'), 'news_list', { unread: true })).body.items.filter((i: { kind: string }) => i.kind === 'waiver_decided')).toEqual([]);
     await call(agent('ada', 'd1'), 'news_ack', { all: true });
   }, 60_000);
 });

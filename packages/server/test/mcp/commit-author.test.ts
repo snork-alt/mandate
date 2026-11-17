@@ -84,11 +84,11 @@ describe.each([
 
   it('web UI action: authored by the signed-in user (directory name + noreply id)', async () => {
     const s = (await storage.specs.list()).find((x) => x.status !== 'archived' && x.sections.length)!;
-    const fb = await call(ctxOf(), 'feedback_create', { targets: [`mandate://specs/${s.id}/sections/${s.sections[0]!.id}`], kind: 'bug', body: 'author test', agent: 't' });
+    const fb = await call(ctxOf(), 'request_create', { targets: [`mandate://specs/${s.id}/sections/${s.sections[0]!.id}`], kind: 'bug', body: 'author test', agent: 't' });
     // An agent key without a user: Mandate authors.
     expect(head('%an <%ae>')).toBe('Mandate <mandate@example.com>');
     const ui = { ...ctxOf({ kind: 'ui', user: { login: 'ada', avatarUrl: '' } }, 'mandate-web'), access: 'read', uiAccess: 'write' } as ToolContext;
-    await call(ui, 'feedback_accept', { ref: fb.ref });
+    await call(ui, 'request_close', { ref: fb.ref, resolution: 'rejected', resolutionNote: 'not now' });
     expect(head('%an <%ae>')).toBe('Ada Lovelace <42+ada@users.noreply.github.com>');
     expect(head('%cn <%ce>')).toBe('Mandate <mandate@example.com>');
     expect(head('%B')).toMatch(/^Mandate-User: ada$/m);

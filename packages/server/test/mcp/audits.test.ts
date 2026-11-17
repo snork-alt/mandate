@@ -146,16 +146,16 @@ describe('audits', () => {
     expect(again.workOrders).toEqual([]);
 
     // spec_wrong -> feedback with fromFinding: recorded on the finding.
-    const fb = await ok('feedback_create', { targets: [`mandate://standards/${std}/sections/r-must`], kind: 'conflict', body: 'The rule contradicts the API.', fromFinding: `mandate://audits/${id}/findings/f2` });
-    expect(fb.feedback.fromFinding).toBe(`mandate://audits/${id}/findings/f2`);
-    expect((await fail('feedback_create', { targets: [`mandate://standards/${std}/sections/r-must`], kind: 'conflict', body: 'x', fromFinding: `mandate://audits/${id}/findings/f99` })).code).toBe('not_found');
+    const fb = await ok('request_create', { targets: [`mandate://standards/${std}/sections/r-must`], kind: 'conflict', body: 'The rule contradicts the API.', fromFinding: `mandate://audits/${id}/findings/f2` });
+    expect(fb.request.fromFinding).toBe(`mandate://audits/${id}/findings/f2`);
+    expect((await fail('request_create', { targets: [`mandate://standards/${std}/sections/r-must`], kind: 'conflict', body: 'x', fromFinding: `mandate://audits/${id}/findings/f99` })).code).toBe('not_found');
 
     // Completing the fix work order does not resolve findings; a re-check does.
     let f1 = (await read('audit_findings', { target: specUri })).findings.find((f: any) => f.id === 'f1');
     expect(f1.resolution).toMatchObject({ status: 'open', workOrder: woId });
     expect(f1.resolution.feedback).toBeUndefined();
     const f2 = (await read('audit_findings', { target: specUri })).findings.find((f: any) => f.id === 'f2');
-    expect(f2.resolution.feedback).toBe(fb.feedback.id);
+    expect(f2.resolution.feedback).toBe(fb.request.id);
     await ok('work_order_claim', { ref: woId });
     await ok('work_order_complete', { ref: woId, outcome: 'Fixed the deviations.' });
     f1 = (await read('audit_findings', { target: specUri, status: ['open'] })).findings.find((f: any) => f.id === 'f1');

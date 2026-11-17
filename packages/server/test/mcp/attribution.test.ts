@@ -84,7 +84,7 @@ describe('user + agent on every write', () => {
     const ctx = ctxOf('team', USER);
     const id = uid('srvrec');
     await call(ctx, 'spec_create', spec(id));
-    const fb = await call(ctx, 'feedback_create', { targets: [`mandate://specs/${id}/sections/overview`], kind: 'bug', body: 'b' });
+    const fb = await call(ctx, 'request_create', { targets: [`mandate://specs/${id}/sections/overview`], kind: 'bug', body: 'b' });
     expect((await storage.feedback.get(fb.ref.split('/').pop())).createdByUser).toBe('octocat');
     const v = await call(ctx, 'verification_record', { criterion: `mandate://specs/${id}/sections/ac-works`, code: { repo: 'app', commit: 'abcdef1234' }, result: 'pass', method: 'test' });
     expect(v.verification.byUser).toBe('octocat');
@@ -114,7 +114,7 @@ describe('the user is never taken from client input', () => {
     const ctx = ctxOf('team', USER);
     const id = uid('spoof');
     await call(ctx, 'spec_create', spec(id));
-    const r = await callTool(tool('feedback_create'), { targets: [`mandate://specs/${id}/sections/overview`], kind: 'bug', body: 'b', createdByUser: 'mallory' }, ctx);
+    const r = await callTool(tool('request_create'), { targets: [`mandate://specs/${id}/sections/overview`], kind: 'bug', body: 'b', createdByUser: 'mallory' }, ctx);
     expect(r.isError).toBe(true);
     const v = await callTool(tool('verification_record'), { criterion: `mandate://specs/${id}/sections/ac-works`, code: { repo: 'app', commit: 'abcdef1234' }, result: 'pass', method: 'test', byUser: 'mallory' }, ctx);
     expect(v.isError).toBe(true);
@@ -128,7 +128,7 @@ describe('the user is never taken from client input', () => {
       kind: 'write',
       description: 's',
       input: z.object({ who: z.string() }).strict(),
-      trailers: (a) => ({ 'Mandate-User': a.who, 'Agent-User': a.who, 'Caused-By': 'mandate://feedback/x', Feedback: 'fb-1' }),
+      trailers: (a) => ({ 'Mandate-User': a.who, 'Agent-User': a.who, 'Caused-By': 'mandate://requests/x', Feedback: 'fb-1' }),
       run: async (_a, c) => {
         seen = c.commit!.trailers;
         return {};

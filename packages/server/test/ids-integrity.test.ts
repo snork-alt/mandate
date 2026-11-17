@@ -66,9 +66,9 @@ describe('ids are assigned by Mandate', () => {
   it('sequenced kinds keep their formats: feedback fb-NNNN, work orders q-NNNN, verifications vr-NNNN; comments and audits as before', async () => {
     const { ok } = await setup();
     const s = await ok('spec_create', SPEC('Pay', [{ title: 'Design', body: 'd' }, { title: 'Works', type: 'acceptance', method: 'test', body: 'ok' }]));
-    const fb1 = await ok('feedback_create', { targets: [`${s.ref}/sections/design`], kind: 'question', body: 'Why?' });
-    const fb2 = await ok('feedback_create', { targets: [`${s.ref}/sections/design`], kind: 'question', body: 'How?' });
-    expect([fb1.ref, fb2.ref]).toEqual(['mandate://feedback/fb-0001', 'mandate://feedback/fb-0002']);
+    const fb1 = await ok('request_create', { targets: [`${s.ref}/sections/design`], kind: 'question', body: 'Why?' });
+    const fb2 = await ok('request_create', { targets: [`${s.ref}/sections/design`], kind: 'question', body: 'How?' });
+    expect([fb1.ref, fb2.ref]).toEqual(['mandate://requests/fb-0001', 'mandate://requests/fb-0002']);
     const wo = await ok('work_order_create', { spec: s.ref, sections: ['design'], kind: 'review', plan: 'Plan.' });
     expect(wo.ref ?? wo.workOrder?.id).toMatch(/q-0001$/);
     const vr = await ok('verification_record', { criterion: `${s.ref}/sections/works`, code: { repo: 'app', commit: 'abcdef1' }, result: 'pass', method: 'test' });
@@ -113,7 +113,7 @@ describe('ids are assigned by Mandate', () => {
     const spec = docs[0]!.ref as string;
     const secs = await Promise.all(Array.from({ length: 6 }, (_, i) => ok('spec_section_insert', { doc: spec, section: { title: 'Part', body: `p${i}` } })));
     expect(new Set(secs.map((x) => x.ref)).size).toBe(6);
-    const fbs = await Promise.all(Array.from({ length: 6 }, () => ok('feedback_create', { targets: [`${spec}/sections/overview`], kind: 'question', body: 'q' })));
+    const fbs = await Promise.all(Array.from({ length: 6 }, () => ok('request_create', { targets: [`${spec}/sections/overview`], kind: 'question', body: 'q' })));
     expect(new Set(fbs.map((x) => x.ref)).size).toBe(6);
   });
 
@@ -145,7 +145,7 @@ describe('integrity is always checked', () => {
     expect(s.integrity).toEqual({ introduced: [], resolved: [] });
     const link = await ok('spec_section_link_add', { ref: `${s.ref}/sections/charge`, to: c.ref, rel: 'affects' });
     expect(link.integrity.resolved.map((i: { rule: string }) => i.rule)).toEqual(['component_unreferenced']);
-    const fb = await ok('feedback_create', { targets: [`${s.ref}/sections/charge`], kind: 'question', body: 'q' });
+    const fb = await ok('request_create', { targets: [`${s.ref}/sections/charge`], kind: 'question', body: 'q' });
     expect(fb.integrity).toEqual({ introduced: [], resolved: [] });
   });
 

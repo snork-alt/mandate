@@ -38,9 +38,8 @@ async function setup() {
   const std = (id: string, sections: object[], extra: object = {}) => storage.standards.create(createStandardSchema.parse({ id, title: id, sections, ...extra }));
   const pass = (criterion: string, appliedTo?: string, repo = 'app') =>
     storage.verificationService.record({ criterion, ...(appliedTo ? { appliedTo } : {}), result: 'pass', method: 'review', code: { repo, commit: 'abc1234' }, by: 'ci' });
-  const feedback = async (target: string, meta: CommitMeta, accept = true) => {
+  const feedback = async (target: string, meta: CommitMeta) => {
     const f = await storage.feedbackService.create({ targets: [target], kind: 'question', body: 'approve?' }, meta);
-    if (accept) await storage.feedbackService.update(f.id, { status: 'accepted' }, meta);
     return f.id;
   };
   /** An implement work order with a plan, claimed by `agent` (the spec counts as claimed). */
@@ -111,30 +110,14 @@ describe('fable write review: MW-*', () => {
     expect(after.find((f) => f.id === f2)!.resolution?.feedback).toBe(fb.id);
   });
 
-  it('MW-2: waiver approval compares server-resolved principals, never raw agent strings', async () => {
-    const { storage, docs, spec, std, feedback } = await setup();
+  it('MW-2: a waiver records the server-resolved user (Mandate-User), never the raw agent string', async () => {
+    const { storage, docs, spec, std } = await setup();
     await std('ui', [rule('contrast')]);
-    await spec('s', [sec('a'), sec('b'), sec('c')]);
-    // Local mode: agent identities, trimmed and case-folded.
-    const fbAlice = await feedback(S('s', 'a'), as('alice'));
-    const caseVariant = await errOf(docs.linkAdd('specs', S('s', 'a'), { to: T('ui', 'contrast'), rel: 'deviates_from', note: 'n', feedback: fbAlice }, as(' Alice ')));
-    expect(caseVariant.message).toMatch(/same author/);
-    await docs.linkAdd('specs', S('s', 'a'), { to: T('ui', 'contrast'), rel: 'deviates_from', note: 'n', feedback: fbAlice }, as('bob'));
-    // Server mode: the user (Mandate-User, from the principal) decides, whatever the agent string says.
-    const user = (u: string, agent: string) => as(agent, { trailers: { [USER_TRAILER]: u } });
-    const fbGiulia = await feedback(S('s', 'b'), user('giulia', 'claude-code'));
-    const sameUser = await errOf(docs.linkAdd('specs', S('s', 'b'), { to: T('ui', 'contrast'), rel: 'deviates_from', note: 'n', feedback: fbGiulia }, user('Giulia', 'other-agent')));
-    expect(sameUser.message).toMatch(/same author/);
-    // Another user with the SAME agent string is someone else.
-    await docs.linkAdd('specs', S('s', 'b'), { to: T('ui', 'contrast'), rel: 'deviates_from', note: 'n', feedback: fbGiulia }, user('marco', 'claude-code'));
-    const stored = (await storage.specs.get('s')).sections.find((x) => x.id === 'b')!.links.find((l) => l.rel === 'deviates_from')!;
-    expect(stored.by).toBe('marco');
-    // Exemptions use the same rule.
-    await std('tagged', [rule('r')], { appliesTo: ['tag:api'] });
-    await spec('e', [sec('a')], { tags: ['api'] });
-    const fbE = await feedback(S('e', 'a'), as('alice'));
-    const ex = await errOf(docs.updateMeta('specs', 'e', { exemptFrom: [{ standard: 'tagged', reason: 'r', feedback: fbE }] }, as('ALICE')));
-    expect(ex.message).toMatch(/same author/);
+    await spec('s', [sec('a')]);
+    const user = (u: string, agent: string) => as(agent, { trailers: { [USER_TRAILER]: u, 'User-Approved': 'ask-0003' } });
+    await docs.linkAdd('specs', S('s', 'a'), { to: T('ui', 'contrast'), rel: 'deviates_from', note: 'n' }, user('marco', 'claude-code'));
+    const stored = (await storage.specs.get('s')).sections.find((x) => x.id === 'a')!.links.find((l) => l.rel === 'deviates_from')!;
+    expect(stored).toMatchObject({ by: 'marco', feedback: 'ask-0003' });
   });
 
   it('MW-3: an unrelated cycle never hides a new cycle; exact document matching', async () => {
@@ -180,15 +163,14 @@ describe('fable write review: MW-*', () => {
     await docs.sectionMove('specs', S('s', 'a'), { position: 'last' }, as('x'));
   });
 
-  it('MW-6: criteria removed through a standard write need accepted feedback when a spec is done or claimed', async () => {
-    const { storage, docs, spec, std, claimed, feedback } = await setup();
+  it('MW-6: criteria removed through a standard write need the user approval when a spec is done or claimed', async () => {
+    const { storage, docs, spec, std, claimed } = await setup();
     await std('sec', [rule('r1'), rule('r2')]);
     await spec('s', [sec('a', { links: [link(T('sec'), 'follows')] })], { status: 'ready' });
     await claimed('s', ['a']);
     const e = await errOf(docs.sectionArchive('standards', T('sec', 'r2'), as('x')));
     expect(e.code).toBe('criteria_shrink');
-    const fb = await feedback(T('sec', 'r2'), as('user'));
-    await docs.sectionArchive('standards', T('sec', 'r2'), as('x', { trailers: { Feedback: fb } }));
+    await docs.sectionArchive('standards', T('sec', 'r2'), as('x', { trailers: { 'User-Approved': 'ask-0001' } }));
     expect((await storage.standards.get('sec')).sections.find((x) => x.id === 'r2')!.archived).toBe(true);
   });
 
@@ -383,67 +365,29 @@ describe('fable write review: MW-*', () => {
 });
 
 describe('user-confirmed rules', () => {
-  it('waiver_self_approved: approvals come from someone else; strict with several users', async () => {
+  it('approval: waivers, exemptions and criteria removals carry the user\'s approval (an answered question)', async () => {
     const { storage, docs, spec, std, claimed } = await setup();
     await std('ui', [rule('contrast'), rule('focus')]);
     await spec('s', [sec('a', { links: [link(T('ui'), 'follows')] })]);
-    const filed = await storage.feedbackService.create({ targets: [S('s', 'a')], kind: 'question', body: 'waive?' }, as('claude-code@ci'));
-    await storage.feedbackService.update(filed.id, { status: 'accepted' }, as('snork-alt'));
-    expect((await storage.feedback.get(filed.id)).acceptedBy).toBe('snork-alt');
-    // The accepter writing the waiver itself (any case): refused; the filer too.
-    expect((await errOf(docs.linkAdd('specs', S('s', 'a'), { to: T('ui', 'contrast'), rel: 'deviates_from', note: 'n', feedback: filed.id }, as('Snork-Alt')))).code).toBe('waiver_self_approved');
-    expect((await errOf(docs.linkAdd('specs', S('s', 'a'), { to: T('ui', 'contrast'), rel: 'deviates_from', note: 'n', feedback: filed.id }, as('claude-code@ci')))).code).toBe('waiver_self_approved');
-    // Filed by one agent, accepted by snork-alt, written by a third identity: effective.
-    await docs.linkAdd('specs', S('s', 'a'), { to: T('ui', 'contrast'), rel: 'deviates_from', note: 'n', feedback: filed.id }, as('data-fix-agent'));
-    const v = await storage.verificationService.forSpec(await storage.specs.get('s'));
-    expect(v.inherited.flatMap((g) => g.criteria).find((c) => c.uri === T('ui', 'contrast'))!.waiver).toMatchObject({ effective: true });
-    // Server mode: principals are users; exemptions follow the same rule.
+    const approved = (agent: string) => as(agent, { trailers: { 'User-Approved': 'ask-0007' } });
+    const crit1 = () => storage.verificationService.forSpec(storage.specs.get('s').then((x) => x) as never);
+    void crit1;
+    // A waiver without the approval is recorded but pending; with it, in force (the question id is stored).
+    await docs.linkAdd('specs', S('s', 'a'), { to: T('ui', 'contrast'), rel: 'deviates_from', note: 'n' }, as('data-fix-agent'));
+    const waiverOf = async () => (await storage.verificationService.forSpec(await storage.specs.get('s'))).inherited.flatMap((g) => g.criteria).find((c) => c.uri === T('ui', 'contrast'))!.waiver;
+    expect(await waiverOf()).toMatchObject({ effective: false });
+    await docs.linkAdd('specs', S('s', 'a'), { to: T('ui', 'contrast'), rel: 'deviates_from', note: 'n' }, approved('data-fix-agent'));
+    expect(await waiverOf()).toMatchObject({ effective: true, feedback: 'ask-0007' });
+    // Exemptions need it outright.
     await std('tagged', [rule('r')], { appliesTo: ['tag:api'] });
     await spec('e', [sec('a')], { tags: ['api'] });
-    const user = (u: string, agent: string) => as(agent, { trailers: { [USER_TRAILER]: u } });
-    const fbE = await storage.feedbackService.create({ targets: [S('e', 'a')], kind: 'question', body: 'exempt?' }, user('giulia', 'claude-code'));
-    await storage.feedbackService.update(fbE.id, { status: 'accepted' }, user('marco', 'claude-code'));
-    expect((await errOf(docs.updateMeta('specs', 'e', { exemptFrom: [{ standard: 'tagged', reason: 'r', feedback: fbE.id }] }, user('MARCO', 'other')))).code).toBe('waiver_self_approved');
-    // Criteria removal on a claimed spec: the accepter cannot approve its own removal.
+    expect((await errOf(docs.updateMeta('specs', 'e', { exemptFrom: [{ standard: 'tagged', reason: 'r' }] }, as('x')))).message).toMatch(/needs the user's approval/);
+    await docs.updateMeta('specs', 'e', { exemptFrom: [{ standard: 'tagged', reason: 'r' }] }, approved('x'));
+    // Criteria removal on a claimed spec.
     await spec('c', [sec('impl'), crit('ac')], { status: 'ready' });
     await claimed('c', ['impl']);
-    const fbC = await storage.feedbackService.create({ targets: [S('c', 'ac')], kind: 'improvement', body: 'drop it' }, as('alice'));
-    await storage.feedbackService.update(fbC.id, { status: 'accepted' }, as('bob'));
-    expect((await errOf(docs.sectionArchive('specs', S('c', 'ac'), as('bob', { trailers: { Feedback: fbC.id } })))).code).toBe('waiver_self_approved');
-    await docs.sectionArchive('specs', S('c', 'ac'), as('carol', { trailers: { Feedback: fbC.id } }));
-  });
-
-  it('self_approved_override: self-approval only with override + reason, for the sole active user or an admin', async () => {
-    const { storage, docs, spec, std, git } = await setup();
-    await std('ui', [rule('contrast')]);
-    await spec('s', [sec('a', { links: [link(T('ui'), 'follows')] }), sec('b', { links: [link(T('ui'), 'follows')] }), sec('c', { links: [link(T('ui'), 'follows')] })]);
-    const accept = TOOLS.find((t) => t.name === 'feedback_accept')!;
-    const serverCtx = (login: string, admin = false) =>
-      ({ storage, index: null, reads: new DocReadService(storage), clientName: 'claude-code', principal: { kind: 'user', login, project: 'test', via: 'pat', tokenId: 't', tokenName: 't' }, settings: { ...memorySettings(), isAdmin: () => admin } }) as unknown as ToolContext;
-    const call = async (ctx: ToolContext, args: object) => (await callTool(accept, args, ctx)).structuredContent as { error?: { code: string; message: string } };
-    const fileAs = async (u: string, sid: string) => (await storage.feedbackService.create({ targets: [S('s', sid)], kind: 'question', body: 'waive?' }, as('claude-code', { trailers: { [USER_TRAILER]: u } }))).id;
-    const waive = (fb: string, u: string, sid: string) => docs.linkAdd('specs', S('s', sid), { to: T('ui', 'contrast'), rel: 'deviates_from', note: 'n', feedback: fb }, as('claude-code', { trailers: { [USER_TRAILER]: u } }));
-    // Single active user (only "solo" writes): without the flag refused at the waiver, override needs a reason.
-    const f1 = await fileAs('solo', 'a');
-    expect((await call(serverCtx('solo'), { ref: f1 })).error).toBeUndefined();
-    expect((await errOf(waive(f1, 'solo', 'a'))).code).toBe('waiver_self_approved');
-    expect((await call(serverCtx('solo'), { ref: f1, override: true })).error?.code).toBe('validation');
-    expect((await call(serverCtx('solo'), { ref: f1, override: true, overrideReason: 'I am the only user' })).error).toBeUndefined();
-    await waive(f1, 'solo', 'a');
-    // Recorded: trailer, activity event, integrity warning.
-    const head = (await git.log(5)).find((c) => c.message.includes('Approval-Override'))!;
-    expect(head.message).toMatch(/Approval-Override: I am the only user/);
-    expect((await deriveCommitEvents(git, head.id)).map((e) => e.type)).toContain('approval.override');
-    expect(checkIntegrity(await storage.model()).filter((i) => i.rule === 'self_approved_override').map((i) => i.uri)).toEqual([`mandate://feedback/${f1}`]);
-    // Multi-user: another user wrote recently -> strict (override refused), unless admin.
-    const f2 = await fileAs('other', 'b');
-    expect((await call(serverCtx('solo'), { ref: f2, override: true, overrideReason: 'r' })).error?.code).toBe('override_not_allowed');
-    expect((await call(serverCtx('solo', true), { ref: f2, override: true, overrideReason: 'admin decision' })).error).toBeUndefined();
-    // No authenticated user (an agent without a GitHub principal): self-approval is refused.
-    const f3 = (await storage.feedbackService.create({ targets: [S('s', 'c')], kind: 'question', body: 'w' }, as('me'))).id;
-    const anon = { storage, index: null, reads: new DocReadService(storage), clientName: 'me', settings: memorySettings() } as unknown as ToolContext;
-    const r = await callTool(accept, { ref: f3, agent: 'me', override: true, overrideReason: 'nobody' }, anon);
-    expect((r.structuredContent as { error?: { code: string } }).error?.code).toBe('override_not_allowed');
+    expect((await errOf(docs.sectionArchive('specs', S('c', 'ac'), as('carol')))).code).toBe('criteria_shrink');
+    await docs.sectionArchive('specs', S('c', 'ac'), approved('carol'));
   });
 
   it('ready_gate: a spec becomes ready only when every live section has an acceptance criterion', async () => {
@@ -559,12 +503,12 @@ describe('fable data fixes: DF-*', () => {
     expect((await errOf(storage.feedbackService.create({ targets: [`mandate://audits/${a.id}/findings/f99`], kind: 'question', body: 'q' }, as('x')))).message).toMatch(/does not exist/);
   });
 
-  it('DF-11: spec_create takes addresses (Feedback trailer)', async () => {
+  it('DF-11: spec_create takes addresses (Request trailer)', async () => {
     const shared = await import('@mandate/shared');
     const tool = TOOLS.find((t) => t.name === 'spec_create')!;
     const args = { title: 'New', addresses: ['fb-0001'] };
     expect((tool.input as z.ZodTypeAny).safeParse(args).success).toBe(true);
-    expect(tool.trailers?.(args as never)).toMatchObject({ Feedback: 'fb-0001' });
+    expect(tool.trailers?.(args as never)).toMatchObject({ Request: 'fb-0001' });
     void shared;
   });
 
@@ -572,16 +516,15 @@ describe('fable data fixes: DF-*', () => {
     const { storage, docs, spec, git } = await setup();
     await spec('s', [sec('a')]);
     const f = await storage.feedbackService.create({ targets: [S('s', 'a')], kind: 'improvement', body: 'b' }, as('x'));
-    await storage.feedbackService.update(f.id, { status: 'accepted' }, as('x'));
     expect((await errOf(storage.feedbackService.update(f.id, { status: 'closed', resolution: 'applied' }, as('x')))).code).toBe('applied_without_changes');
-    await docs.sectionUpdate('specs', S('s', 'a'), { body: 'applied' }, as('x', { trailers: { Feedback: f.id } }));
+    await docs.sectionUpdate('specs', S('s', 'a'), { body: 'applied' }, as('x', { trailers: { Request: f.id } }));
     await storage.feedbackService.update(f.id, { status: 'closed', resolution: 'applied' }, as('x'));
     // An explicit commit link (relatedTo) also counts; a cause trailer too.
     const g = await storage.feedbackService.create({ targets: [S('s', 'a')], kind: 'improvement', body: 'c' }, as('x'));
-    await storage.feedbackService.update(g.id, { status: 'accepted', relatedTo: [`mandate://commits/${(await git.head())!}`] }, as('x'));
+    await storage.feedbackService.update(g.id, { relatedTo: [`mandate://commits/${(await git.head())!}`] }, as('x'));
     await storage.feedbackService.update(g.id, { status: 'closed', resolution: 'applied' }, as('x'));
     const h = await storage.feedbackService.create({ targets: [S('s', 'a')], kind: 'improvement', body: 'd' }, as('x'));
-    await docs.sectionUpdate('specs', S('s', 'a'), { body: 'caused' }, as('x', { trailers: { 'Caused-By': `mandate://feedback/${h.id}` } }));
+    await docs.sectionUpdate('specs', S('s', 'a'), { body: 'caused' }, as('x', { trailers: { 'Caused-By': `mandate://requests/${h.id}` } }));
     await storage.feedbackService.update(h.id, { status: 'closed', resolution: 'applied' }, as('x'));
   });
 });

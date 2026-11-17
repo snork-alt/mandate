@@ -61,7 +61,7 @@ async function specWithCriterion() {
   return id;
 }
 async function claimedWorkOrder(spec: string) {
-  const wo = await ok('work_order_create', { spec, sections: ['overview'], kind: 'implement', plan: '1. Do it.' });
+  const wo = await ok('work_order_create', { spec, sections: ['overview'], kind: 'implement', plan: { steps: ['1. Do it.'] } });
   await ok('work_order_claim', { ref: wo.ref });
   return wo.ref as string;
 }
@@ -100,7 +100,7 @@ describe('code context (session)', () => {
     expect(info.codeContext).toMatchObject({ repo: 'web-app', commit: 'a1b2c3d4e5', branch: 'main' });
     // An intent statement: no extra input, stamped automatically.
     const spec = await specWithCriterion();
-    await ok('feedback_create', { targets: [`mandate://specs/${spec}/sections/overview`], kind: 'bug', body: 'b' });
+    await ok('request_create', { targets: [`mandate://specs/${spec}/sections/overview`], kind: 'bug', body: 'b' });
     expect(lastMessage()).toContain('Code-Context: web-app@a1b2c3d');
     // An unknown repo is refused.
     expect((await fail('code_context_set', { repo: 'nope', commit: 'abcdef1' })).code).toBe('unknown_code_repo');

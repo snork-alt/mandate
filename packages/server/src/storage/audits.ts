@@ -898,7 +898,7 @@ export class AuditService {
     return { audit, item: audit.sections.find((s) => s.id === itemId) as Item };
   }
 
-  /** Record the feedback filed from a finding (feedback_create with fromFinding). */
+  /** Record the feedback filed from a finding (request_create with fromFinding). */
   async linkFeedback(uri: string, feedbackId: string, who: string, meta: CommitMeta = {}): Promise<void> {
     const n = parseNodeUri(uri);
     if (n?.kind !== 'findings') return;

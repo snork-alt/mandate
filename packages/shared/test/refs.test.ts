@@ -7,7 +7,8 @@ describe('refs', () => {
     [{ kind: 'specs', id: 'login-sso', sectionId: 'auth-flow' }, 'mandate://specs/login-sso/sections/auth-flow'],
     [{ kind: 'standards', id: 'security-baseline', sectionId: 'rules' }, 'mandate://standards/security-baseline/sections/rules'],
     [{ kind: 'work-orders', id: 'wo-01jx3k' }, 'mandate://work-orders/wo-01jx3k'],
-    [{ kind: 'feedback', id: 'fb-0012' }, 'mandate://feedback/fb-0012'],
+    // Requests: the internal kind stays 'feedback', the URI says requests (the old form still parses, below).
+    [{ kind: 'feedback', id: 'fb-0012' }, 'mandate://requests/fb-0012'],
     [{ kind: 'standards', id: 'security-baseline', sectionId: 'ac-no-secrets-in-logs', commit: 'abc1234' }, 'mandate://standards/security-baseline@abc1234/sections/ac-no-secrets-in-logs'],
     [{ kind: 'specs', id: 'a', commit: '3f2a9c1' }, 'mandate://specs/a@3f2a9c1'],
     [{ kind: 'specs', id: 'a', sectionId: 'b', commit: '3f2a9c1', lines: { start: 12, end: 20 } }, 'mandate://specs/a@3f2a9c1/sections/b#L12-L20'],
@@ -17,6 +18,14 @@ describe('refs', () => {
     ],
     [{ kind: 'specs', id: 'a', sectionId: 'b', lines: { start: 7, end: 7 } }, 'mandate://specs/a/sections/b#L7'],
   ];
+
+  it('mandate://feedback/<id> (the old form) parses to the same request', () => {
+    expect(parseRef('mandate://feedback/fb-0012')).toEqual({ kind: 'feedback', id: 'fb-0012' });
+    expect(parseRef('@mandate:mandate://requests/fb-0012')).toEqual({ kind: 'feedback', id: 'fb-0012' });
+    expect(parseRef('mandate://feedback/a/sections/b')).toBeNull();
+    expect(parseRef('mandate://requests/a/sections/b')).toBeNull();
+    expect(buildNodeUri(parseNodeUri('mandate://feedback/fb-0012')!)).toBe('mandate://requests/fb-0012');
+  });
 
   it.each(cases)('builds and parses %j', (ref, uri) => {
     expect(buildRef(ref)).toBe(uri);

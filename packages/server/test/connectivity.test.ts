@@ -20,6 +20,8 @@ const link = (to: string, rel: string, extra: object = {}) => ({ to, rel, ...ext
 const S = (id: string, sid?: string) => `mandate://specs/${id}${sid ? `/sections/${sid}` : ''}`;
 const T = (id: string, sid?: string) => `mandate://standards/${id}${sid ? `/sections/${sid}` : ''}`;
 const as = (name: string): CommitMeta => ({ author: { name, email: `${name}@example.com` } });
+/** A write carrying the user's approval: the tool layer adds this trailer from an answered approval question cited as cause. */
+const approved = (name: string): CommitMeta => ({ ...as(name), trailers: { 'User-Approved': 'ask-0001', 'Approved-By': 'ana' } });
 
 async function setup() {
   const git = await newStore(path.join(await tempDir(), 'repo'));
@@ -33,9 +35,8 @@ async function setup() {
   };
   const pass = (criterion: string, appliedTo?: string) =>
     storage.verificationService.record({ criterion, ...(appliedTo ? { appliedTo } : {}), result: 'pass', method: 'review', code: { repo: 'app', commit: 'abc1234' }, by: 'ci' });
-  const feedback = async (target: string, by: string, accept = true) => {
+  const feedback = async (target: string, by: string) => {
     const f = await storage.feedbackService.create({ targets: [target], kind: 'question', body: 'approve?' }, as(by));
-    if (accept) await storage.feedbackService.update(f.id, { status: 'accepted' }, as(by));
     return f.id;
   };
   return { git, storage, spec, std, patch, pass, feedback };
@@ -105,7 +106,7 @@ describe('decision 2 + I5: claims live on work orders; spec in_progress is deriv
     expect((await w.heartbeat({ id: one.id, agent: 'agent-1' })).claim!.heartbeatAt).toBeTruthy();
     await expect(w.heartbeat({ id: one.id, agent: 'agent-2' })).rejects.toMatchObject({ code: 'claimed' });
     expect((await w.release({ id: two.id, agent: 'agent-2' })).claim).toBeUndefined();
-    expect((await w.resolve(one.id)).reasons).toEqual([expect.objectContaining({ id: fb, status: 'accepted' })]);
+    expect((await w.resolve(one.id)).reasons).toEqual([expect.objectContaining({ id: fb, status: 'open' })]);
     // Closing drops the claim; stored spec files have no claim field.
     expect((await w.update(one.id, { status: 'cancelled' })).claim).toBeUndefined();
     expect(await storage.specs.raw('s')).not.toMatch(/claim:/);
@@ -135,14 +136,13 @@ describe('decision 3 + I9: feedback on sections and verification results, exempt
     await expect(storage.feedbackService.create({ targets: [S('s')], kind: 'bug', body: 'whole doc' })).rejects.toThrow();
   });
 
-  it('an exemption from appliesTo needs accepted feedback by someone else', async () => {
-    const { storage, spec, std, feedback } = await setup();
+  it('an exemption from appliesTo needs the user\'s approval (an answered approval question)', async () => {
+    const { storage, spec, std } = await setup();
     await std('ui', [rule('ac-ui')], { appliesTo: ['tag:ui'] });
     await spec('s', [sec('a')], { tags: ['ui'] }, as('matteo'));
-    const own = await feedback(T('ui', 'ac-ui'), 'matteo');
-    await expect(storage.specs.update('s', { exemptFrom: [{ standard: 'ui', reason: 'headless', feedback: own }] }, as('matteo'))).rejects.toThrow(/same author \(matteo\)/);
-    const other = await feedback(T('ui', 'ac-ui'), 'giulia');
-    await storage.specs.update('s', { exemptFrom: [{ standard: 'ui', reason: 'headless', feedback: other }] }, as('matteo'));
+    await expect(storage.specs.update('s', { exemptFrom: [{ standard: 'ui', reason: 'headless' }] }, as('matteo'))).rejects.toThrow(/needs the user's approval/);
+    await storage.specs.update('s', { exemptFrom: [{ standard: 'ui', reason: 'headless' }] }, approved('matteo'));
+    expect((await storage.specs.get('s')).exemptFrom[0]).toMatchObject({ standard: 'ui', feedback: 'ask-0001', by: 'matteo' });
     const v = await storage.verificationService.forSpec(await storage.specs.get('s'));
     expect(v.inherited).toEqual([]);
     expect(standardUsage(await storage.standards.get('ui'), [await storage.specs.get('s')])[0]).toMatchObject({ exempt: true, appliesBy: [] });
@@ -173,8 +173,8 @@ describe('decision 4 + C6: spec dependencies are derived; one cycle check; broke
 });
 
 describe('C1: gate snapshot, drift and criteria shrink', () => {
-  it('records the snapshot at done, derives Drifted, and needs accepted feedback to shrink the criteria', async () => {
-    const { storage, spec, std, patch, pass, feedback } = await setup();
+  it('records the snapshot at done, derives Drifted, and needs the user approval to shrink the criteria', async () => {
+    const { storage, spec, std, patch, pass } = await setup();
     await spec('s', [sec('a'), crit('ac-1')], { status: 'ready' });
     await pass(S('s', 'ac-1'));
     const done = await setSpecStatus(storage, { id: 's', status: 'done' });
@@ -187,45 +187,31 @@ describe('C1: gate snapshot, drift and criteria shrink', () => {
     const drift = await storage.verificationService.drift(await storage.specs.get('s'), await storage.model());
     expect(drift.join(' ')).toMatch(/1 criteria added since done/);
     expect((await storage.specs.get('s')).status).toBe('done');
-    // Shrinking (archiving a criterion, unfollowing) a done spec needs an accepted Feedback trailer.
+    // Shrinking (archiving a criterion, unfollowing) a done spec needs the user's approval (User-Approved trailer).
     await expect(patch('s', (x) => (x.id === 'ac-1' ? { ...x, archived: true } : x))).rejects.toMatchObject({ code: 'criteria_shrink' });
-    const fb = await feedback(S('s', 'ac-1'), 'giulia');
-    await patch('s', (x) => (x.id === 'ac-1' ? { ...x, archived: true } : x), {}, { trailers: { Feedback: fb } });
+    await patch('s', (x) => (x.id === 'ac-1' ? { ...x, archived: true } : x), {}, approved('giulia'));
     expect((await storage.verificationService.forSpec(await storage.specs.get('s'))).own).toEqual([]);
   });
 });
 
-describe('C2: waivers need approval by someone else and lapse when the criterion changes', () => {
-  it('rejects self-approved waivers (abuse case), accepts others, and goes stale on change', async () => {
-    const { storage, spec, std, feedback } = await setup();
+describe('C2: waivers need the user\'s approval and lapse when the criterion changes', () => {
+  it('a waiver without approval stays pending, an approved one waives, and it goes stale on change', async () => {
+    const { storage, spec, std } = await setup();
     await std('ui', [sec('rules', { verifiedBy: ['ac-focus'] }), rule('ac-focus'), rule('ac-other')]);
     await spec('s', [sec('impl', { links: [link(T('ui'), 'follows')] })], {}, as('agent'));
     const state = async () => (await storage.verificationService.forSpec(await storage.specs.get('s'))).inherited[0]!.criteria.find((c) => c.uri === T('ui', 'ac-focus'))!;
-    const deviate = (fb?: string) => ({ to: T('ui', 'rules'), rel: 'deviates_from', note: 'native palette rows', ...(fb ? { feedback: fb } : {}) });
-    const withLink = (l: object) => async () => {
-      const cur = await storage.specs.get('s');
-      return cur.sections.map((x) => (x.id === 'impl' ? { ...x, links: [...x.links, l] } : x));
-    };
-    // 1. No feedback: documented deviation, but nothing is waived.
-    await storage.specs.update('s', { sections: await withLink(deviate())() } as never, as('agent'));
+    const deviate = { to: T('ui', 'rules'), rel: 'deviates_from', note: 'native palette rows' };
+    const links = async () => (await storage.specs.get('s')).sections.map((x) => (x.id === 'impl' ? { ...x, links: [x.links[0]!, deviate] } : x));
+    // 1. No approval: documented deviation, but nothing is waived.
+    await storage.specs.update('s', { sections: await links() } as never, as('agent'));
     expect(await state()).toMatchObject({ state: 'unverified', waiver: { effective: false, reason: 'no_feedback' } });
-    // 2. Abuse: the implementing agent approves its own waiver.
-    const self = await feedback(T('ui', 'ac-focus'), 'agent');
-    const selfLinks = (await storage.specs.get('s')).sections.map((x) => (x.id === 'impl' ? { ...x, links: [x.links[0]!, deviate(self)] } : x));
-    await expect(storage.specs.update('s', { sections: selfLinks } as never, as('agent'))).rejects.toThrow(/same author/);
-    // 3. Open (not accepted) feedback is not an approval.
-    const open = await feedback(T('ui', 'ac-focus'), 'giulia', false);
-    const openLinks = (await storage.specs.get('s')).sections.map((x) => (x.id === 'impl' ? { ...x, links: [x.links[0]!, deviate(open)] } : x));
-    await expect(storage.specs.update('s', { sections: openLinks } as never, as('agent'))).rejects.toThrow(/not accepted/);
-    // 4. Accepted by someone else: waived, scoped to the target section's verifiedBy (ac-other stays required).
-    const ok = await feedback(T('ui', 'ac-focus'), 'giulia');
-    const okLinks = (await storage.specs.get('s')).sections.map((x) => (x.id === 'impl' ? { ...x, links: [x.links[0]!, deviate(ok)] } : x));
-    const written = await storage.specs.update('s', { sections: okLinks } as never, as('agent'));
-    expect(written.sections[0]!.links[1]).toMatchObject({ feedback: ok, by: 'agent', pin: expect.any(String) });
-    expect(await state()).toMatchObject({ state: 'waived', waiver: { effective: true, feedback: ok, section: 'impl' } });
+    // 2. The write carries the answered approval question: waived, scoped to the target section's verifiedBy (ac-other stays required).
+    const written = await storage.specs.update('s', { sections: await links() } as never, approved('agent'));
+    expect(written.sections[0]!.links[1]).toMatchObject({ feedback: 'ask-0001', by: 'agent', pin: expect.any(String) });
+    expect(await state()).toMatchObject({ state: 'waived', waiver: { effective: true, feedback: 'ask-0001', section: 'impl' } });
     const other = (await storage.verificationService.forSpec(await storage.specs.get('s'))).inherited[0]!.criteria.find((c) => c.uri === T('ui', 'ac-other'))!;
     expect(other.state).toBe('unverified');
-    // 5. The criterion changes: the waiver lapses (stale).
+    // 3. The criterion changes: the waiver lapses (stale).
     const ui = await storage.standards.get('ui');
     await storage.standards.update('ui', { sections: ui.sections.map((x) => (x.id === 'ac-focus' ? { ...x, body: 'stricter focus rule' } : x)) });
     expect(await state()).toMatchObject({ state: 'unverified', waiver: { effective: false, reason: 'stale' } });

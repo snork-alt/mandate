@@ -49,7 +49,7 @@ describe('cause', () => {
   it('is validated: unknown or non-cause references are refused with a structured error and nothing is written', async () => {
     const id = await newSpec();
     const before = head();
-    const bad = await fx.call('spec_section_update', { agent: AGENT, ref: `mandate://specs/${id}/sections/design`, body: 'x', cause: 'mandate://feedback/fb-doesnotexist' });
+    const bad = await fx.call('spec_section_update', { agent: AGENT, ref: `mandate://specs/${id}/sections/design`, body: 'x', cause: 'mandate://requests/fb-doesnotexist' });
     expect(bad.isError).toBe(true);
     expect(bad.body.error).toMatchObject({ code: 'invalid_cause', path: 'cause' });
     const sym = await fx.call('spec_section_update', { agent: AGENT, ref: `mandate://specs/${id}/sections/design`, body: 'x', cause: ['mandate://symbols/Foo'] });
@@ -61,7 +61,7 @@ describe('cause', () => {
 
   it('is recorded as a Caused-By trailer and caused_by edges from the commit, the doc and the changed section', async () => {
     const id = await newSpec();
-    const fb = await ok('feedback_create', { targets: [`mandate://specs/${id}/sections/design`], kind: 'improvement', body: 'Make the design clearer.' });
+    const fb = await ok('request_create', { targets: [`mandate://specs/${id}/sections/design`], kind: 'improvement', body: 'Make the design clearer.' });
     const sectionUri = `mandate://specs/${id}/sections/design`;
     await ok('spec_section_update', { ref: sectionUri, body: 'A clearer design.', cause: `@mandate:${fb.ref}` });
     expect(git('log', '-1', '--format=%B')).toContain(`Caused-By: ${fb.ref}`);
@@ -78,11 +78,11 @@ describe('cause', () => {
     expect(act.events.some((e: { causes?: string[] }) => e.causes?.includes(fb.ref))).toBe(true);
   });
 
-  it('existing trailers (Feedback, Work-Order) produce caused_by edges too', async () => {
+  it('trailers (Request, Work-Order) produce caused_by edges too', async () => {
     const id = await newSpec();
-    const fb = await ok('feedback_create', { targets: [`mandate://specs/${id}/sections/overview`], kind: 'improvement', body: 'Say more.' });
+    const fb = await ok('request_create', { targets: [`mandate://specs/${id}/sections/overview`], kind: 'improvement', body: 'Say more.' });
     await ok('spec_section_update', { ref: `mandate://specs/${id}/sections/overview`, body: 'More words.', addresses: [fb.ref.split('/').pop()] });
-    expect(git('log', '-1', '--format=%B')).toMatch(/Feedback: fb-/);
+    expect(git('log', '-1', '--format=%B')).toMatch(/Request: fb-/);
     await fx.index.ensureFresh();
     expect(edges(`mandate://specs/${id}/sections/overview`, 'caused_by').map((e) => e.t)).toContain(fb.ref);
   });
@@ -91,7 +91,7 @@ describe('cause', () => {
     const id = await newSpec();
     const w = await ok('spec_section_update', { ref: `mandate://specs/${id}/sections/design`, body: 'v2' });
     expect(w.warnings.some((x: string) => x.startsWith('missing_cause'))).toBe(true);
-    const fb = await ok('feedback_create', { targets: [`mandate://specs/${id}/sections/design`], kind: 'bug', body: 'b' });
+    const fb = await ok('request_create', { targets: [`mandate://specs/${id}/sections/design`], kind: 'bug', body: 'b' });
     expect(fb.warnings.some((x: string) => x.startsWith('missing_cause'))).toBe(false); // an origin, not a flow step
     const c = await ok('spec_section_update', { ref: `mandate://specs/${id}/sections/design`, body: 'v3', cause: fb.ref });
     expect(c.warnings.some((x: string) => x.startsWith('missing_cause'))).toBe(false);
@@ -105,7 +105,7 @@ describe('lineage', () => {
   let after: string;
   beforeAll(async () => {
     id = await newSpec();
-    const fb = await ok('feedback_create', { targets: [`mandate://specs/${id}/sections/design`], kind: 'improvement', body: 'Why not cache it?' });
+    const fb = await ok('request_create', { targets: [`mandate://specs/${id}/sections/design`], kind: 'improvement', body: 'Why not cache it?' });
     fbRef = fb.ref;
     await fx.index.ensureFresh();
     before = head();
@@ -217,8 +217,8 @@ describe('blast_radius', () => {
     const dep = await newSpec();
     await ok('spec_section_link_add', { ref: `mandate://specs/${dep}/sections/design`, rel: 'depends_on', to: `mandate://specs/${base}/sections/design` });
     await ok('spec_section_link_add', { ref: `mandate://specs/${base}/sections/design`, rel: 'follows', to: `mandate://standards/${std}/sections/r-one` });
-    await ok('feedback_create', { targets: [`mandate://specs/${base}/sections/overview`], kind: 'bug', body: 'Broken.' });
-    await ok('work_order_create', { spec: base, kind: 'implement', sections: ['design'] });
+    await ok('request_create', { targets: [`mandate://specs/${base}/sections/overview`], kind: 'bug', body: 'Broken.' });
+    await ok('work_order_create', { spec: base, kind: 'implement', plan: { steps: ['Do it.'] }, sections: ['design'] });
     await fx.index.ensureFresh();
     const b = await read('blast_radius', { ref: `mandate://specs/${base}` });
     expect(b.dependentSpecs.map((x: { uri: string }) => x.uri)).toContain(`mandate://specs/${dep}`);

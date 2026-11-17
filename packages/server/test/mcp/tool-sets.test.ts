@@ -22,9 +22,9 @@ const strip = ({ news: _n, ...b }: Record<string, any>) => b;
 const names = async (c: Awaited<ReturnType<typeof connect>>) => (await c.listTools()).tools.map((t) => t.name);
 
 describe('sets', () => {
-  it('the default list is core and has at most 30 tools', async () => {
+  it('the default list is core (the whole request flow) and has at most 50 tools', async () => {
     const listed = await names(fx.client);
-    expect(listed.length).toBeLessThanOrEqual(30);
+    expect(listed.length).toBeLessThanOrEqual(50);
     expect(listed.sort()).toEqual([...TOOL_SETS.core].sort());
     expect(DEFAULT_SETS).toEqual(['core']);
   });
@@ -55,18 +55,20 @@ describe('sets', () => {
     c.setNotificationHandler(ToolListChangedNotificationSchema, async () => {
       changed++;
     });
-    expect(await names(c)).not.toContain('create');
-    const r = await c.callTool({ name: 'tools_enable', arguments: { sets: ['intake'] } });
+    // The request flow (create, section_insert, request_create, work_order_create, ...) is listed by default.
+    expect(await names(c)).toEqual(expect.arrayContaining(['create', 'section_insert', 'request_create', 'request_close', 'work_order_create']));
+    expect(await names(c)).not.toContain('audit_plan');
+    const r = await c.callTool({ name: 'tools_enable', arguments: { sets: ['review'] } });
     expect(r.isError).toBeFalsy();
     const body = r.structuredContent as { enabled: string[]; added: string[] };
-    expect(body.enabled).toEqual(['core', 'intake']);
-    expect(body.added).toEqual(expect.arrayContaining(['create', 'section_insert', 'feedback_accept']));
+    expect(body.enabled).toEqual(['core', 'review']);
+    expect(body.added).toEqual(expect.arrayContaining(['audit_plan', 'question_answer']));
     expect(changed).toBe(1);
-    expect(await names(c)).toEqual(expect.arrayContaining(['create', 'section_insert', ...TOOL_SETS.core]));
-    // Nothing new: no notification. Other sessions keep their own list.
+    expect(await names(c)).toEqual(expect.arrayContaining(['audit_plan', ...TOOL_SETS.core]));
+    // Nothing new: no notification. Other sessions keep their own list. The old intake set adds nothing.
     await c.callTool({ name: 'tools_enable', arguments: { sets: ['intake'] } });
     expect(changed).toBe(1);
-    expect(await names(fx.client)).not.toContain('create');
+    expect(await names(fx.client)).not.toContain('audit_plan');
     const bad = await c.callTool({ name: 'tools_enable', arguments: { sets: ['bogus'] } });
     expect(bad.isError).toBe(true);
     await c.close();
@@ -92,12 +94,14 @@ describe('merged tools and hidden aliases', () => {
     const all = new Set(TOOLS.map((t) => t.name));
     for (const [old, merged] of Object.entries(ALIASES)) {
       expect(all.has(old), old).toBe(true);
-      expect(MERGED.some((m) => m.name === merged)).toBe(true);
+      // The old feedback names alias the request tools (merged get / list, or the request_* write tools).
+      expect(MERGED.some((m) => m.name === merged) || all.has(merged)).toBe(true);
     }
-    expect(Object.keys(ALIASES)).toHaveLength(51);
+    expect(Object.keys(ALIASES)).toHaveLength(56);
+    expect(ALIASES.feedback_create).toBe('request_create');
   });
 
-  it('get: documents, sections, work orders, feedback, audits (auditId) and questions as the per-type tools', async () => {
+  it('get: documents, sections, work orders, requests, audits (auditId) and questions as the per-type tools', async () => {
     const m = await same('spec_get', { ref: 'login-sso', metadataOnly: true }, 'get', { of: 'specs', ref: 'login-sso', metadataOnly: true });
     expect(m.isError).toBe(false);
     await same('spec_get', { ref: 'mandate://specs/login-sso' }, 'get', { ref: 'mandate://specs/login-sso' });
@@ -113,7 +117,8 @@ describe('merged tools and hidden aliases', () => {
     await same('question_get', { id: qid }, 'get', { ref: `mandate://questions/${qid}` });
     await same('question_get', { id: qid }, 'get', { of: 'questions', ref: qid });
     const fb = (await fx.storage.feedback.list())[0]!.id;
-    await same('feedback_get', { ref: fb }, 'get', { ref: `mandate://feedback/${fb}` });
+    await same('feedback_get', { ref: fb }, 'get', { ref: `mandate://requests/${fb}` });
+    await same('request_get', { ref: fb }, 'get', { of: 'feedback', ref: fb }); // the old of still routes
   });
 
   it('list: every type with its own filters', async () => {

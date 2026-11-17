@@ -66,14 +66,25 @@ async function setup(opts: { kind?: string; plan?: string; sections?: string[]; 
       { id: 'api', title: 'API', summary: 'The API.', body: 'The API.' },
     ],
   });
-  const wo = await ok('work_order_create', {
-    spec,
-    sections: opts.sections ?? ['design', 'api'],
-    kind: opts.kind ?? 'implement',
-    ...(opts.plan !== undefined ? { plan: opts.plan } : {}),
-    ...(opts.fastPath ? { fastPath: true } : {}),
-  });
-  return { spec, ref: wo.ref as string, id: (wo.ref as string).split('/').pop()!, wo };
+  const kind = opts.kind ?? 'implement';
+  const sections = opts.sections ?? ['design', 'api'];
+  const full = (kind === 'implement' || kind === 'update' || kind === 'fix') && !opts.fastPath;
+  // Implement / update / fix work orders carry a structured plan from creation (the tool refuses otherwise); one without a plan is created through storage.
+  const wo =
+    full && opts.plan === undefined
+      ? (async () => {
+          const w = await fx.storage.workOrderService.create({ spec, kind: kind as 'implement', status: 'pending', sections: sections.map((id) => ({ id })), createdBy: AGENT });
+          return { ref: `mandate://work-orders/${w.id}` };
+        })()
+      : ok('work_order_create', {
+          spec,
+          sections,
+          kind,
+          ...(opts.plan !== undefined ? { plan: full ? { steps: [opts.plan] } : opts.plan } : {}),
+          ...(opts.fastPath ? { fastPath: true } : {}),
+        });
+  const created = await wo;
+  return { spec, ref: created.ref as string, id: (created.ref as string).split('/').pop()!, wo: created };
 }
 
 describe('work orders as documents', () => {
@@ -87,14 +98,14 @@ describe('work orders as documents', () => {
     const doc = await read('doc_get', { kind: 'work-orders', id });
     expect(doc.sections.map((s: any) => s.id)).toEqual(['plan', 'design', 'api', 'reconciliation', 'outcome']);
     expect(doc.workOrder.item).toMatchObject({ id, hasPlan: true, title: expect.stringContaining('Implement') });
-    expect(doc.workOrder.doc.plan).toBe('1. Build it.');
+    expect(doc.workOrder.doc.plan).toContain('Build it.');
     const sec = await read('work_order_section_get', { ref: `${ref}/sections/design` });
     expect(sec.section).toMatchObject({ id: 'design', type: 'wo-section' });
     expect(sec.section.meta).toMatchObject({ target: `mandate://specs/${spec}/sections/design`, status: 'pending' });
     // Versioned refs, history and version_get.
     const head = sh(fx.dir, 'rev-parse', 'HEAD');
     const v = await read('work_order_section_get', { ref: `mandate://work-orders/${id}@${head}/sections/plan` });
-    expect(v.section.body).toBe('1. Build it.');
+    expect(v.section.body).toContain('Build it.');
     expect((await read('history_get', { ref })).entries.length).toBeGreaterThan(0);
     expect((await read('history_get', { ref: `${ref}/sections/plan` })).entries[0].section.action).toBe('added');
     expect((await read('version_get', { kind: 'work-orders', id, commit: head.slice(0, 7) })).commit).toBe(head);

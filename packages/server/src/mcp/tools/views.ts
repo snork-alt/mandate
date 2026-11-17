@@ -52,7 +52,7 @@ Example: {"kind":"specs"}`,
     name: 'doc_get',
     title: 'Get a document (full)',
     kind: 'read',
-    description: `One spec, standard or component as the full stored object plus git times, verification, links, backlinks and derived states (work orders / feedback: use their get tools).
+    description: `One spec, standard or component as the full stored object plus git times, verification, links, backlinks and derived states (work orders / requests: use their get tools).
 Example: {"kind":"specs","id":"login-sso"}`,
     input: docGetInputSchema,
     run: (a, ctx) => ctx.views.get(a),
@@ -95,9 +95,9 @@ Example: {"id":"login-sso"}`,
   }),
   defineTool({
     name: 'doc_feedback',
-    title: 'Feedback on a document',
+    title: 'Requests on a document',
     kind: 'read',
-    description: `Feedback targeting one spec, standard or component, with open + accepted counts per section ("" = whole doc).
+    description: `Requests targeting one spec, standard or component, with open + accepted counts per section ("" = whole doc).
 Example: {"kind":"specs","id":"login-sso"}`,
     input: docFeedbackInputSchema,
     run: (a, ctx) => ctx.views.docFeedback(a),

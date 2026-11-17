@@ -13,16 +13,19 @@ import { defineTool, needIndex } from '../define.js';
 
 const FILTERS = 'Filters: kinds, status, category, repo, tags, standards, sectionType, updatedSince/Until, within (search inside a doc or section).';
 
+/** `request` is the user-facing name of the `feedback` search kind. */
+const norm = <T extends { kinds?: string[] }>(a: T): T => (a.kinds ? ({ ...a, kinds: a.kinds.map((k) => (k === 'request' ? 'feedback' : k)) } as T) : a);
+
 export const searchTools = [
   defineTool({
     name: 'search',
     title: 'Search (hybrid)',
     kind: 'read',
-    description: `Find specs, standards, sections, work orders and feedback. Start here.
+    description: `Find specs, standards, sections, work orders and requests. Start here.
 mode: hybrid (default), text or semantic. Returns hits grouped by document (≤ 5 each: uri#Lx-Ly, title, snippet, matchedBy), facets, total, nextCursor; limit = documents per page. ${FILTERS}
 Example: {"q":"refresh token rotation","kinds":["section"]}`,
     input: searchInputSchema,
-    run: (a, ctx) => needIndex(ctx).search(a),
+    run: (a, ctx) => needIndex(ctx).search(norm(a) as never),
   }),
   defineTool({
     name: 'text_search',
@@ -31,7 +34,7 @@ Example: {"q":"refresh token rotation","kinds":["section"]}`,
     description: `Exact grep-style matching over bodies: q is a literal phrase (regex: true for a JS regex; caseSensitive, wholeWord). Returns uri, line numbers and line. ${FILTERS}
 Example: {"q":"Session(Store|Manager)\\\\.\\\\w+","regex":true}`,
     input: textSearchInputSchema,
-    run: (a, ctx) => needIndex(ctx).textSearch(a),
+    run: (a, ctx) => needIndex(ctx).textSearch(norm(a) as never),
   }),
   defineTool({
     name: 'symbol_search',
@@ -58,7 +61,7 @@ Example: {"repo":"app","path":"src/auth/session.ts","lines":"30-35"}`,
     description: `Semantic nearest neighbours of a doc or section ref (duplicates, applicable standards, overlapping specs); kinds narrows result kinds.
 Example: {"uri":"mandate://specs/user-sessions/sections/overview","limit":5}`,
     input: relatedInputSchema,
-    run: (a, ctx) => needIndex(ctx).related(a),
+    run: (a, ctx) => needIndex(ctx).related(norm(a) as never),
   }),
   defineTool({
     name: 'metadata_query',
@@ -67,13 +70,13 @@ Example: {"uri":"mandate://specs/user-sessions/sections/overview","limit":5}`,
     description: `Structured listing over documents (no text query): kinds, status, category, repo, tags, owner, priority, standards, staleClaim (no heartbeat for 30 min), outdated (changed since implemented), minOpenFeedback, updatedSince/Until. Paginated.
 Example: {"kinds":["spec"],"outdated":true}`,
     input: metadataQueryInputSchema,
-    run: (a, ctx) => needIndex(ctx).metadataQuery(a),
+    run: (a, ctx) => needIndex(ctx).metadataQuery(norm(a) as never),
   }),
   defineTool({
     name: 'history_search',
     title: 'History search',
     kind: 'read',
-    description: `Search commits: q (messages and trailers), uri, author, agent, branch, feedback id, changeKinds, since/until. Paginated.
+    description: `Search commits: q (messages and trailers), uri, author, agent, branch, request id, changeKinds, since/until. Paginated.
 Example: {"agent":"my-agent","changeKinds":["status"],"since":"2026-11-01"}`,
     input: historySearchInputSchema,
     run: (a, ctx) => needIndex(ctx).historySearch(a),

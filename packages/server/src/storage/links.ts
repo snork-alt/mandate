@@ -30,14 +30,18 @@ class LinkValidationError extends Error {
   }
 }
 
-/** A waiver / exemption / criteria removal whose feedback was accepted by its own writer (409 `waiver_self_approved`). */
-export class WaiverSelfApprovedError extends Error {
+/** The user's approval a write carries: the answered approval question cited as cause (`User-Approved: ask-NNNN` trailer, set by the tool layer from a validated question). */
+export const approvalOf = (trailers: Record<string, string> | undefined): string | undefined => {
+  const hit = Object.entries(trailers ?? {}).find(([k]) => k.toLowerCase() === 'user-approved')?.[1]?.trim();
+  return hit || undefined;
+};
+
+/** A waiver / exemption / criteria removal that needs the user's approval and has none (409 `approval_required`). */
+export class ApprovalRequiredError extends Error {
   readonly statusCode = 409;
-  readonly code = 'waiver_self_approved';
-  constructor(feedback: string, who: string, what: string, filed = false) {
-    super(
-      `waiver_self_approved: feedback '${feedback}' was ${filed ? 'filed' : 'accepted'} by the same author (${who}) who writes this ${what}; approval must come from someone else (the sole active user or an admin may self-approve: feedback_accept with override: true and overrideReason)`,
-    );
+  readonly code = 'approval_required';
+  constructor(what: string) {
+    super(`approval_required: ${what} needs the user's approval: ask with question_ask (purpose approval), wait for the answer, then retry with cause: the answered question`);
   }
 }
 
@@ -111,6 +115,7 @@ export class LinkService {
     // MW-2: the writer's principal: the server-resolved user (Mandate-User trailer, set from the authenticated
     // principal only), else the agent identity. Compared trimmed and case-folded (approval()).
     const actor = (ctx ? (userOfTrailers(ctx.meta.trailers) ?? actorOf(ctx.meta)) : 'local').trim();
+    const approvedBy = ctx ? approvalOf(ctx.meta.trailers) : undefined;
     const sections = next.sections.map((s) => {
       const before = current?.sections.find((x) => x.id === s.id);
       const links = s.links.map((l) => {
@@ -133,22 +138,15 @@ export class LinkService {
         // A component's dependency is pinned when added, so later interface changes show as "upstream changed".
         if (kind === 'components' && l.rel === 'depends_on' && isNew && !l.seenAt && head) return { ...l, seenAt: head };
         if (l.rel !== 'deviates_from') return l;
-        // Waiver: approval must come from someone else, through an accepted feedback item (C2).
+        // Waiver: in force only with the user's approval: an answered question_ask (purpose approval) cited as cause
+        // (the tool layer validates it and adds the `User-Approved` trailer). Without it the waiver is recorded but pending.
         const prev = before?.links.find((b) => sameLink(b, l));
-        const changed = !prev || prev.feedback !== l.feedback || prev.note !== l.note;
-        if (!l.feedback) {
+        if (prev && prev.note === l.note && (prev.feedback ?? '') === (l.feedback ?? '') && !(approvedBy && !prev.feedback)) return l;
+        if (!approvedBy) {
           const { feedback: _f, pin: _p, by: _b, ...rest } = l;
-          return changed ? { ...rest, by: actor } : l;
+          return { ...rest, by: actor };
         }
-        if (!changed) return l;
-        const state = approval({ feedback: l.feedback, by: actor }, m);
-        if (state.reason === 'self_approved' || state.reason === 'same_author') throw new WaiverSelfApprovedError(l.feedback, actor, 'waiver', state.reason === 'same_author');
-        if (!state.effective) {
-          const why = { no_feedback: 'no feedback', feedback_missing: `feedback '${l.feedback}' does not exist`, not_accepted: `feedback '${l.feedback}' is not accepted`, same_author: `feedback '${l.feedback}' was filed by the same author (${actor}); a waiver needs approval by someone else`, stale: 'stale' }[state.reason!];
-          problems.push(`section "${s.id}": waiver of ${l.to}: ${why}`);
-          return l;
-        }
-        return { ...l, by: actor, pin: waiverPin(l.to, withNext) };
+        return { ...l, feedback: approvedBy, by: actor, pin: waiverPin(l.to, withNext) };
       });
       return { ...s, links };
     });
@@ -158,16 +156,14 @@ export class LinkService {
       const spec = next as unknown as StoredSpec;
       exemptFrom = exemptFrom.map((e) => {
         const prev = (current as StoredSpec | undefined)?.exemptFrom?.find((x) => x.standard === e.standard);
-        if (prev && prev.feedback === e.feedback && prev.reason === e.reason) return { ...e, by: prev.by };
+        if (prev && prev.reason === e.reason) return { ...e, ...(prev.feedback ? { feedback: prev.feedback } : {}), by: prev.by };
         const std = f.stds.get(e.standard);
         if (!std) problems.push(`exemptFrom: standard '${e.standard}' does not exist`);
         else if (!specCriteria({ ...spec, exemptFrom: [] }, withNext).standards.some((x) => x.id === e.standard && x.appliesBy.length)) {
           problems.push(`exemptFrom: ${e.standard} does not apply to this spec through appliesTo`);
         }
-        const state = approval({ feedback: e.feedback, by: actor }, m);
-        if (state.reason === 'self_approved' || state.reason === 'same_author') throw new WaiverSelfApprovedError(e.feedback, actor, 'exemption', state.reason === 'same_author');
-        if (!state.effective) problems.push(`exemptFrom ${e.standard}: needs an accepted feedback item by someone other than ${actor} (${state.reason})`);
-        return { ...e, by: actor };
+        if (!approvedBy) problems.push(`exemptFrom ${e.standard}: needs the user's approval: ask (question_ask purpose approval), wait for the answer, then retry with cause: the answered question`);
+        return { ...e, feedback: approvedBy ?? e.feedback, by: actor };
       });
     }
     // Only problems that involve this document block the write (pre-existing ones elsewhere are lint issues). MW-3:

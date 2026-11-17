@@ -37,7 +37,7 @@ const cursorSchema = z.string().max(200).regex(/^[A-Za-z0-9_=-]*$/, 'invalid cur
 const linesSchema = z.string().regex(/^\d+(?:-\d+)?$/, 'lines must be N or N-M');
 
 const filters = {
-  kinds: list(z.enum(SEARCH_KINDS), 5).optional(),
+  kinds: list(z.enum([...SEARCH_KINDS, 'request']), 6).optional(),
   status: list(shortText(40)).optional(),
   category: list(shortText(80)).optional(),
   repo: list(shortText(120)).optional(),
@@ -110,7 +110,7 @@ export type CodeSearchInput = z.input<typeof codeSearchInputSchema>;
 export const relatedInputSchema = z
   .object({
     uri: nodeUriSchema,
-    kinds: list(z.enum(SEARCH_KINDS), 5).optional(),
+    kinds: list(z.enum([...SEARCH_KINDS, 'request']), 6).optional(),
     limit: z.number().int().min(1).max(50).default(10),
   })
   .strict();
@@ -118,7 +118,7 @@ export type RelatedInput = z.input<typeof relatedInputSchema>;
 
 export const metadataQueryInputSchema = z
   .object({
-    kinds: list(z.enum(['spec', 'standard', 'work_order', 'feedback']), 4).optional(),
+    kinds: list(z.enum(['spec', 'standard', 'work_order', 'feedback', 'request']), 5).optional(),
     status: list(shortText(40)).optional(),
     category: list(shortText(80)).optional(),
     repo: list(shortText(120)).optional(),

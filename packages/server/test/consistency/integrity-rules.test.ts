@@ -169,11 +169,6 @@ const CASES: Case[] = [
     bad: () => ({ m: withSpec(baseModel(), spec('app', [...sections(baseModel(), 'app'), { id: 'bare', title: 'Bare', body: 'b' }])) }),
   },
   {
-    rule: 'self_approved_override',
-    good: () => ({ m: { ...baseModel(), feedback: [{ id: 'fb-0001', targets: [S('app', 'flow')], kind: 'question', body: 'b', status: 'accepted', relatedTo: [], createdAt: 'x', updatedAt: 'x', acceptedBy: 'alice' }] as never } }),
-    bad: () => ({ m: { ...baseModel(), feedback: [{ id: 'fb-0001', targets: [S('app', 'flow')], kind: 'question', body: 'b', status: 'accepted', relatedTo: [], createdAt: 'x', updatedAt: 'x', acceptedBy: 'alice', approvalOverride: { by: 'alice', reason: 'sole user', at: 'x' } }] as never } }),
-  },
-  {
     rule: 'spec_done_without_criteria',
     good: () => ({ m: withSpec(baseModel(), spec('app', sections(baseModel(), 'app'), { status: 'done' })) }),
     bad: () => ({ m: withSpec(baseModel(), spec('app', sections(baseModel(), 'app').map((s) => (s.id === 'ac-flow' ? { ...s, archived: true } : s)), { status: 'done' })) }),

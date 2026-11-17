@@ -50,7 +50,7 @@ async function main() {
   const std = await storage.standards.get('security-baseline');
   const sec = std.sections.find((s) => s.id === 'sec-session-cookies')!;
   await call(as('carol', 'claude-code'), 'standard_section_update', { ref: rule, body: `${sec.body ?? ''}\n\nSession cookies use the \`__Host-\` prefix (Secure, Path=/, no Domain), so subdomains cannot set or overwrite them.`, cause: [fb, q.ref] });
-  const wo = (await call(as('dave', 'cursor'), 'work_order_create', { spec: 'login-sso', kind: 'update', sections: [(await storage.specs.get('login-sso')).sections[0]!.id], plan: '1. Rename the session cookie to __Host-session.\n2. Update the tests.', cause: fb })).ref;
+  const wo = (await call(as('dave', 'cursor'), 'work_order_create', { spec: 'login-sso', kind: 'update', sections: [(await storage.specs.get('login-sso')).sections[0]!.id], plan: { steps: ['Rename the session cookie to __Host-session.', 'Update the tests.'] }, cause: fb })).ref;
   await call(as('dave', 'cursor'), 'work_order_claim', { ref: wo, git: [{ repo: 'app', branch: 'wo/host-cookie', baseBranch: 'main', pr: { number: 412, status: 'open', url: 'https://github.com/acme/app/pull/412' } }] });
   await call(as('bob', 'codex'), 'comment_add', { target: wo, body: 'Remember the logout path clears the old cookie name too.' });
   console.log(`seeded: feedback ${fb}, rule ${rule}, work order ${wo}`);

@@ -245,6 +245,19 @@ export function createStorage(git: GitStore, opts: StorageOptions = {}): Storage
   workOrderService.feedback = () => feedback.list();
   workOrderService.lock = lock;
   workOrderService.verificationIds = async () => (await verifications.list()).map((v) => v.id);
+  workOrderService.verificationRecords = () => verifications.list();
+  // A request closes by itself when every work order acting on it is done (and something changed): applied.
+  workOrderService.onCompleted = async (wo, meta) => {
+    const all = await wos.list();
+    for (const rid of wo.reason ?? []) {
+      const fb = await feedbackService!.get(rid).catch(() => null);
+      if (!fb || fb.status === 'closed') continue;
+      const acting = all.filter((w) => (w.reason ?? []).includes(rid));
+      if (acting.some((w) => w.status === 'pending' || w.status === 'in_progress' || w.status === 'failed') || !acting.some((w) => w.status === 'done')) continue;
+      if (!(await feedbackService!.hasLinkedChange(fb))) continue;
+      await feedbackService!.update(rid, { status: 'closed', resolution: 'applied', resolutionNote: `closed automatically: work order ${wo.id} completed` } as never, { ...meta, message: `request: close ${rid} (work order ${wo.id} completed)` });
+    }
+  };
   linkService.components = components;
   feedbackService = new FeedbackService(feedback, { specs, standards, components }, git, history, {
     specs: specFormat as DocFormat<unknown, unknown>,

@@ -44,8 +44,8 @@ export const appliesToSchema = z
 export const exemptionSchema = z.object({
   standard: idSchema,
   reason: z.string().min(1),
-  /** Accepted feedback item approving the exemption (its author must differ from `by`). */
-  feedback: idSchema,
+  /** The user's approval: the answered question (`ask-NNNN`, purpose approval) the write cited as cause (server-set); old data: an accepted feedback item. */
+  feedback: idSchema.optional(),
   /** Who added the exemption (server-set from the commit's agent / author). */
   by: z.string().min(1).optional(),
 });

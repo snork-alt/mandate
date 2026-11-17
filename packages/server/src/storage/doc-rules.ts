@@ -16,7 +16,7 @@ import {
 import type { GitStore } from '../git/GitStore.js';
 import { componentCodec, specCodec, standardCodec } from './codecs.js';
 import { actorOf, ConflictError, type WriteContext } from './GitBackedRepository.js';
-import { WaiverSelfApprovedError, type LinkService } from './links.js';
+import { approvalOf, type LinkService } from './links.js';
 import type { MarkdownDirRepository } from './MarkdownDirRepository.js';
 import { samePrincipal, sectionsWithoutCriteria, sectionUri, waiverPolicy, type Doc, type Kind, type Model } from './model.js';
 import type { VerificationService } from './verification.js';
@@ -40,7 +40,7 @@ class RuleError extends Error {
  * - identity (C3): document and section ids are never reused; a section with inbound references
  *   cannot be removed (archive it instead); documents are archive-only (no delete);
  * - links (LinkService.validate: targets, archived / superseded, waivers, cycles);
- * - C1.3: shrinking the criteria of a done or claimed spec needs an accepted `Feedback:` trailer;
+ * - C1.3: shrinking the criteria of a done or claimed spec needs the user's approval (`User-Approved:` trailer from an answered approval question);
  * - the done gate with its snapshot (VerificationService.gate).
  */
 export class DocRules {
@@ -121,29 +121,6 @@ export class DocRules {
     }
   }
 
-  /**
-   * Accepted feedback named in the write's `Feedback:` trailers that approves a criteria removal: accepted (or applied)
-   * by someone other than the writer (the user, else agent; case-insensitive). Throws `waiver_self_approved`
-   * when the only accepted items were accepted by the writer.
-   */
-  private async approvingFeedback(ctx: WriteContext): Promise<StoredFeedback[]> {
-    const ids = feedbackTrailerIds(ctx.message);
-    const accepted = (await this.deps.feedback()).filter((f) => ids.includes(f.id) && (f.status === 'accepted' || (f.status === 'closed' && f.resolution === 'applied')));
-    if (!waiverPolicy.acceptorMustDiffer) return accepted;
-    const writer = userOfTrailers(ctx.meta.trailers) ?? actorOf(ctx.meta);
-    const ok: StoredFeedback[] = [];
-    for (const f of accepted) {
-      if (f.approvalOverride) {
-        ok.push(f);
-        continue;
-      }
-      const by = (await this.deps.acceptorOf?.(f.id)) ?? null;
-      if (!by || !samePrincipal(by, writer)) ok.push(f);
-    }
-    if (accepted.length && !ok.length) throw new WaiverSelfApprovedError(accepted[0]!.id, writer, 'criteria removal');
-    return ok;
-  }
-
   async beforeWrite<D extends Doc>(kind: Kind, next: D, current: D | undefined, ctx: WriteContext): Promise<D> {
     const m = await this.deps.model();
     if (kind === 'specs') {
@@ -220,9 +197,8 @@ export class DocRules {
       if (cur.status === 'done' || claimed) {
         const removed = await this.deps.verification.shrunk(spec, cur, m);
         if (removed.length) {
-          const accepted = await this.approvingFeedback(ctx);
-          if (!accepted.length) {
-            throw new RuleError('criteria_shrink', `this change removes ${removed.length} criteria from ${spec.id} (${cur.status === 'done' ? 'done' : 'in progress'}): ${removed.map((u) => u.replace('mandate://', '')).join(', ')}; add a "Feedback: <id>" trailer of an accepted feedback item`, removed);
+          if (!approvalOf(ctx.meta.trailers)) {
+            throw new RuleError('criteria_shrink', `this change removes ${removed.length} criteria from ${spec.id} (${cur.status === 'done' ? 'done' : 'in progress'}): ${removed.map((u) => u.replace('mandate://', '')).join(', ')}; it needs the user's approval: question_ask (purpose approval), wait for the answer, retry with cause: the answered question`, removed);
           }
         }
       }
@@ -233,8 +209,7 @@ export class DocRules {
       const claimedSpecs = new Set((await this.deps.workOrders()).filter((w) => w.claim && OPEN_WORK_ORDER_STATUSES.includes(w.status)).map((w) => w.spec));
       const removed = m.specs.filter((sp) => sp.status === 'done' || claimedSpecs.has(sp.id)).flatMap((sp) => this.deps.verification.shrunkBy(sp, m, after).map((u) => `${sp.id}: ${u.replace('mandate://', '')}`));
       if (removed.length) {
-        const accepted = await this.approvingFeedback(ctx);
-        if (!accepted.length) throw new RuleError('criteria_shrink', `this change removes ${removed.length} criteria from done or in-progress specs (${removed.join(', ')}); add a "Feedback: <id>" trailer of an accepted feedback item`, removed);
+        if (!approvalOf(ctx.meta.trailers)) throw new RuleError('criteria_shrink', `this change removes ${removed.length} criteria from done or in-progress specs (${removed.join(', ')}); it needs the user's approval: question_ask (purpose approval), wait for the answer, retry with cause: the answered question`, removed);
       }
     }
     if (kind === 'specs') out = (await this.deps.verification.gate(out as unknown as StoredSpec, current as unknown as StoredSpec | undefined, ctx)) as unknown as D;

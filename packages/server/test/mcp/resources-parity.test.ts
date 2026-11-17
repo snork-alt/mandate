@@ -75,7 +75,7 @@ describe('resources', () => {
     };
     out['mandate://architecture@{sha}{?focus}'] = { uri: `mandate://architecture@${sha}`, check: (c) => expect(JSON.parse(c.text).commit).toBe(fx.older) };
     out['mandate://work-orders/{id}'] = { uri: `mandate://work-orders/${woId}`, check: (c) => expect(JSON.parse(c.text).item.id).toBe(woId) };
-    out['mandate://feedback/{id}'] = { uri: `mandate://feedback/${fbId}`, check: (c) => expect(JSON.parse(c.text).feedback.id).toBe(fbId) };
+    out['mandate://requests/{id}'] = { uri: `mandate://requests/${fbId}`, check: (c) => expect(JSON.parse(c.text).feedback.id).toBe(fbId) };
     out['mandate://work-orders/{id}/sections/{section}'] = { uri: `mandate://work-orders/${woId}/sections/plan`, check: (c) => expect(c.text).toContain('section: plan') };
     out['mandate://work-orders/{id}@{sha}'] = { uri: `mandate://work-orders/${woId}@${fx.head}`, check: (c) => expect(c.text).toContain('<!-- @section plan -->') };
     out['mandate://comments/{id}'] = { uri: `mandate://comments/${commentId}`, check: (c) => expect(JSON.parse(c.text)).toMatchObject({ id: commentId, status: 'open' }) };

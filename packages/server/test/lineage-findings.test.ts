@@ -66,7 +66,7 @@ async function newSpec() {
 describe('lineage findings', () => {
   it('L-1: migration commits create no causes', async () => {
     const id = await newSpec();
-    const fb = await ok('feedback_create', { targets: [`mandate://specs/${id}/sections/design`], kind: 'improvement', body: 'Clearer design.' });
+    const fb = await ok('request_create', { targets: [`mandate://specs/${id}/sections/design`], kind: 'improvement', body: 'Clearer design.' });
     // A migration commit naming a cause records nothing.
     edit(`specs/${id}.md`, 'The design.', 'The migrated design.');
     const mig = rawCommit([`specs/${id}.md`], `spec(${id}): migrate\n\nCaused-By: ${fb.ref}\nMandate-Migration: yes`);
@@ -91,12 +91,12 @@ describe('lineage findings', () => {
 
   it('L-2: closed feedback reaches the work order that delivered it (reason -> Caused-By; covers is causal)', async () => {
     const id = await newSpec();
-    const fb = await ok('feedback_create', { targets: [`mandate://specs/${id}/sections/cache`], kind: 'bug', body: 'The cache double counts.' });
+    const fb = await ok('request_create', { targets: [`mandate://specs/${id}/sections/cache`], kind: 'bug', body: 'The cache double counts.' });
     await ok('spec_section_update', { ref: `mandate://specs/${id}/sections/cache`, body: 'The cache counts once.', cause: fb.ref });
-    const wo = await ok('work_order_create', { spec: id, kind: 'update', sections: ['cache'], reason: [fb.ref] });
+    const wo = await ok('work_order_create', { spec: id, kind: 'update', plan: { steps: ['Do it.'] }, sections: ['cache'], reason: [fb.ref] });
     const review = await ok('work_order_create', { spec: id, kind: 'review', sections: ['design'] });
     expect(git('log', '-1', '--format=%B', wo.commit)).toContain(`Caused-By: ${fb.ref}`);
-    await ok('feedback_close', { ref: fb.ref, resolution: 'applied' }).catch(() => undefined);
+    await ok('request_close', { ref: fb.ref, resolution: 'applied' }).catch(() => undefined);
     await fx.index.ensureFresh();
     const woUri = `mandate://work-orders/${woId(wo)}`;
     expect(nodesOf(await read('lineage', { ref: fb.ref, direction: 'down' }))).toContain(woUri);
@@ -109,8 +109,8 @@ describe('lineage findings', () => {
 
   it('L-3: no cause is later than its effect (targets has a time guard)', async () => {
     const id = await newSpec();
-    const fb = await ok('feedback_create', { targets: [`mandate://specs/${id}/sections/design`], kind: 'bug', body: 'Design is wrong.' });
-    const wo = await ok('work_order_create', { spec: id, kind: 'update', sections: ['design'] });
+    const fb = await ok('request_create', { targets: [`mandate://specs/${id}/sections/design`], kind: 'bug', body: 'Design is wrong.' });
+    const wo = await ok('work_order_create', { spec: id, kind: 'update', plan: { steps: ['Do it.'] }, sections: ['design'] });
     const woUri = `mandate://work-orders/${woId(wo)}`;
     // Later work on the targeted section, caused by the work order.
     await ok('spec_section_update', { ref: `mandate://specs/${id}/sections/design`, body: 'The new design.', cause: woUri });
@@ -123,7 +123,7 @@ describe('lineage findings', () => {
 
   it('L-4: lineage is symmetric between a document and what its sections reach', async () => {
     const id = await newSpec();
-    const fb = await ok('feedback_create', { targets: [`mandate://specs/${id}/sections/overview`], kind: 'question', body: 'Which users?' });
+    const fb = await ok('request_create', { targets: [`mandate://specs/${id}/sections/overview`], kind: 'question', body: 'Which users?' });
     await fx.index.ensureFresh();
     expect(nodesOf(await read('lineage', { ref: `mandate://specs/${id}`, direction: 'down' }))).toContain(fb.ref);
     const up = await read('lineage', { ref: fb.ref, direction: 'up' });
@@ -133,8 +133,8 @@ describe('lineage findings', () => {
 
   it('L-6: a backlink commit does not make a cause loop', async () => {
     const id = await newSpec();
-    const fb = await ok('feedback_create', { targets: [`mandate://specs/${id}/sections/design`], kind: 'bug', body: 'Loop me.' });
-    const wo = await ok('work_order_create', { spec: id, kind: 'fix', sections: ['design'], reason: [fb.ref] });
+    const fb = await ok('request_create', { targets: [`mandate://specs/${id}/sections/design`], kind: 'bug', body: 'Loop me.' });
+    const wo = await ok('work_order_create', { spec: id, kind: 'fix', plan: { steps: ['Do it.'] }, sections: ['design'], reason: [fb.ref] });
     // A commit writing back into the feedback with the work order as its trailer (a backlink).
     const line = readFileSync(path.join(fx.dir, 'feedback.jsonl'), 'utf8').split('\n').find((l) => l.includes(`"id":"${fb.ref.split('/').pop()}"`))!;
     edit('feedback.jsonl', line, line.replace('Loop me.', 'Loop me (fixed by the work order).'));
@@ -145,9 +145,9 @@ describe('lineage findings', () => {
 
   it('L-7: a duplicate reaches the feedback it duplicates', async () => {
     const id = await newSpec();
-    const a = await ok('feedback_create', { targets: [`mandate://specs/${id}/sections/design`], kind: 'bug', body: 'Original report.' });
-    const b = await ok('feedback_create', { targets: [`mandate://specs/${id}/sections/design`], kind: 'bug', body: 'Same report again.' });
-    await ok('feedback_close', { ref: b.ref, resolution: 'duplicate', duplicateOf: a.ref });
+    const a = await ok('request_create', { targets: [`mandate://specs/${id}/sections/design`], kind: 'bug', body: 'Original report.' });
+    const b = await ok('request_create', { targets: [`mandate://specs/${id}/sections/design`], kind: 'bug', body: 'Same report again.' });
+    await ok('request_close', { ref: b.ref, resolution: 'duplicate', duplicateOf: a.ref });
     await fx.index.ensureFresh();
     const up = await read('lineage', { ref: b.ref, direction: 'up' });
     expect(nodesOf(up)).toContain(a.ref);
@@ -157,7 +157,7 @@ describe('lineage findings', () => {
 
   it('L-8: a spec with an open, claimed work order is changing; a pending unclaimed order is not', async () => {
     const id = await newSpec();
-    const wo = await ok('work_order_create', { spec: id, kind: 'implement', sections: ['design'], fastPath: false, plan: '1. Do it.' });
+    const wo = await ok('work_order_create', { spec: id, kind: 'implement', sections: ['design'], fastPath: false, plan: { steps: ['1. Do it.'] } });
     await fx.index.ensureFresh();
     const before = await read('lineage', { ref: `mandate://specs/${id}`, direction: 'down' });
     expect(before.root.status).not.toBe('in_progress');
@@ -187,7 +187,7 @@ describe('lineage findings', () => {
     const r = await read('lineage', { ref: 'mandate://work-orders/q-0002', direction: 'both', depth: 2 });
     const comments = r.nodes.filter((x: { kind: string }) => x.kind === 'comment');
     for (const c of comments) if (c.rawStatus === 'open') expect(c.status).toBe('attention');
-    const rejected = await read('lineage', { ref: 'mandate://feedback/fb-0008', direction: 'down' });
+    const rejected = await read('lineage', { ref: 'mandate://requests/fb-0008', direction: 'down' });
     expect(rejected.root.status).toBe('neutral');
   });
 });
@@ -195,12 +195,12 @@ describe('lineage findings', () => {
 describe('lineage_annotate', () => {
   it('is strict and validates refs and the commit', async () => {
     const sha = fx.older;
-    expect((await fx.call('lineage_annotate', { agent: AGENT, commit: sha, causes: ['mandate://feedback/fb-0005'], note: 'x', bogus: 1 })).body.error.code).toBe('invalid_input');
-    expect((await fx.call('lineage_annotate', { agent: AGENT, commit: sha, causes: ['mandate://feedback/fb-nope'], note: 'x' })).body.error).toMatchObject({ code: 'invalid_cause' });
+    expect((await fx.call('lineage_annotate', { agent: AGENT, commit: sha, causes: ['mandate://requests/fb-0005'], note: 'x', bogus: 1 })).body.error.code).toBe('invalid_input');
+    expect((await fx.call('lineage_annotate', { agent: AGENT, commit: sha, causes: ['mandate://requests/fb-nope'], note: 'x' })).body.error).toMatchObject({ code: 'invalid_cause' });
     expect((await fx.call('lineage_annotate', { agent: AGENT, commit: sha, causes: ['mandate://symbols/Foo'], note: 'x' })).isError).toBe(true);
-    expect((await fx.call('lineage_annotate', { agent: AGENT, commit: 'deadbeefdeadbeef', causes: ['mandate://feedback/fb-0005'], note: 'x' })).body.error.code).toBe('invalid_annotation');
+    expect((await fx.call('lineage_annotate', { agent: AGENT, commit: 'deadbeefdeadbeef', causes: ['mandate://requests/fb-0005'], note: 'x' })).body.error.code).toBe('invalid_annotation');
     // A cause filed after the commit cannot explain it.
-    const late = await ok('feedback_create', { targets: ['mandate://specs/login-sso/sections/overview'], kind: 'question', body: 'Filed later.' });
+    const late = await ok('request_create', { targets: ['mandate://specs/login-sso/sections/overview'], kind: 'question', body: 'Filed later.' });
     const root = git('rev-list', '--max-parents=0', 'HEAD').split('\n')[0]!;
     expect((await fx.call('lineage_annotate', { agent: AGENT, commit: root, causes: [late.ref], note: 'x' })).body.error.code).toBe('cause_after_effect');
   });
@@ -210,7 +210,7 @@ describe('lineage_annotate', () => {
     edit(`specs/${id}.md`, 'The cache.', 'The cache, tuned.');
     const sha = rawCommit([`specs/${id}.md`], `spec(${id}): tune the cache`);
     await new Promise((r) => setTimeout(r, 2100));
-    const fb = await ok('feedback_create', { targets: [`mandate://specs/${id}/sections/cache`], kind: 'bug', body: 'Cache too slow.' });
+    const fb = await ok('request_create', { targets: [`mandate://specs/${id}/sections/cache`], kind: 'bug', body: 'Cache too slow.' });
     // The feedback was filed after the commit: refused. Annotate with the spec's own design section instead.
     expect((await fx.call('lineage_annotate', { agent: AGENT, commit: sha, causes: [fb.ref], note: 'tuned for it' })).body.error.code).toBe('cause_after_effect');
     const cause = `mandate://specs/${id}/sections/design`;
@@ -233,7 +233,7 @@ describe('lineage_annotate', () => {
 
 describe('lineage backfill proposals', () => {
   it('proposes a high-confidence cause when the message names a feedback item, low when only a target matches', async () => {
-    const fb = await ok('feedback_create', { targets: ['mandate://components/api-gateway/sections/responsibility'], kind: 'improvement', body: 'Name the rate limiter in the gateway responsibility.' });
+    const fb = await ok('request_create', { targets: ['mandate://components/api-gateway/sections/responsibility'], kind: 'improvement', body: 'Name the rate limiter in the gateway responsibility.' });
     const fbId = fb.ref.split('/').pop();
     const file = 'components/api-gateway.md';
     edit(file, 'Routes requests, validates bodies at the edge and applies rate limits.', 'Routes requests, validates bodies at the edge and applies rate limits (the gateway rate limiter).');

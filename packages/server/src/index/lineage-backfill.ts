@@ -293,7 +293,7 @@ function feedbackTimeline(db: DB): Map<string, { status: string; at: number }[]>
     .prepare("SELECT n.uri, n.props, c.date FROM nodes n JOIN commits c ON c.seq = n.valid_from WHERE n.kind = 'feedback' AND n.valid_from > 0 ORDER BY n.valid_from")
     .all() as { uri: string; props: string; date: string }[];
   for (const r of rows) {
-    const id = r.uri.slice('mandate://feedback/'.length);
+    const id = r.uri.slice('mandate://requests/'.length);
     const status = parseJson<{ status?: string }>(r.props, {}).status;
     if (!status) continue;
     const list = out.get(id) ?? [];

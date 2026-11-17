@@ -66,7 +66,7 @@ export const causeRefSchema = z
   .refine((v) => {
     const n = parseNodeUri(v);
     return !!n && (CAUSE_KINDS as readonly string[]).includes(n.kind);
-  }, `a cause is a reference to one of: ${CAUSE_KINDS.join(', ')} (e.g. mandate://feedback/fb-01..., mandate://audits/<id>/findings/f1, mandate://work-orders/<id>, mandate://specs/<id>/sections/<sid>)`);
+  }, `a cause is a reference to one of: ${CAUSE_KINDS.join(', ')} (e.g. mandate://requests/fb-01..., mandate://audits/<id>/findings/f1, mandate://work-orders/<id>, mandate://specs/<id>/sections/<sid>)`);
 /** The `cause` input of every MCP write tool: one reference or a list (max 20). */
 export const causeInputSchema = z.union([causeRefSchema, z.array(causeRefSchema).min(1).max(20)]);
 export type CauseInput = z.input<typeof causeInputSchema>;

@@ -36,7 +36,7 @@ describe('registry ↔ enforcement', () => {
     { kind: 'standard', table: STANDARD_TRANSITIONS, name: 'STANDARD_TRANSITIONS', files: ['storage/doc-rules.ts'] },
     { kind: 'component', table: COMPONENT_TRANSITIONS, name: 'COMPONENT_TRANSITIONS', files: ['storage/doc-rules.ts'] },
     { kind: 'work_order', table: WORK_ORDER_TRANSITIONS, name: 'WORK_ORDER_TRANSITIONS', files: ['storage/work-orders.ts'] },
-    { kind: 'feedback', table: FEEDBACK_TRANSITIONS, name: 'FEEDBACK_TRANSITIONS', files: ['storage/feedback.ts'] },
+    { kind: 'request', table: FEEDBACK_TRANSITIONS, name: 'FEEDBACK_TRANSITIONS', files: ['storage/feedback.ts'] },
     { kind: 'audit', table: AUDIT_TRANSITIONS, name: 'AUDIT_TRANSITIONS', files: ['storage/audits.ts'] },
     { kind: 'audit_finding', table: FINDING_TRANSITIONS, name: 'FINDING_TRANSITIONS', files: ['storage/audits.ts'] },
   ] as const;

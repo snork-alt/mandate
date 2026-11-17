@@ -210,6 +210,8 @@ export const samePrincipal = (a: string, b: string) => principalKey(a) === princ
 /** Is a waiver / exemption approved: accepted (or applied) feedback by someone other than the author of the waiver. */
 export function approval(a: Approval, m: Model): WaiverState {
   if (!a.feedback) return { effective: false, reason: 'no_feedback' };
+  // The user's approval: an answered approval question (`ask-NNNN`), validated when the write was made.
+  if (/^ask-/.test(a.feedback)) return { effective: true, feedback: a.feedback };
   const fb = m.feedback?.find((x) => x.id === a.feedback);
   if (!fb) return { effective: false, reason: 'feedback_missing', feedback: a.feedback };
   const ok = fb.status === 'accepted' || (fb.status === 'closed' && fb.resolution === 'applied');

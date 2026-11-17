@@ -39,9 +39,9 @@ const ago = (iso: string, now: number) => {
   return h < 1 ? `${Math.round(h * 60)} min` : h < 48 ? `${Math.round(h)} h` : `${Math.round(h / 24)} days`;
 };
 const WAIVER_WHY: Record<string, string> = {
-  no_feedback: 'no feedback item records the decision',
-  feedback_missing: 'its feedback item is missing',
-  not_accepted: 'its feedback item is not accepted yet',
+  no_feedback: 'the user has not approved it (no answered approval question)',
+  feedback_missing: 'its approval record is missing',
+  not_accepted: 'the user has not approved it yet',
   same_author: 'it was approved by its own author',
   self_approved: 'it was self-approved',
   stale: 'the criterion changed since the approval',
@@ -93,52 +93,8 @@ export async function listDecisions(storage: Storage, input: DecisionsListInput 
     });
   }
 
-  // Feedback: open items need triage; accepted items nobody acts on need a work order (or a direct edit).
   const workOrders = await storage.workOrderService.list();
   const open = workOrders.filter((w) => OPEN_WORK_ORDER_STATUSES.includes(w.status));
-  const actingOn = new Set(open.flatMap((w) => w.reason ?? []));
-  const allFeedback = m.feedback ?? (await storage.feedback.list());
-  for (const f of allFeedback) {
-    const ref = buildRef({ kind: 'feedback', id: f.id });
-    const on = f.targets[0];
-    if (f.status === 'open') {
-      items.push({
-        ref,
-        kind: 'feedback_open',
-        title: one(f.body, 90),
-        context: `${f.kind.replace(/_/g, ' ')} · ${f.id}${on ? ` · on ${pretty(on)}` : ''}`,
-        question: `Accept, reject or mark as duplicate: "${one(f.body, 110)}"?`,
-        options: [
-          { id: 'accept', label: 'Accept (the spec or standard will change)', tool: 'feedback_accept' },
-          { id: 'reject', label: 'Reject, with a reason', tool: 'feedback_close' },
-          { id: 'duplicate', label: 'Duplicate of another item', tool: 'feedback_close' },
-        ],
-        ...(f.kind === 'bug' ? { suggested: 'accept', suggestedWhy: 'Reported as a bug: accepting it plans the fix.' } : {}),
-        ...(on ? { subject: on } : {}),
-        feedbackKind: f.kind,
-        ...(f.createdBy || f.createdByUser ? { by: f.createdBy ?? f.createdByUser } : {}),
-        since: f.createdAt,
-      });
-    } else if (f.status === 'accepted' && !actingOn.has(f.id)) {
-      items.push({
-        ref,
-        kind: 'feedback_accepted',
-        title: one(f.body, 90),
-        context: `${f.kind.replace(/_/g, ' ')} · ${f.id} · accepted, no work order acts on it yet`,
-        question: `Accepted but nobody acts on it: create a work order, apply it directly, or wait? "${one(f.body, 90)}"`,
-        options: [
-          { id: 'work_order', label: 'Create a work order', tool: 'work_order_create' },
-          { id: 'apply', label: 'Edit the document now and close it as applied', tool: 'feedback_close' },
-          { id: 'wait', label: 'Leave it accepted for now' },
-        ],
-        suggested: 'work_order',
-        ...(on ? { subject: on } : {}),
-        feedbackKind: f.kind,
-        ...(f.createdBy || f.createdByUser ? { by: f.createdBy ?? f.createdByUser } : {}),
-        since: f.updatedAt,
-      });
-    }
-  }
 
   // Waivers (deviates_from / exemptions) that do not waive yet.
   if (want('waiver_pending')) {
@@ -155,7 +111,7 @@ export async function listDecisions(storage: Storage, input: DecisionsListInput 
           title: `${c.title} (${spec.title})`,
           question: `Waive "${one(c.title, 80)}" for ${spec.title}? It is not in effect: ${why}.`,
           options: [
-            { id: 'approve', label: c.waiver.feedback ? `Approve: accept ${c.waiver.feedback}` : 'Approve: file and accept a feedback item', tool: 'feedback_accept' },
+            { id: 'approve', label: 'Approve: the agent asks (question_ask purpose approval) and cites the answer' },
             { id: 'reject', label: 'Reject: the spec must meet the criterion (remove the deviation)' },
           ],
           context: one(c.waiver.note || why),
@@ -169,23 +125,7 @@ export async function listDecisions(storage: Storage, input: DecisionsListInput 
 
   // Approval overrides (self-approved acceptances) and contradicted audit passes, from the integrity report.
   for (const i of integrity.issues) {
-    if (i.rule === 'self_approved_override') {
-      items.push({
-        ref: i.uri,
-        kind: 'approval_override',
-        title: (() => {
-          const id = i.uri.split('/').pop() ?? i.uri;
-          const fb = allFeedback.find((x) => x.id === id);
-          return fb ? one(fb.body, 90) : id;
-        })(),
-        context: `${i.uri.split('/').pop()} · accepted with a self-approval override; a second person should review it`,
-        question: `Confirm this self-approved acceptance? ${one(i.message, 110)}`,
-        options: [
-          { id: 'confirm', label: 'Confirm (a second person reviewed it)', tool: 'approval_override_confirm' },
-          { id: 'revisit', label: 'Revisit: reopen the decision with another reviewer', tool: 'feedback_update' },
-        ],
-      });
-    } else if (i.rule === 'audit_pass_contradicted') {
+    if (i.rule === 'audit_pass_contradicted') {
       items.push({
         ref: i.uri,
         kind: 'audit_contradicted',

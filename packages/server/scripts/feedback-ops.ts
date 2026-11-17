@@ -27,9 +27,8 @@ export async function applyFeedback(storage: Storage, feedbackId: string, op: Fe
 
 /** Set the final status (closing freezes the item). */
 export async function finishFeedback(storage: Storage, item: (typeof FEEDBACK)[number], date: Date): Promise<void> {
-  if (!item.final) return;
+  // Requests need no approval: `accepted` is only legacy data (not written any more).
+  if (!item.final || item.final.status === 'accepted') return;
   const { hoursAgo: _h, ...patch } = item.final as typeof item.final & { hoursAgo?: number };
-  // Accepting approves waivers: the approver is the item's author (giulia approves fb-0010), never the waiver's writer.
-  const who = item.final.status === 'accepted' ? (item.by ?? 'matteo') : 'matteo';
-  await storage.feedbackService.update(item.id, patch, { date, author: person(who), message: `feedback: ${item.final.status === 'closed' ? `close ${item.id} (${item.final.resolution})` : `accept ${item.id}`}` });
+  await storage.feedbackService.update(item.id, patch, { date, author: person('matteo'), message: `request: close ${item.id} (${item.final.resolution})` });
 }

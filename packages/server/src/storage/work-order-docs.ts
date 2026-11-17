@@ -90,6 +90,7 @@ export function projectWorkOrder(d: StoredWorkOrderDoc, heartbeat: (claim: NonNu
     ...(d.git?.length ? { git: d.git } : {}),
     ...(d.codeLinks?.length ? { codeLinks: d.codeLinks } : {}),
     hasPlan: sectionBody(d, WO_PLAN).trim().length > 0,
+    ...(d.planTests?.length ? { planTests: d.planTests } : {}),
   } as WorkOrder;
   return out;
 }

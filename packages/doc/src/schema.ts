@@ -135,6 +135,17 @@ export const touchedFileSchema = z.object({
 export type TouchedFile = z.output<typeof touchedFileSchema>;
 
 /** Per-section metadata, stored in the frontmatter `sections:` list. */
+/** A test proving an acceptance criterion: `test` is a code ref (`repo:path#Lx-Ly`) or a test name. */
+export const provedBySchema = z.object({
+  test: z.string().min(1),
+  /** The work order that delivered the test. */
+  workOrder: z.string().min(1).optional(),
+  /** The passing verification result (`vr-...`) that links it. */
+  verification: z.string().min(1).optional(),
+  at: z.string().min(1).optional(),
+});
+export type ProvedBy = z.output<typeof provedBySchema>;
+
 export const sectionMetaSchema = z.object({
   id: slugSchema,
   title: z
@@ -210,6 +221,10 @@ export const sectionMetaSchema = z.object({
   deviations: z.array(z.string().min(1)).optional(),
   /** Commit of the document version in which this section was last implemented (optional, app-defined). */
   implementedCommit: looseString.optional(),
+  /** Implemented spec sections: the work order that delivered the implementation (set with implementedCommit). */
+  implementedBy: z.string().min(1).optional(),
+  /** Acceptance criteria: the tests that prove it (recorded by verification_record; the work order that delivered them). */
+  provedBy: z.array(provedBySchema).optional(),
 });
 export type SectionMeta = z.output<typeof sectionMetaSchema>;
 

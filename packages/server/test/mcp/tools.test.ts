@@ -32,7 +32,7 @@ const short = () => fx.older.slice(0, 7);
 // Audit write tools: test/mcp/audits.test.ts. Work-order document and comment write tools: test/mcp/work-orders.test.ts.
 // The flow and news tools need project settings: covered by test/mcp/flow.test.ts and news.test.ts. Questions (and question_get): questions.test.ts.
 // Merged tools and tools_enable: test/mcp/tool-sets.test.ts.
-const WRITE_SUITE = new Set([...MERGED.map((m) => m.name), 'tools_enable', ...writeTools.map((t) => t.name), 'project_flow_set', 'flow_set', 'flow_policy_set', 'flow_clients_list', 'news_list', 'news_ack', 'upload_url_create', 'integrity_snooze', 'approval_override_confirm', ...auditTools.filter((t) => t.kind === 'write').map((t) => t.name), ...workOrderDocTools.filter((t) => t.kind === 'write').map((t) => t.name), ...lineageTools.filter((t) => t.kind === 'write').map((t) => t.name), ...questionTools.filter((t) => t.kind === 'write' || t.name === 'question_get').map((t) => t.name)]);
+const WRITE_SUITE = new Set([...MERGED.map((m) => m.name), 'tools_enable', ...writeTools.map((t) => t.name), 'project_flow_set', 'flow_set', 'flow_policy_set', 'flow_clients_list', 'news_list', 'news_ack', 'upload_url_create', 'integrity_snooze', 'feedback_get', 'feedback_list', ...auditTools.filter((t) => t.kind === 'write').map((t) => t.name), ...workOrderDocTools.filter((t) => t.kind === 'write').map((t) => t.name), ...lineageTools.filter((t) => t.kind === 'write').map((t) => t.name), ...questionTools.filter((t) => t.kind === 'write' || t.name === 'question_get').map((t) => t.name)]);
 const READ_TOOLS = TOOLS.filter((t) => !WRITE_SUITE.has(t.name));
 const HAPPY: Record<string, { args: () => Record<string, unknown>; check: (b: Record<string, any>) => void }> = {
   // (the security-baseline rule "rotating refresh tokens" competes for the top spot since standards have rule sections)
@@ -116,8 +116,8 @@ const HAPPY: Record<string, { args: () => Record<string, unknown>; check: (b: Re
   work_order_get: { args: () => ({ ref: `mandate://work-orders/${woId}` }), check: (b) => expect(b.item.id).toBe(woId) },
   work_order_section_get: { args: () => ({ ref: `mandate://work-orders/${woId}/sections/plan` }), check: (b) => expect(b.section).toMatchObject({ id: 'plan', type: 'markdown' }) },
   comments_list: { args: () => ({ target: `mandate://work-orders/${woId}` }), check: (b) => expect(b).toMatchObject({ counts: expect.any(Object), threads: expect.any(Array) }) },
-  feedback_list: { args: () => ({ status: ['closed'] }), check: (b) => expect(b.items.every((f: any) => f.status === 'closed')).toBe(true) },
-  feedback_get: { args: () => ({ ref: fbId }), check: (b) => expect(b.feedback.id).toBe(fbId) },
+  request_list: { args: () => ({ status: ['closed'] }), check: (b) => expect(b.items.every((f: any) => f.status === 'closed')).toBe(true) },
+  request_get: { args: () => ({ ref: fbId }), check: (b) => expect(b.request.id).toBe(fbId) },
   verification_list: {
     args: () => ({ spec: 'user-sessions' }),
     check: (b) => {
@@ -157,8 +157,8 @@ const HAPPY: Record<string, { args: () => Record<string, unknown>; check: (b: Re
   git_log: { args: () => ({ limit: 3 }), check: (b) => expect(b.items).toHaveLength(3) },
   ask_status: { args: () => ({}), check: (b) => expect(b).toMatchObject({ configured: false, missing: ['provider', 'model'] }) },
   instructions_get: { args: () => ({ name: 'core', stubVersion: 0 }), check: (b) => expect(b).toMatchObject({ name: 'core', text: SKILL_BODY, stubVersion: STUB_VERSION, update: expect.stringContaining('re-run the Mandate installer') }) },
-  lifecycle_get: { args: () => ({ kind: 'feedback' }), check: (b) => expect(b.steps.map((s: any) => s.to)).toContain('accepted') },
-  project_info: { args: () => ({}), check: (b) => expect(b.effective).toEqual({ flow: 'on', approval: 'off', questions: 'mandate' }) },
+  lifecycle_get: { args: () => ({ kind: 'request' }), check: (b) => expect(b.steps.map((s: any) => s.to)).toEqual(['closed']) },
+  project_info: { args: () => ({}), check: (b) => expect(b.effective).toEqual({ flow: 'on', questions: 'mandate' }) },
   code_context_set: { args: () => ({ repo: 'app', commit: 'ABC1234', dirty: true }), check: (b) => expect(b.label).toBe('app@abc1234+dirty') },
   questions_list: { args: () => ({ status: 'all', limit: 5 }), check: (b) => expect(b.total).toBeTypeOf('number') },
   audit_plan: { args: () => ({ target: 'mandate://specs/login-sso' }), check: (b) => expect(b.items.length).toBeGreaterThan(3) },
@@ -245,7 +245,7 @@ describe('invalid input', () => {
     await expectError('graph_node', { uri: 'mandate://specs/Bad_Id' }, 'invalid_input', 'uri');
     await expectError('spec_get', { ref: 'mandate://standards/security-baseline' }, 'invalid_input', 'ref');
     await expectError('spec_section_get', { ref: 'mandate://specs/login-sso' }, 'invalid_input');
-    await expectError('feedback_list', { target: 'https://example.com' }, 'invalid_input', 'target');
+    await expectError('request_list', { target: 'https://example.com' }, 'invalid_input', 'target');
     await expectError('related', { uri: 'specs/login-sso' }, 'invalid_input', 'uri');
   });
 

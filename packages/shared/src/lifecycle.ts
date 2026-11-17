@@ -46,10 +46,11 @@ export const WORK_ORDER_TRANSITIONS: Record<WorkOrderStatus, WorkOrderStatus[]> 
   done: [],
   cancelled: [],
 };
-/** `closed` is final (closed items are immutable). */
+/** Requests (stored as feedback): `closed` is final (closed items are immutable). */
 export const FEEDBACK_TRANSITIONS: Record<FeedbackStatus, FeedbackStatus[]> = {
-  open: ['accepted', 'closed'],
-  accepted: ['open', 'closed'],
+  // Requests need no approval: open -> closed. `accepted` is read from old data only (it behaves like open).
+  open: ['closed'],
+  accepted: ['closed'],
   closed: [],
 };
 /** Completed and abandoned audits are frozen (only finding resolutions / re-checks change). */
@@ -75,7 +76,7 @@ export const QUESTION_TRANSITIONS = { open: ['answered', 'cancelled', 'supersede
 
 export const LIFECYCLE_KINDS = [
   'spec', 'spec_section', 'standard', 'standard_section', 'component', 'component_section', 'work_order', 'work_order_section',
-  'feedback', 'verification', 'comment', 'question', 'audit', 'audit_finding', 'flow_policy', 'maturity',
+  'request', 'verification', 'comment', 'question', 'audit', 'audit_finding', 'flow_policy', 'maturity',
 ] as const;
 export type LifecycleKind = (typeof LIFECYCLE_KINDS)[number];
 
@@ -122,7 +123,7 @@ export interface LifecycleView extends Omit<LifecycleEntry, 'steps'> {
 
 const step = (to: string, tools: string[], when: string, x: Omit<LifecycleStep, 'to' | 'tools' | 'when'> = {}): LifecycleStep => ({ to, tools, when, ...x });
 const STD_CONFIRM = 'the user confirmed (cause: answered standard_confirmation question; questions in chat: confirmedByUser)';
-const SHRINK = 'removing criteria from a done or claimed spec needs addresses: [accepted feedback]';
+const SHRINK = 'removing criteria from a done or claimed spec needs the user\'s approval: an answered question_ask (purpose approval) cited as cause';
 
 const sectionEntry = (kind: 'spec_section' | 'standard_section' | 'component_section', prefix: 'spec' | 'standard' | 'component', extra: string[]): LifecycleEntry => ({
   kind,
@@ -157,7 +158,7 @@ const ENTRIES: LifecycleEntry[] = [
     enforced: true,
     steps: [
       step('draft', ['status_set'], 'back to discussion; archived -> draft restores an archived spec'),
-      step('ready', ['status_set'], 'once every section has acceptance criteria and the user approved them; done -> ready reopens a done spec before an update work order changes it', { gate: 'every live section has an acceptance criterion (own, verifiedBy or a followed rule)', enforcedBy: 'DocRules.beforeWrite (ready_gate)', errors: ['ready_gate', 'transition_not_allowed'] }),
+      step('ready', ['status_set'], 'once every section has acceptance criteria; done -> ready reopens a done spec before an update work order changes it', { gate: 'every live section has an acceptance criterion (own, verifiedBy or a followed rule)', enforcedBy: 'DocRules.beforeWrite (ready_gate)', errors: ['ready_gate', 'transition_not_allowed'] }),
       step('done', ['status_set'], 'when every implement/update work order on its sections is complete AND every must criterion is verified or waived; never force it', {
         gate: 'DONE GATE: every own and inherited criterion verified or waived (approved), no blocked / broken depends_on section, no open implement/update work order',
         enforcedBy: 'VerificationService.gate (storage/verification.ts), run by DocRules.beforeWrite',
@@ -169,7 +170,7 @@ const ENTRIES: LifecycleEntry[] = [
       'in_progress is derived (an open work order on the spec is claimed): never set it.',
       'Drift: a done spec whose criteria were added / changed / unverified since the gate shows as drifted: reopen (done -> ready), deliver an update work order, re-verify, set done again.',
       `Criteria shrink: ${SHRINK} (criteria_shrink).`,
-      'Waivers (deviates_from with feedback) and exemptions (exemptFrom) count only with feedback that is accepted (or closed applied) AND filed by someone other than the principal writing the waiver (validation otherwise).',
+      'Waivers (deviates_from) and exemptions (exemptFrom) count only with the user\'s approval: cite an answered question_ask (purpose approval) as cause; the answering user is recorded (validation otherwise).',
     ],
   },
   sectionEntry('spec_section', 'spec', ['Pending work-order sections on an archived spec section become obsolete.']),
@@ -192,7 +193,7 @@ const ENTRIES: LifecycleEntry[] = [
       }),
     ],
     notes: [
-      'Every standard_* write needs explicit user confirmation, even with approval off.',
+      'Every standard_* write needs explicit user confirmation (an answered standard_confirmation question).',
       'effectiveFrom (update_meta: ISO date or commit): before it, rules are announced, not required.',
       'Standards are never archived: deprecate with supersededBy.',
     ],
@@ -224,7 +225,7 @@ const ENTRIES: LifecycleEntry[] = [
     kind: 'work_order',
     states: [...WORK_ORDER_STATUSES],
     initial: 'pending',
-    create: { tools: ['work_order_create'], when: 'after the approved spec edit (reason: [feedback], plan); at most one open implement/update work order per section', errors: ['validation'] },
+    create: { tools: ['work_order_create'], when: 'right after the spec / standard edit that addresses the request: reason: [request], plan (REQUIRED for implement / update / fix: steps, files, tests mapped to the criteria they prove, risks); at most one open implement/update work order per section', errors: ['validation'] },
     terminal: ['done', 'cancelled'],
     frozen: ['done', 'failed', 'cancelled'],
     derived: [],
@@ -233,7 +234,7 @@ const ENTRIES: LifecycleEntry[] = [
     steps: [
       step('pending', ['work_order_release'], 'give a claimed work order back (not for finished work: with every section done the claim is released automatically)', { from: ['in_progress'] }),
       step('in_progress', ['work_order_claim', 'work_order_next'], 'when you start delivery (also reopens a failed one; claiming an all-sections-done work order keeps its progress)', {
-        gate: 'a plan (work_order_plan_set) unless fastPath fix; no fresh claim by another agent',
+        gate: 'a plan (given at work_order_create, or work_order_plan_set) unless fastPath fix; no fresh claim by another agent',
         enforcedBy: 'WorkOrderService.claim (storage/work-orders.ts)',
         errors: ['plan_required', 'claim_conflict', 'transition_not_allowed'],
       }),
@@ -263,29 +264,23 @@ const ENTRIES: LifecycleEntry[] = [
     notes: ['done on implement/update records implementedCommit on the spec section.'],
   },
   {
-    kind: 'feedback',
+    kind: 'request',
     states: [...FEEDBACK_STATUSES],
     initial: 'open',
-    create: { tools: ['feedback_create'], when: 'INTAKE step 1 (the user\'s words; improvement / bug may omit targets until spec_match), a spec unclear mid-delivery, or a spec_wrong / ambiguous finding (fromFinding)' },
+    create: { tools: ['request_create'], when: 'INTAKE step 1: every instruction the user gives (their words; improvement / bug may omit targets until spec_match; no approval needed), a spec unclear mid-delivery, or a spec_wrong / ambiguous finding (fromFinding)' },
     terminal: ['closed'],
     frozen: ['closed'],
     derived: [],
     table: FEEDBACK_TRANSITIONS,
     enforced: true,
     steps: [
-      step('open', [], 'accepted -> open: not exposed to agents'),
-      step('accepted', ['feedback_accept'], 'at APPROVAL, when the user says "go": it will be acted on; it is the approval for waivers / exemptions / criteria removals', {
-        gate: 'approvals need filer and accepter other than the writer; override: true + overrideReason only for the sole active user (distinct Mandate-User writers in 90 days, service accounts excluded), an admin, or local mode',
-        enforcedBy: 'LinkService.validate, DocRules (waiver_self_approved); feedback_accept (override_not_allowed)',
-        errors: ['waiver_self_approved', 'override_not_allowed'],
-      }),
-      step('closed', ['feedback_close'], 'after the last spec / standard write that addresses it: applied (changes linked by addresses), rejected (resolutionNote), duplicate (duplicateOf)', {
+      step('closed', ['request_close'], 'when its work orders are complete (closed automatically when every work order that acts on it is done and it has linked changes), or after the last spec / standard write that addresses it: applied (changes linked by addresses), rejected (resolutionNote), duplicate (duplicateOf)', {
         gate: 'resolution; rejected needs resolutionNote, duplicate needs duplicateOf, applied needs a linked change (addresses / cause / relatedTo a commit)',
         enforcedBy: 'feedback schema checkResolution + FeedbackService.beforeWrite (storage/feedback.ts)',
-        errors: ['validation', 'feedback_closed', 'applied_without_changes'],
+        errors: ['validation', 'request_closed', 'applied_without_changes'],
       }),
     ],
-    notes: ['Closed feedback is immutable and can no longer be addressed by new writes (feedback_closed): file a new item with relatedTo.', 'A waiver / exemption needs accepted feedback filed by someone OTHER than whoever writes the waiver: have the user (or another agent) file it.'],
+    notes: ['A request needs no approval (old stored requests may read accepted: it behaves like open). Questions to the user go through question_ask (Questions); keep working on what does not depend on the answer.', 'Closed requests are immutable and can no longer be addressed by new writes (request_closed): file a new request with relatedTo.'],
   },
   {
     kind: 'verification',
@@ -337,7 +332,7 @@ const ENTRIES: LifecycleEntry[] = [
     ],
     notes: [
       'After asking: continue with work that does not depend on the answer. Answers arrive as a notifications/mandate/question_answered notification while your session is connected; else poll list { of: "questions", mine: true, status: "answered", since } at checkpoints (after each section or step). If everything is blocked, tell the user and stop. If the user is chatting with you and the question blocks all progress, you may ask in chat as well.',
-      'Proof: cite an answered question as cause. standard_* writes citing a standard_confirmation question record User-Confirmed: <id> (the answering user); feedback_accept citing an approval question records User-Approved: <id> and, with override, checks the answering user\'s eligibility. Unanswered, or answered by someone not allowed to confirm: question_not_answered / question_ineligible.',
+      'Proof: cite an answered question as cause. standard_* writes citing a standard_confirmation question record User-Confirmed: <id> (the answering user); a waiver / exemption / criteria removal citing an approval question records User-Approved: <id> (the answering user). Unanswered, or answered by someone not allowed to confirm: question_not_answered / question_ineligible.',
     ],
   },
   {
@@ -374,7 +369,7 @@ const ENTRIES: LifecycleEntry[] = [
       step('wont_fix', ['audit_recheck'], 'the user accepts it as is (notes required)', { gate: 'notes', errors: ['finding_closed', 'validation'] }),
       step('open', ['audit_finding_relink'], 'its fix work order was cancelled or failed: link the replacement (frozen audits too)', { errors: ['finding_linked', 'finding_closed'], enforcedBy: 'AuditService.relinkFinding (storage/audits.ts)' }),
     ],
-    notes: ['Never resolved automatically. code_deviates -> fix work orders (audit_findings_to_work_orders); spec_wrong / ambiguous -> feedback_create fromFinding.'],
+    notes: ['Never resolved automatically. code_deviates -> fix work orders (audit_findings_to_work_orders); spec_wrong / ambiguous -> request_create fromFinding.'],
   },
   {
     kind: 'flow_policy',
@@ -386,7 +381,7 @@ const ENTRIES: LifecycleEntry[] = [
     table: { required: ['optional', 'off'], optional: ['required', 'off'], off: ['required', 'optional'] },
     enforced: false,
     steps: [
-      step('optional', ['flow_policy_set'], 'web UI admins only; each client then chooses with flow_set (on / off, approval on / off)', {
+      step('optional', ['flow_policy_set'], 'web UI admins only; each client then chooses with flow_set (on / off)', {
         gate: 'web UI admins only; agents use flow_set, which must not contradict the policy',
         enforcedBy: 'callTool uiOnly (mcp/define.ts); settings.refusal (projects/settings.ts)',
         errors: ['forbidden', 'policy_required', 'policy_off'],
@@ -394,7 +389,7 @@ const ENTRIES: LifecycleEntry[] = [
       step('required', ['flow_policy_set'], 'web UI admins only: every agent follows the flow'),
       step('off', ['flow_policy_set'], 'web UI admins only: Mandate is read-only context'),
     ],
-    notes: ['project_info returns the effective { flow, approval } and why. approvalPolicy: required | optional.'],
+    notes: ['project_info returns the effective { flow, questions } and why.'],
   },
   {
     kind: 'maturity',
@@ -441,29 +436,32 @@ export const ERROR_ACTIONS: Record<string, string> = {
   flow_off: 'the Mandate flow is off for this coding agent: stop calling Mandate write tools, work directly in the code and use Mandate as read-only context; save this to your memory. Only the user turns it back on (/mandate-flow on)',
   transition_not_allowed: 'not allowed from the current status: lifecycle_get { kind } lists the allowed moves; go through the intermediate status (e.g. reopen done -> ready)',
   done_gate: 'never force it (no override passes it): verify (verification_record) each detail.failures criterion or ask the user whether to waive it, unblock sections, complete open implement/update work orders, then retry',
-  plan_required: 'write the plan (work_order_plan_set), then claim',
+  plan_required: 'implement / update / fix work orders carry the FULL plan from creation: work_order_create { plan: { steps, files, tests: [{ name, proves: [criterion ids] }], risks } } (an older work order without a plan: work_order_plan_set, then claim)',
+  plan_invalid: 'plan.tests[].proves must name acceptance criteria of the targeted sections (the message lists them) and every such criterion needs a test: fix the plan and retry',
   open_comments: 'answer, fix and comment_resolve each blocking comment in detail.threads, then retry',
   outcome_required: 'pass outcome (what was delivered)',
   claim_conflict: 'another agent holds a fresh claim: pick another work order (work_order_next) or coordinate (comment_add)',
   stale_claim: 'the claim is stale: work_order_claim to take it over, then retry',
   not_claimed: 'claim the work order first (work_order_claim), then retry (not needed to complete once every section is done: the claim is released automatically)',
   ready_gate: 'every live section needs an acceptance criterion: insert one per listed section (or verifiedBy an existing one), then set ready',
-  waiver_self_approved: 'approval must come from someone else: ask the user (question_ask purpose approval). Only if the user explicitly says to self-approve: feedback_accept with override: true, overrideReason (their words) and cause: the answered question',
-  override_not_allowed: 'self-approval is only for the sole active user, or an admin, and only when the user says so: ask another user to accept the feedback',
+  waiver_self_approved: 'a waiver / exemption / criteria removal needs the user\'s approval: ask (question_ask purpose approval), wait for the answer, then retry with cause: the answered question',
+  approval_required: 'a waiver / exemption / criteria removal needs the user\'s approval: ask (question_ask purpose approval), wait for the answer, then retry with cause: the answered question',
   all_done: 'every section is done: the agent only has to call work_order_complete (outcome, reconciliation); no claim and no release needed',
   claim_fresh: 'the claim has a recent heartbeat: only a stale claim can be released from the web UI; ask the agent or wait',
   not_snoozable: 'integrity errors cannot be snoozed: fix the error (its hint says how)',
   work_order_frozen: 'the work order is closed: only work_order_git_update (PR / merge) and replies are allowed; open a new work order for more work',
   cycle: 'the link would close a dependency cycle: link the other way or drop a link',
   superseded_target: 'link to the successor the message names',
-  feedback_closed: 'closed feedback is immutable and cannot be addressed: file a new item (relatedTo the closed one)',
-  applied_without_changes: 'applied needs a linked change: pass addresses: [the feedback] (or cause) on the writes that applied it, or relatedTo the commit (mandate://commits/<sha>); else close it rejected / duplicate',
+  request_closed: 'a closed request is immutable and cannot be addressed: file a new request (relatedTo the closed one)',
+  feedback_closed: 'a closed request is immutable and cannot be addressed: file a new request (relatedTo the closed one)',
+  criteria_unproven: 'every acceptance criterion the work order covers needs a test: write the test, run it, verification_record { result: pass, evidence: { test } } per criterion (codeRefs name the test file), then retry',
+  applied_without_changes: 'applied needs a linked change: pass addresses: [the request] (or cause) on the writes that applied it, or relatedTo the commit (mandate://commits/<sha>); else close it rejected / duplicate',
   append_only: 'records are append-only: record a new result instead',
   archive_only: 'nothing is deleted: archive it (archive: a spec, component or section)',
   section_referenced: 'the section is referenced: archive it instead of removing it',
   id_reused: 'ids are never reused (Mandate assigns new ones)',
   integrity_violation: 'the write would break an integrity rule (detail.issues): fix the cause the hint names, then retry',
-  criteria_shrink: 'removing criteria from a done or claimed spec: get the change approved as feedback (feedback_accept), pass addresses: [that item], retry',
+  criteria_shrink: 'removing criteria from a done or claimed spec needs the user\'s approval: question_ask (purpose approval), wait for the answer, retry with cause: the answered question (and addresses: [the request])',
   stale_version: 're-read the document and retry with its current reference',
   audit_frozen: 'the audit is completed or abandoned: audit_recheck findings, or audit_start a new audit',
   audit_incomplete: 'record every must item in detail.missing (notes on fail / partial) and the overview, then retry',
@@ -506,7 +504,6 @@ export const ERROR_ACTIONS: Record<string, string> = {
   alt_required: 'image sections need alt text: pass alt (what the image shows, for agents, search and Ask)',
   type_mismatch: 'the uploaded bytes are not the declared image type: send the right Content-Type (or none) and a PNG, JPEG, GIF, WebP or SVG file',
   image_upload_required: 'image files are uploaded with curl (project_info.upload.image / upload_url_create), not set in section bodies: only alt and caption can be edited',
-  no_override: 'this feedback item has no approval override to confirm: check list { of: "decisions" } for open overrides',
   already_confirmed: 'the override is already confirmed: nothing to do',
   unknown_code_repo: 'use a registered code repository short name: project_info.codeRepos lists them (match your git remote); an admin adds repos in project settings',
   code_commit_required: 'pass the code repository and commit (code { repo, commit, dirty? }): run git rev-parse HEAD; uncommitted changes: dirty: true',
@@ -561,7 +558,6 @@ export const INTEGRITY_RULES: IntegrityRule[] = [
   rule('owns_matches_nothing', 'warning', 'global', 'an owns glob that matches no referenced code', 'fix the glob, or add refs to the code it owns'),
   rule('spec_ready_without_criteria', 'error', 'element', 'a spec moving to ready while a live section has no acceptance criterion', 'add an acceptance criterion for each listed section (or verifiedBy one), then set ready', 'DocRules.beforeWrite (ready_gate)'),
   rule('spec_section_without_criteria', 'warning', 'element', 'a section of a ready / done spec without an acceptance criterion (own acceptance, verifiedBy or a followed rule)', 'add an acceptance criterion that verifies it (section_insert type acceptance, verifiedBy)'),
-  rule('self_approved_override', 'warning', 'global', 'a feedback item accepted with an approval override (it may approve its accepter\'s own waivers / exemptions / criteria removals)', 'have another person review it; the override reason is on the item and its Approval-Override commit'),
   rule('spec_done_without_criteria', 'warning', 'element', 'a done spec without any live acceptance criterion', 'add acceptance criteria (section_insert type acceptance) and verify them'),
   rule('external_follows_internal', 'warning', 'element', 'an external component that follows internal code rules (rules with a code scope or check)', 'move the follows link to the internal component that calls the service'),
   rule('audit_pass_contradicted', 'warning', 'global', 'an audit item recorded pass while an open must / critical finding of the same audit contradicts it (its own, or one on the code it verifies)', 'record a failing verification and re-audit the item'),
@@ -575,5 +571,5 @@ export const integritySeverity = (r: string): 'error' | 'warning' => INTEGRITY_R
 /* ---------------------------------------------------------------- lifecycle_get input */
 
 /** `integrity`: the integrity rules (repo lint). Without kind: the kind list and the error actions. */
-export const lifecycleGetInputSchema = z.object({ kind: z.enum([...LIFECYCLE_KINDS, 'integrity']).optional() }).strict();
+export const lifecycleGetInputSchema = z.object({ kind: z.preprocess((v) => (v === 'feedback' ? 'request' : v), z.enum([...LIFECYCLE_KINDS, 'integrity'])).optional() }).strict();
 export type LifecycleGetInput = z.infer<typeof lifecycleGetInputSchema>;

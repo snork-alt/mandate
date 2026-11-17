@@ -65,7 +65,7 @@ describe('activity_list (git-backed)', () => {
     const r = await fx.call('activity_list', { limit: 500 });
     expect(r.isError, JSON.stringify(r.body)).toBe(false);
     const types = new Set((r.body.events as ActivityEvent[]).map((e) => e.type));
-    for (const t of ['spec.created', 'spec.section.updated', 'standard.created', 'work_order.created', 'feedback.created', 'feedback.closed', 'verification.recorded']) {
+    for (const t of ['spec.created', 'spec.section.updated', 'standard.created', 'work_order.created', 'request.created', 'request.closed', 'verification.recorded']) {
       expect(types, t).toContain(t);
     }
     expect(r.body.head).toBe(fx.head);

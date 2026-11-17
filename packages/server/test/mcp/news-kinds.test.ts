@@ -74,41 +74,12 @@ describe('claim_expired', () => {
   }, 60_000);
 });
 
-describe('override_confirmed', () => {
-  it('a second person confirming a self-approval override is news for the agent that made it (not "revisited")', async () => {
-    const a = agent('ada', 'o1');
-    const s = await spec(a, 'Override spec');
-    const fb = await ok(a, 'feedback_create', { kind: 'improvement', body: 'Allow my own deviation.', targets: [`${s.ref}/sections/${s.section}`] });
-    await ok(a, 'feedback_accept', { ref: fb.ref, override: true, overrideReason: 'sole maintainer, user said so' });
-    await settle();
-    // The overriding person cannot confirm it.
-    const same = await call(ui('ada'), 'approval_override_confirm', { ref: fb.ref, note: 'looks fine' });
-    expect(same.isError).toBe(true);
-    expect(JSON.stringify(same.body)).toContain('same_person');
-    const dl = async () => (await ok(ui('carol'), 'decisions_list', { kinds: ['approval_override'], limit: 200 })).items as { ref: string; options: { id: string; tool?: string }[] }[];
-    // Feedback writes do not re-run the integrity rules (only full runs): bring the new override in.
-    await fx.storage.integrity.sync(true);
-    const pending = (await dl()).find((d) => d.ref === fb.ref);
-    expect(pending?.options.find((o) => o.id === 'confirm')?.tool).toBe('approval_override_confirm');
-    const r = await ok(ui('carol'), 'approval_override_confirm', { ref: fb.ref, note: 'reviewed with the team' });
-    expect(r.approvalOverride).toMatchObject({ by: 'ada', confirmedBy: 'carol', confirmNote: 'reviewed with the team' });
-    expect((await dl()).some((d) => d.ref === fb.ref)).toBe(false);
-    // Once only.
-    expect(JSON.stringify((await call(ui('dan'), 'approval_override_confirm', { ref: fb.ref, note: 'again' })).body)).toContain('already_confirmed');
-    await settle();
-    const got = (await unread('ada', 'o1')).filter((i) => i.ref === fb.ref);
-    expect(got.map((i) => i.kind)).toContain('override_confirmed');
-    expect(got.map((i) => i.kind)).not.toContain('override_revisited');
-    expect(got.find((i) => i.kind === 'override_confirmed')!.summary).toContain('carol confirmed');
-    await ok(agent('ada', 'o1'), 'news_ack', { all: true });
-  }, 60_000);
-});
 
 describe('review_outcome', () => {
   const implemented = async (login: string, session: string, title: string) => {
     const a = agent(login, session);
     const s = await spec(a, title);
-    const wo = await ok(a, 'work_order_create', { plan: 'P.', spec: s.ref, sections: [s.section], kind: 'implement' });
+    const wo = await ok(a, 'work_order_create', { plan: { steps: ['P.'] }, spec: s.ref, sections: [s.section], kind: 'implement' });
     await ok(a, 'work_order_claim', { ref: wo.ref });
     await ok(a, 'work_order_complete', { ref: wo.ref, outcome: 'Built it.' });
     return s;

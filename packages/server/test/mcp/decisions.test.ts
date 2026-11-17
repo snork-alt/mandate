@@ -36,14 +36,13 @@ describe('decisions_list', () => {
     // Priority order: kinds in DECISION_KINDS order.
     const order = items.map((d: any) => DECISION_KINDS.indexOf(d.kind));
     expect(order).toEqual([...order].sort((a: number, b: number) => a - b));
-    // Open feedback in the fixture shows up as feedback_open.
-    const open = (await fx.storage.feedback.list()).filter((f) => f.status === 'open');
-    expect(counts.feedback_open).toBe(open.length);
+    // Requests need no decision: open requests are not decisions.
+    expect(Object.keys(counts)).not.toContain('feedback_open');
   });
 
   it('filters by kinds, caps with limit, strict input', async () => {
     const all = await fx.call('decisions_list', {});
-    const k = (DECISION_KINDS.find((x) => all.body.counts[x] > 0) ?? 'feedback_open') as string;
+    const k = (DECISION_KINDS.find((x) => all.body.counts[x] > 0) ?? 'question') as string;
     const r = await fx.call('decisions_list', { kinds: [k], limit: 1 });
     expect(r.body.items.length).toBeLessThanOrEqual(1);
     expect(r.body.items.every((d: any) => d.kind === k)).toBe(true);
@@ -51,21 +50,12 @@ describe('decisions_list', () => {
     expect((await fx.call('decisions_list', { kinds: ['nope'] })).isError).toBe(true);
     expect((await fx.call('decisions_list', { extra: 1 })).isError).toBe(true);
   });
-
-  it('a new open feedback item becomes a feedback_open decision', async () => {
-    const spec = (await fx.storage.specs.list()).find((s) => s.status !== 'archived' && s.sections.length)!;
-    const fb = await fx.call('feedback_create', { targets: [`mandate://specs/${spec.id}/sections/${spec.sections[0]!.id}`], kind: 'question', body: 'Which IdPs are in scope?', agent: 't' });
-    const r = await fx.call('decisions_list', { kinds: ['feedback_open'], limit: 200 });
-    const d = r.body.items.find((x: any) => x.ref === fb.body.ref);
-    expect(d).toMatchObject({ kind: 'feedback_open', question: expect.stringContaining('Which IdPs are in scope?') });
-    expect(d.options.map((o: any) => o.tool)).toEqual(['feedback_accept', 'feedback_close', 'feedback_close']);
-  });
 });
 
 describe('UI allow-list (uiAllowed)', () => {
   it('only the human-decision tools are uiAllowed, and they are write tools', () => {
     const allowed = TOOLS.filter((t) => t.uiAllowed).map((t) => t.name).sort();
-    expect(allowed).toEqual(['approval_override_confirm', 'feedback_accept', 'feedback_close', 'integrity_snooze', 'question_answer', 'work_order_release']);
+    expect(allowed).toEqual(['feedback_close', 'integrity_snooze', 'question_answer', 'request_close', 'work_order_release']);
     for (const n of allowed) expect(tool(n).kind).toBe('write');
   });
 
@@ -84,28 +74,28 @@ describe('UI allow-list (uiAllowed)', () => {
   });
 
   it('allowed tools need the user\'s own write access', async () => {
-    const r = await callTool(tool('feedback_accept'), { ref: 'fb-0001' }, uiCtx('read'));
+    const r = await callTool(tool('request_close'), { ref: 'fb-0001', resolution: 'rejected', resolutionNote: 'x' }, uiCtx('read'));
     expect(body(r).error).toMatchObject({ code: 'forbidden', message: expect.stringMatching(/write \(push\) permission/) });
   });
 
-  it('accept / reject from the UI: commit attributed to the signed-in user via mandate-ui, activity emitted', async () => {
+  it('reject / duplicate from the UI: commit attributed to the signed-in user via mandate-ui, activity emitted', async () => {
     const spec = (await fx.storage.specs.list()).find((s) => s.status !== 'archived' && s.sections.length)!;
     const target = `mandate://specs/${spec.id}/sections/${spec.sections[0]!.id}`;
-    const a = (await fx.call('feedback_create', { targets: [target], kind: 'bug', body: 'A', agent: 't' })).body.ref as string;
-    const b = (await fx.call('feedback_create', { targets: [target], kind: 'question', body: 'B', agent: 't' })).body.ref as string;
+    const a = (await fx.call('request_create', { targets: [target], kind: 'bug', body: 'A', agent: 't' })).body.ref as string;
+    const b = (await fx.call('request_create', { targets: [target], kind: 'question', body: 'B', agent: 't' })).body.ref as string;
     const seen: string[] = [];
     const off = fx.activity.subscribe?.((e: any) => seen.push(e.type));
-    const r1 = await callTool(tool('feedback_accept'), { ref: a, agent: 'spoofed-agent' }, uiCtx('write'));
+    const r1 = await callTool(tool('request_close'), { ref: a, resolution: 'rejected', resolutionNote: 'no', agent: 'spoofed-agent' }, uiCtx('write'));
     expect(r1.isError).toBeFalsy();
     const info = await fx.git.commitInfo((await fx.git.head())!);
     expect(info.message).toMatch(new RegExp(`Agent: ${UI_AGENT}`));
     expect(info.message).toMatch(/Mandate-User: ada/);
     expect(info.message).not.toMatch(/spoofed-agent/);
-    expect((await fx.storage.feedback.get(a.split('/').pop()!)).status).toBe('accepted');
+    expect((await fx.storage.feedback.get(a.split('/').pop()!)).status).toBe('closed');
     // "applied" is the agents' (content changed); the UI may reject or mark duplicate.
-    const applied = await callTool(tool('feedback_close'), { ref: b, resolution: 'applied' }, uiCtx('write'));
+    const applied = await callTool(tool('request_close'), { ref: b, resolution: 'applied' }, uiCtx('write'));
     expect(body(applied).error.code).toBe('forbidden');
-    const rej = await callTool(tool('feedback_close'), { ref: b, resolution: 'rejected', resolutionNote: 'out of scope' }, uiCtx('write'));
+    const rej = await callTool(tool('request_close'), { ref: b, resolution: 'rejected', resolutionNote: 'out of scope' }, uiCtx('write'));
     expect(rej.isError).toBeFalsy();
     expect((await fx.storage.feedback.get(b.split('/').pop()!)).resolution).toBe('rejected');
     if (typeof off === 'function') off();
@@ -113,26 +103,19 @@ describe('UI allow-list (uiAllowed)', () => {
 
   it('recorded as mandate-ui by the signed-in user', async () => {
     const spec = (await fx.storage.specs.list()).find((s) => s.status !== 'archived' && s.sections.length)!;
-    const ref = (await fx.call('feedback_create', { targets: [`mandate://specs/${spec.id}/sections/${spec.sections[0]!.id}`], kind: 'bug', body: 'L', agent: 't' })).body.ref as string;
-    const r = await callTool(tool('feedback_accept'), { ref }, uiCtx('write', 'team', 'ada'));
+    const ref = (await fx.call('request_create', { targets: [`mandate://specs/${spec.id}/sections/${spec.sections[0]!.id}`], kind: 'bug', body: 'L', agent: 't' })).body.ref as string;
+    const r = await callTool(tool('request_close'), { ref, resolution: 'rejected', resolutionNote: 'no' }, uiCtx('write', 'team', 'ada'));
     expect(r.isError).toBeFalsy();
     const info = await fx.git.commitInfo((await fx.git.head())!);
     expect(info.message).toMatch(/Agent: mandate-ui/);
     expect(info.message).toMatch(/^Mandate-User: ada$/m);
   });
 
-  it('override needs a reason and eligibility', async () => {
-    const spec = (await fx.storage.specs.list()).find((s) => s.status !== 'archived' && s.sections.length)!;
-    const ref = (await fx.call('feedback_create', { targets: [`mandate://specs/${spec.id}/sections/${spec.sections[0]!.id}`], kind: 'bug', body: 'O', agent: 't' })).body.ref as string;
-    const noReason = await callTool(tool('feedback_accept'), { ref, override: true }, uiCtx('write'));
-    expect(body(noReason).error.code).toBe('validation');
+  it('decision_access: who may record decisions', async () => {
     const notAdmin = { ...uiCtx('write'), settings: { ...memorySettings(), isAdmin: () => false } } as ToolContext;
     const access = body(await callTool(tool('decision_access'), {}, notAdmin));
     expect(access).toMatchObject({ canDecide: true, user: 'ada' });
-    expect(typeof access.override.ok).toBe('boolean');
-    const ok = await callTool(tool('feedback_accept'), { ref, override: true, overrideReason: 'sole reviewer today' }, uiCtx('write'));
-    expect(ok.isError).toBeFalsy();
-    expect((await fx.git.commitInfo((await fx.git.head())!)).message).toMatch(/Approval-Override/);
+    expect(access.override).toBeUndefined();
   });
 
   it('release: only a STALE claim, from the UI', async () => {
@@ -161,7 +144,7 @@ describe('UI allow-list (uiAllowed)', () => {
   it('an all-sections-done work order with a stale claim is no stale_claim decision and cannot be released from the UI', async () => {
     const sid = `dec-${Date.now().toString(36)}`;
     await fx.call('spec_create', { id: sid, title: 'Decision spec', summary: 's', agent: 't', sections: [{ id: 'one', title: 'One', summary: 'o', body: 'o' }] });
-    const created = await fx.call('work_order_create', { spec: sid, sections: ['one'], kind: 'implement', plan: 'p', agent: 't' });
+    const created = await fx.call('work_order_create', { spec: sid, sections: ['one'], kind: 'implement', plan: { steps: ['p'] }, agent: 't' });
     const wo = { id: (created.body.ref as string).split('/').pop()! };
     await fx.call('work_order_claim', { ref: wo.id, agent: 'busy-agent' });
     const secs = ['one'];

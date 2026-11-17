@@ -344,35 +344,23 @@ function feedbackEvents(before: Map<string, Record<string, any>>, after: Map<str
   for (const [id, a] of after) {
     const b = before.get(id);
     if (!b) {
-      out.push({ type: 'feedback.created', refs: refsOf(a), summary: `${who} raised ${a.kind ?? 'feedback'} ${id}`, details: { kind: a.kind, status: { from: null, to: a.status ?? 'open' } } });
+      out.push({ type: 'request.created', refs: refsOf(a), summary: `${who} raised ${a.kind ?? 'feedback'} ${id}`, details: { kind: a.kind, status: { from: null, to: a.status ?? 'open' } } });
       continue;
     }
     let keys = changedKeys(b, a);
     if (!keys.length) continue;
-    // A second person confirmed the item's self-approval override (approval_override_confirm): its own event.
-    if (keys.includes('approvalOverride') && a.approvalOverride?.confirmedAt && !b.approvalOverride?.confirmedAt) {
-      const o = a.approvalOverride;
-      out.push({
-        type: 'approval.override_confirmed',
-        refs: refsOf(a),
-        summary: `${o.confirmedBy ?? who} confirmed the self-approval override of ${id}${o.confirmNote ? `: ${String(o.confirmNote).slice(0, 160)}` : ''}`,
-        details: { kind: a.kind, by: o.confirmedBy ?? who, overriddenBy: o.by, ...(o.confirmNote ? { reason: o.confirmNote } : {}) },
-      });
-      keys = keys.filter((k) => k !== 'approvalOverride');
-      if (!keys.length) continue;
-    }
     if (a.status === 'closed' && b.status !== 'closed') {
-      out.push({ type: 'feedback.closed', refs: refsOf(a), summary: `${who} closed ${id} (${a.resolution ?? 'closed'})`, details: { kind: a.kind, resolution: a.resolution, status: { from: b.status, to: 'closed' } } });
+      out.push({ type: 'request.closed', refs: refsOf(a), summary: `${who} closed ${id} (${a.resolution ?? 'closed'})`, details: { kind: a.kind, resolution: a.resolution, status: { from: b.status, to: 'closed' } } });
     } else {
       out.push({
-        type: 'feedback.updated',
+        type: 'request.updated',
         refs: refsOf(a),
         summary: `${who} updated ${id}${a.status !== b.status ? ` (${b.status} → ${a.status})` : ''}`,
         details: { kind: a.kind, fields: keys, ...(a.status !== b.status ? { status: { from: b.status, to: a.status } } : {}) },
       });
     }
   }
-  for (const [id, b] of before) if (!after.has(id)) out.push({ type: 'feedback.deleted', refs: refsOf(b), summary: `${who} deleted feedback ${id}`, details: { kind: b.kind } });
+  for (const [id, b] of before) if (!after.has(id)) out.push({ type: 'request.deleted', refs: refsOf(b), summary: `${who} deleted feedback ${id}`, details: { kind: b.kind } });
   return out;
 }
 

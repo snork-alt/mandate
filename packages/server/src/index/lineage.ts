@@ -69,7 +69,7 @@ export function commitCauses(trailers: Record<string, string>): { uri: string; t
     }
     for (const id of parts.filter((x) => ID_RE.test(x))) {
       const uri =
-        key === 'feedback'
+        key === 'feedback' || key === 'request'
           ? buildRef({ kind: 'feedback', id })
           : key === 'work-order' || key === 'queue-item'
             ? buildRef({ kind: 'work-orders', id })
@@ -84,7 +84,7 @@ export function commitCauses(trailers: Record<string, string>): { uri: string; t
 
 /** Id trailers name one record of a family: a commit never makes a sibling record of that family its effect (L-1). */
 export const ID_TRAILER_FAMILY: Record<string, string> = {
-  feedback: 'mandate://feedback/',
+  feedback: 'mandate://requests/',
   'work-order': 'mandate://work-orders/',
   'queue-item': 'mandate://work-orders/',
   audit: 'mandate://audits/',

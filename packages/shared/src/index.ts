@@ -1,7 +1,7 @@
 import { parseNodeUri, parseRef } from './refs.js';
 import { auditCodeRefSchema, findingUriSchema, type LastAudit, type SpecAudits, type StandardAudits } from './audits.js';
 import type { SpecMaturity } from './maturity.js';
-import { gitContextSchema, pastClaimSchema, touchedFileSchema, type CommentCounts, type CommentThread, type GitContext, type PastClaim, type TouchedFile } from './work-orders.js';
+import { gitContextSchema, pastClaimSchema, planTestSchema, touchedFileSchema, type CommentCounts, type CommentThread, type GitContext, type PastClaim, type TouchedFile } from './work-orders.js';
 import { codeLinkSchema } from './code-context.js';
 import { z } from 'zod';
 import { layerSchema, type LayerInfo } from './layers.js';
@@ -737,6 +737,8 @@ export const workOrderSchema = z.object({
   codeLinks: z.array(codeLinkSchema).optional(),
   /** The `plan` section is non-empty. */
   hasPlan: z.boolean().optional(),
+  /** Tests promised by the plan, each with the acceptance criteria it proves. */
+  planTests: z.array(planTestSchema).optional(),
 });
 export type WorkOrder = z.infer<typeof workOrderSchema>;
 
@@ -893,7 +895,7 @@ export const feedbackTargetSchema = z
     'target must be a mandate://specs/..., mandate://standards/..., mandate://verifications/... or audit item / finding reference',
   );
 const isSectionTarget = (t: string) => !!parseRef(t)?.sectionId || isVerificationTarget(t) || isAuditTarget(t);
-const SECTION_HINT = 'feedback targets sections or verification results: pick the section, e.g. mandate://specs/<id>/sections/<sid>';
+const SECTION_HINT = 'request targets are sections or verification results: pick the section, e.g. mandate://specs/<id>/sections/<sid>';
 
 /** A feedback item's `relatedTo` entry: a feedback id, or a canonical element reference (`mandate://...`). */
 export const relatedRefSchema = z.union([idSchema, z.string().max(400).refine((v) => !!parseNodeUri(v), 'an element reference (mandate://...)')]);
@@ -952,7 +954,7 @@ function checkResolution(
   // Whole-document targets are only tolerated on legacy closed (immutable) items.
   const targets = (f as { targets?: string[] }).targets ?? [];
   const kind = (f as { kind?: string }).kind;
-  if (!targets.length && kind !== 'improvement' && kind !== 'bug') ctx.addIssue({ code: 'custom', path: ['targets'], message: 'feedback needs at least one target (only improvement / bug requests may start without one)' });
+  if (!targets.length && kind !== 'improvement' && kind !== 'bug') ctx.addIssue({ code: 'custom', path: ['targets'], message: 'a request needs at least one target (only improvement / bug requests may start without one)' });
   if (f.status !== 'closed') {
     targets.forEach((t, i) => {
       if (!isSectionTarget(t)) ctx.addIssue({ code: 'custom', path: ['targets', i], message: `${t} is a whole document; ${SECTION_HINT}` });

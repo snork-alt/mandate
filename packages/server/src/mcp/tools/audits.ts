@@ -132,7 +132,7 @@ Example: {"target":"mandate://specs/login-sso","code":{"repo":"app","commit":"3f
     name: 'audit_findings_to_work_orders',
     title: 'Turn findings into fix work orders',
     kind: 'write',
-    description: `After a completed audit and the user's approval: ONE fix work order per spec for open must / should code_deviates findings (includeShould: false drops should; may never), linked to the findings. Returns feedbackNeeded (spec_wrong / ambiguous): feedback_create with fromFinding for each.${COMMON}`,
+    description: `After a completed audit and the user's approval: ONE fix work order per spec for open must / should code_deviates findings (includeShould: false drops should; may never), linked to the findings. Returns feedbackNeeded (spec_wrong / ambiguous): request_create with fromFinding for each.${COMMON}`,
     input: auditFindingsToWorkOrdersInputSchema,
     run: async (a, ctx) => {
       const commits: string[] = [];
@@ -175,7 +175,7 @@ Example: {"auditId":"2026-11-12-login-sso","findingId":"f2","result":"pass","com
     name: 'audit_get',
     title: 'Get an audit',
     kind: 'read',
-    description: `One audit: the derived view (items with results, notes and findings joined with their fix work orders / feedback, counts per level, outcome pass | warn | fail, staleness with reasons and "N commits since") and the stored report document. Sections: audit_section_get; history: history_get.
+    description: `One audit: the derived view (items with results, notes and findings joined with their fix work orders / requests, counts per level, outcome pass | warn | fail, staleness with reasons and "N commits since") and the stored report document. Sections: audit_section_get; history: history_get.
 Example: {"auditId":"mandate://audits/2026-11-12-login-sso"}`,
     input: auditGetInputSchema,
     run: (a, ctx) => ctx.storage.auditService.get(a.auditId),
@@ -202,7 +202,7 @@ Example: {"target":"mandate://specs/login-sso","status":["completed"]}`,
     name: 'audit_findings',
     title: 'List audit findings',
     kind: 'read',
-    description: `Findings across audits (most severe first) with their resolution (open | resolved | wont_fix, fix work order, feedback, re-checks). Filters: target, status, classification, severity.
+    description: `Findings across audits (most severe first) with their resolution (open | resolved | wont_fix, fix work order, request, re-checks). Filters: target, status, classification, severity.
 Example: {"status":["open"],"classification":["code_deviates"]}`,
     input: auditFindingsInputSchema,
     run: (a, ctx) => ctx.storage.auditService.findings(a),

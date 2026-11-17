@@ -84,12 +84,9 @@ export const WATCH_TOOLS: Record<
   }
 > = {
   question_ask: { role: 'asked', refs: (r) => [r.ref] },
-  // Decisions the user takes on things the agent caused (the Actions list): its waiver, its draft standard, its
-  // self-approval override.
-  spec_section_link_add: { role: 'waiver', refs: (_r, a) => (a.rel === 'deviates_from' && typeof a.feedback === 'string' ? [buildRef({ kind: 'feedback', id: a.feedback })] : []) },
-  standard_section_link_add: { role: 'waiver', refs: (_r, a) => (a.rel === 'deviates_from' && typeof a.feedback === 'string' ? [buildRef({ kind: 'feedback', id: a.feedback })] : []) },
+  // Decisions the user takes on things the agent caused (the Actions list): its draft standard.
   standard_create: { role: 'drafted', refs: (r) => [r.ref] },
-  feedback_accept: { role: 'override', refs: (r, a) => (a.override === true ? [r.ref] : []) },
+  request_create: { role: 'created', refs: (r) => [r.ref] },
   feedback_create: { role: 'created', refs: (r) => [r.ref] },
   work_order_claim: { role: 'claimed', refs: (r) => workOrderRefs(r) },
   work_order_next: { role: 'claimed', refs: (r) => workOrderRefs(r) },
@@ -160,13 +157,10 @@ const SECTION_TYPES = ['spec', 'standard', 'component'].flatMap((k) => [`${k}.se
 export const NEWS_RULES: NewsRule[] = [
   { kind: 'question_answered', types: ['question.answered'], roles: ['asked'] },
   { kind: 'question_closed', types: ['question.cancelled'], roles: ['asked'] },
-  { kind: 'waiver_decided', types: ['feedback.updated', 'feedback.closed'], roles: ['waiver'] },
-  { kind: 'override_revisited', types: ['feedback.updated', 'feedback.closed'], roles: ['override'] },
-  { kind: 'override_confirmed', types: ['approval.override_confirmed'], roles: ['override'] },
   { kind: 'standard_draft_decided', types: ['standard.status_changed', 'standard.deleted'], roles: ['drafted'] },
   { kind: 'claim_released', types: ['work_order.released'], roles: ['claimed'] },
   { kind: 'work_order_changed', types: ['work_order.status_changed', 'work_order.released', 'work_order.claimed', 'work_order.updated', 'work_order.deleted', 'work_order.completed'], roles: ['claimed'] },
-  { kind: 'feedback_changed', types: ['feedback.closed', 'feedback.updated', 'feedback.deleted'], roles: ['created'] },
+  { kind: 'request_changed', types: ['request.closed', 'request.updated', 'request.deleted'], roles: ['created'] },
   { kind: 'comment', types: ['comment.added', 'comment.resolved', 'comment.reopened'], subjects: related },
   { kind: 'drift', types: SECTION_TYPES, roles: ['claimed'] },
   { kind: 'audit_finding', types: ['audit.item_recorded'], subjects: related, roles: ['claimed'] },
@@ -188,7 +182,7 @@ export const CLAIM_SWEEP_EVERY_MS = 60_000;
 const typeMatches = (t: string, p: string) => (p.endsWith('.') ? t.startsWith(p) : t === p);
 
 /** Refs a read tool call names (reading them marks matching news read). */
-const ID_KINDS: Record<string, RefKind | 'questions'> = { question_get: 'questions', work_order_get: 'work-orders', feedback_get: 'feedback', audit_get: 'audits' };
+const ID_KINDS: Record<string, RefKind | 'questions'> = { question_get: 'questions', work_order_get: 'work-orders', request_get: 'feedback', feedback_get: 'feedback', audit_get: 'audits' };
 export function readRefs(tool: string, args: Record<string, unknown>, result: Record<string, any> | undefined): string[] {
   const out: string[] = [];
   const norm = (s: unknown) => (typeof s === 'string' ? s.trim().replace(/^@mandate:/, '').replace(/#.*$/, '') : '');

@@ -32,7 +32,7 @@ const refish = fc.oneof(
     'mandate://standards/security-baseline/sections/rules',
     'mandate://work-orders/q-0001',
     'mandate://queue/q-0001',
-    'mandate://feedback/fb-0001',
+    'mandate://requests/fb-0001',
     'mandate://symbols/AuthService.login',
     'mandate://code/app/src/auth/session.ts#L30-L35',
     'mandate://commits/abcdef0',

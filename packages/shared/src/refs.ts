@@ -23,13 +23,14 @@ export interface MandateRef {
 const SLUG = '[a-z0-9]+(?:-[a-z0-9]+)*';
 /** `mandate://<kind>/<id>[@<sha>][/sections/<sid>][#Lx-Ly]` (the version suffix sits on the document id). */
 const REF_RE = new RegExp(
-  `^mandate://(specs|standards|components|work-orders|queue|feedback|audits)/(${SLUG})(?:@([0-9a-f]{4,40}))?(?:/sections/(${SLUG}))?(?:#L(\\d+)(?:-L(\\d+))?)?$`,
+  `^mandate://(specs|standards|components|work-orders|queue|feedback|requests|audits)/(${SLUG})(?:@([0-9a-f]{4,40}))?(?:/sections/(${SLUG}))?(?:#L(\\d+)(?:-L(\\d+))?)?$`,
 );
 
 /** Build the `mandate://` URI for a reference. */
 export function buildRef(ref: MandateRef): string {
   if (ref.sectionId && ref.kind === 'feedback') throw new Error(`${ref.kind} items have no sections`);
-  let uri = `${REF_SCHEME}${ref.kind}/${ref.id}`;
+  // Feedback items are Requests to users and agents: the URI says `requests` (the internal kind stays 'feedback'; `mandate://requests/...` still parses).
+  let uri = `${REF_SCHEME}${ref.kind === 'feedback' ? 'requests' : ref.kind}/${ref.id}`;
   if (ref.commit) uri += `@${ref.commit}`;
   if (ref.sectionId) uri += `/sections/${ref.sectionId}`;
   if (ref.lines) uri += ref.lines.end > ref.lines.start ? `#L${ref.lines.start}-L${ref.lines.end}` : `#L${ref.lines.start}`;
@@ -42,9 +43,9 @@ export function parseRef(input: string): MandateRef | null {
   const m = REF_RE.exec(uri);
   if (!m) return null;
   const [, kind, id, commit, sectionId, start, end] = m;
-  if (kind === 'feedback' && sectionId) return null;
-  // `mandate://queue/<id>` is a read-only alias of `work-orders` (the pre-rename form); always emit the new one.
-  const ref: MandateRef = { kind: (kind === 'queue' ? 'work-orders' : kind) as RefKind, id: id! };
+  if ((kind === 'feedback' || kind === 'requests') && sectionId) return null;
+  // `mandate://queue/<id>` is a read-only alias of `work-orders` (the pre-rename form); `mandate://requests/<id>` of `requests`; always emit the new ones.
+  const ref: MandateRef = { kind: (kind === 'queue' ? 'work-orders' : kind === 'requests' ? 'feedback' : kind) as RefKind, id: id! };
   if (sectionId) ref.sectionId = sectionId;
   if (commit) ref.commit = commit;
   if (start) {

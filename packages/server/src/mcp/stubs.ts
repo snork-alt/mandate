@@ -10,7 +10,7 @@ import { BOOTSTRAP_COMMAND, BOOTSTRAP_SKILL_BODY } from './bootstrap.js';
 import { FLOW_COMMAND, SKILL_BODY } from './guide.js';
 
 /** Version of the installed stub files (stamped into each one). */
-export const STUB_VERSION = 1;
+export const STUB_VERSION = 2;
 
 export const INSTRUCTION_NAMES = ['core', 'bootstrap', 'flow'] as const;
 export type InstructionName = (typeof INSTRUCTION_NAMES)[number];
@@ -39,7 +39,7 @@ const load = (name: InstructionName, extra = '') => `\`instructions_get {"name":
 /** Body of the `mandate` skill stub. */
 export const SKILL_STUB = `# Mandate
 
-Mandate (MCP server \`mandate-<project>\`) holds this project's specs, standards, components, work orders and feedback.
+Mandate (MCP server \`mandate-<project>\`) holds this project's specs, standards, components, work orders and requests.
 Every feature request, change, bug fix or work order in a repository connected to Mandate follows its working agreement.
 
 **First, every task:** load the current working agreement from Mandate and follow it. It replaces any earlier copy,

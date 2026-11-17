@@ -26,10 +26,10 @@ const byName = new Map(TOOLS.map((t) => [t.name, t]));
 describe('working agreement text', () => {
   it('only mentions real tool names', () => {
     const texts = [CORE_RULES, SKILL_BODY, INSTRUCTIONS, FLOW_COMMAND.render('on')];
-    const mentioned = new Set(texts.flatMap((t) => [...t.matchAll(/`?\b([a-z]+(?:_[a-z]+)+)\b`?/g)].map((m) => m[1]!)).filter((n) => /^(spec|standard|component|work_order|feedback|verification|project|graph|rule|rules|search|symbol|code|text|architecture)_/.test(n) || n === 'rules_for_code'));
+    const mentioned = new Set(texts.flatMap((t) => [...t.matchAll(/`?\b([a-z]+(?:_[a-z]+)+)\b`?/g)].map((m) => m[1]!)).filter((n) => /^(spec|standard|component|work_order|feedback|request|verification|project|graph|rule|rules|search|symbol|code|text|architecture)_/.test(n) || n === 'rules_for_code'));
     const unknown = [...mentioned].filter((n) => !byName.has(n) && !['spec_section', 'standard_section', 'flow_enabled', 'code_deviates', 'spec_wrong', 'standard_confirmation'].includes(n));
     expect(unknown).toEqual([]);
-    for (const n of ['project_info', 'spec_match', 'feedback_create', 'work_order_create', 'feedback_close', 'verification_record', 'work_order_complete']) expect(mentioned.has(n), n).toBe(true);
+    for (const n of ['project_info', 'spec_match', 'request_create', 'work_order_create', 'request_close', 'verification_record', 'work_order_complete']) expect(mentioned.has(n), n).toBe(true);
     // Merged tools and tool sets (tool-sets.ts).
     for (const n of ['section_insert', 'status_set', 'tools_enable']) expect(SKILL_BODY, n).toContain(`\`${n}`);
     expect(CORE_RULES).toContain('tools_enable { sets }');
@@ -39,7 +39,7 @@ describe('working agreement text', () => {
     for (const t of [SKILL_BODY, INSTRUCTIONS]) {
       expect(t).toMatch(/before ANY standard write/);
       expect(t).toMatch(/question tool/);
-      expect(t).toMatch(/even (when\s+the approval checkpoint\s+is off|with approval off)/);
+      expect(t).toMatch(/even if the user says/);
       expect(t).toContain('confirmedByUser');
     }
     expect(SKILL_BODY).toMatchSnapshot();
@@ -60,9 +60,11 @@ describe('working agreement text', () => {
   });
 
   it('mirrors the flow switch in the instructions', () => {
-    expect(INSTRUCTIONS).toContain('START: project_info; follow effective { flow, approval, questions }');
+    expect(INSTRUCTIONS).toContain('START: project_info; follow effective { flow, questions }');
     expect(INSTRUCTIONS).toMatch(/flow off = read context only/);
-    expect(INSTRUCTIONS).toMatch(/approval off = do not wait at APPROVAL/);
+    // Requests need no approval; the approval setting is gone.
+    expect(INSTRUCTIONS).toMatch(/Requests need NO approval/);
+    expect(INSTRUCTIONS).not.toMatch(/approval off/);
     // The questions setting branches in one phrase.
     for (const t of [INSTRUCTIONS, SKILL_BODY]) expect(t).toMatch(/questions`? chat/);
   });
@@ -217,16 +219,16 @@ describe('no override past a gate (local mode too)', () => {
   afterAll(() => fx.close());
 
   it('C1: an intake request is filed before spec_match without targets; edits that address it link it (no mismatch warning)', async () => {
-    const fb = await fx.call('feedback_create', { kind: 'improvement', body: 'Add remember-me to login.', agent: 't' });
+    const fb = await fx.call('request_create', { kind: 'improvement', body: 'Add remember-me to login.', agent: 't' });
     expect(fb.isError, JSON.stringify(fb.body)).toBe(false);
-    expect((await fx.call('feedback_create', { kind: 'question', body: 'Which IdPs?', agent: 't' })).isError).toBe(true);
+    expect((await fx.call('request_create', { kind: 'question', body: 'Which IdPs?', agent: 't' })).isError).toBe(true);
     const m = await fx.call('spec_match', { request: 'Add remember-me to login' });
     expect(m.body.candidates.length).toBeGreaterThan(0);
     const spec = (await fx.storage.specs.list()).find((x) => x.status === 'draft' && x.sections.length) ?? (await fx.storage.specs.list()).find((x) => x.sections.length)!;
     const ed = await fx.call('spec_section_update', { ref: `mandate://specs/${spec.id}/sections/${spec.sections[0]!.id}`, summary: 'Remember-me keeps the session for 30 days.', addresses: [fb.body.ref], agent: 't' });
     expect(ed.isError, JSON.stringify(ed.body)).toBe(false);
     expect(JSON.stringify(ed.body.warnings)).not.toContain('feedback_target_mismatch');
-    const up = await fx.call('feedback_update', { ref: fb.body.ref, targets: [`mandate://specs/${spec.id}/sections/${spec.sections[0]!.id}`], agent: 't' });
+    const up = await fx.call('request_update', { ref: fb.body.ref, targets: [`mandate://specs/${spec.id}/sections/${spec.sections[0]!.id}`], agent: 't' });
     expect(up.isError, JSON.stringify(up.body)).toBe(false);
   });
 

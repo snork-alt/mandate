@@ -38,7 +38,7 @@ async function invariants(index: IndexService, storage: Storage): Promise<Record
       for (const o of origins) if (!up.nodes.some((x) => x.uri === o)) out.origin!.push(`${w.id} -/-> ${o}`);
     }
     // Delivered: the feedback this order acts on (reason, or a recorded cause), when closed applied.
-    const recorded = (db.prepare("SELECT DISTINCT to_uri AS t FROM edges WHERE from_uri = ? AND kind = 'caused_by' AND to_uri LIKE 'mandate://feedback/%'").all(wo) as { t: string }[]).map((r) => r.t);
+    const recorded = (db.prepare("SELECT DISTINCT to_uri AS t FROM edges WHERE from_uri = ? AND kind = 'caused_by' AND to_uri LIKE 'mandate://requests/%'").all(wo) as { t: string }[]).map((r) => r.t);
     for (const f of new Set([...reason, ...recorded])) {
       const rec = fbs.get(f.split('/').pop()!);
       if (!rec || rec.status !== 'closed' || (rec.resolution ?? 'applied') !== 'applied') continue;
@@ -105,7 +105,7 @@ describe('lineage invariants: bad states', () => {
     const wos = execFileSync('ls', [path.join(fx.dir, 'work-orders')], { encoding: 'utf8' }).split('\n').filter((f) => f.endsWith('.md')).slice(0, 5);
     // A migration commit naming a cause.
     edit('specs/login-sso.md', (t) => t.replace(/\n## ([^\n]+)\n/, '\n## $1\n\nMigrated note.\n'));
-    commit(['specs/login-sso.md'], 'spec(login-sso): migrate\n\nCaused-By: mandate://feedback/fb-0001\nMandate-Migration: yes');
+    commit(['specs/login-sso.md'], 'spec(login-sso): migrate\n\nCaused-By: mandate://requests/fb-0001\nMandate-Migration: yes');
     // A bulk rewrite of many work orders under one Work-Order trailer (the 748f3e6 shape).
     for (const f of wos) edit(`work-orders/${f}`, (t) => t.replace(/\nupdatedAt: [^\n]+/, '\nupdatedAt: 2030-01-01T00:00:00.000Z').replace(/^(---\ntitle: [^\n]+)/, '$1 (rewritten)'));
     commit(wos.map((f) => `work-orders/${f}`), `work order: migrate ${wos[0]!.replace('.md', '')}\n\nWork-Order: ${wos[0]!.replace('.md', '')}`);
