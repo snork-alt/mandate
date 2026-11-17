@@ -15,7 +15,7 @@ const feed = (ctx: ToolContext) => {
 };
 
 const NEWS_LIST_DESC = `Your news history (newest first): what changed in YOUR work (questions answered / closed, your work orders changed, your requests closed, comments, drift of sections you work on, audit findings, flow changed). Read AND unread; default: this session's + client-wide, all: every session of this client. Filters: unread, kind, ref, since / until; paging: cursor (next) + limit. An item stays unread until you read its ref or news_ack it.
-wait (seconds, max ${NEWS_WAIT_MAX}, with unread: true): hold until news arrives. Use it ONLY when everything is blocked (e.g. waiting for answers); repeat up to 6 times (30 min), then tell the user you are blocked and stop.
+wait (seconds, max ${NEWS_WAIT_MAX}, with unread: true): hold until news arrives. Not needed where events are pushed to you (channel messages). Use it ONLY when everything is blocked (e.g. waiting for answers); repeat up to 6 times (30 min), then tell the user you are blocked and stop.
 Example: {"unread":true}  {"unread":true,"wait":300}  {"kind":"question_answered","limit":10,"cursor":"42"}`;
 
 export const newsTools = [

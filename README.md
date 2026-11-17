@@ -279,12 +279,50 @@ MCP server's instructions carry the same rules for agents without it) runs the f
   and specs (with your confirmation for every standard), and **review** the result against the code. Everything it writes
   is marked *Inferred* until you confirm it; `--resume` continues a run.
 
+### Event delivery to Claude Code
+
+Mandate has news for your agent while it is idle: *your question was answered*, *your claim was released*, a work order or
+spec section it works on changed, a review outcome arrived. Claude Code does not show MCP notifications to the model, so
+Mandate pushes through the two mechanisms Claude Code documents for this, over a small authenticated stream of its own:
+
+- **Stream.** `GET /p/<project>/events` (Server-Sent Events) carries the same per-client news the agent sees as `news` on
+  tool replies. Auth is the same Bearer the MCP endpoint takes (personal token or service key; never the web UI cookie),
+  the events are those of *your own* client identity (`<login>/claude-code`), each has `id:` = the news item's sequence number, and
+  `Last-Event-ID` resumes. `GET /events/pending?since=N` is the JSON catch-up; `POST /events/ack {ids}` marks items read.
+  An item is **claimed** by the first receiver that gets it (`pushed_to` on the news item), so the channel, the hook and a
+  catch-up never deliver it twice; it stays *unread* (and keeps showing as `news` on tool replies) until the agent reads
+  the referenced item or acks it, and a pushed item still unread after 10 minutes is pushed again.
+- **Channel (preferred).** `mandate channel` is a stdio MCP server that declares `claude/channel` and turns each event
+  into a `<channel source="mandate_events_<project>" kind=… ref=…>` message, which wakes an idle session. It is one-way:
+  the only sender is your Mandate server (with your own token); no tools, no inbound commands. Start Claude Code through
+  the launcher: `mandate claude [claude args]` = `claude --dangerously-load-development-channels server:mandate_events_<project> …`
+  (channels are a research preview and custom channels need that flag; org admins can instead list the plugin in
+  `allowedChannelPlugins`, and Team / Enterprise orgs must enable channels).
+- **Hooks (fallback, and catch-up).** `mandate connect` also writes Claude Code hooks (`~/.claude/settings.json`):
+  `mandate events --pending --format=claude` at SessionStart (events missed while Claude Code was not running, as
+  additional context) and `mandate watch --rewake` as an `asyncRewake` hook on SessionStart / UserPromptSubmit / Stop: it
+  blocks on the stream and exits 2 with the event text, which wakes Claude; it is re-armed at the next turn start / end
+  (a session that was idle with no hook event since the 55-minute timeout is only woken again by the next prompt). The
+  watcher exits at once when this session's channel is active (a marker file the channel keeps, found through the hook's
+  parent processes), so nothing is delivered twice.
+
+`mandate connect … --push channels|rewake|off` (default `channels`: channel entry + hooks; `rewake`: hooks only; `off`:
+neither, and removes an earlier setup); `--remove` and `uninstall` take the channel entry and the hooks out again.
+
+**Credentials.** Claude Code keeps its MCP sign-in (OAuth) token to itself, so the channel and the hooks use a **personal
+token** (web UI → Connect agent → Personal tokens): `mandate channel login --project <id>` stores it in
+`~/.mandate/channel/<id>.token` (0600), or it is read from `MANDATE_CHANNEL_TOKEN`, `MANDATE_KEY_<PROJECT>` or
+`~/.mandate/env.sh`. It is sent only to the server URL in the channel entry, as a Bearer header; it is never written to
+`~/.claude.json` or a repo. The channel stays idle (and consumes nothing) when Claude Code was not started with channels
+enabled, so plain `claude` sessions are served by the hooks.
+
 ## Commands
 
 | | |
 |---|---|
 | `mandate open` | Open Mandate: the setup wizard while setup is pending, else the UI |
-| `mandate connect [--project id] [--url server] [--agents a,b] [--remove]` | Link the current repo to a project for your coding agents |
+| `mandate connect [--project id] [--url server] [--agents a,b] [--push channels\|rewake\|off] [--remove]` | Link the current repo to a project for your coding agents |
+| `mandate claude [args]` · `channel login --project id` | Claude Code with the Mandate event channel; store the personal token the event stream uses ([Event delivery](#event-delivery-to-claude-code)) |
 | `mandate status` · `doctor` | State, URL, version, projects and setup; diagnostics with fixes |
 | `mandate start` · `stop` · `restart` · `logs -f` | Control the background service (`start --foreground` runs it in the terminal) |
 | `mandate update` | Install the latest version and restart |

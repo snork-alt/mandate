@@ -64,9 +64,9 @@ Call \`project_info\`; follow \`effective\` (\`reason\` says why).
    \`get\` it, continue the blocked work; work order cancelled / reassigned / claim released → stop that work; claim expired → reclaim it or stop;
    findings / changes requested → address them; waiver rejected → follow the standard; draft standard dropped → don't
    rely on it; flow changed → follow the new instructions, update memory). An item stays until you read its ref or
-   \`news_ack\` it; \`news_list\` is the history (filters, paging). Everything blocked (e.g. waiting for answers):
-   \`news_list\` \`{ unread: true, wait: 300 }\`, up to 6 times (30 min), then tell the user you are blocked and stop;
-   never wait while other work is possible.
+   \`news_ack\` it; \`news_list\` is the history (filters, paging). If your harness pushes events (channel messages, or a
+   wake-up after the turn), never poll for news. Otherwise, everything blocked (waiting for answers): \`news_list\`
+   \`{ unread: true, wait: 300 }\` up to 6 times, then tell the user you are blocked and stop; never wait while other work is possible.
 
 ## Request: any instruction from the user
 
