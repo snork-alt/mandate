@@ -395,6 +395,8 @@ export class GithubClient {
   async createRepo(token: string, input: { name: string; private: boolean; description?: string; owner?: string }): Promise<GithubRepo> {
     const path = input.owner ? `/orgs/${encodeURIComponent(input.owner)}/repos` : '/user/repos';
     const r = await this.api<RawRepo>(token, path, { method: 'POST', body: JSON.stringify({ name: input.name, private: input.private, description: input.description ?? '', auto_init: false }) });
+    if (r.status === 403 && /not accessible by integration/i.test(String((r.body as { message?: unknown } | null)?.message ?? '')))
+      throw new GithubError(403, 'GitHub create repo: the Mandate GitHub App lacks the "Administration: Read and write" repository permission. Add it in the app settings on GitHub (Permissions & events), accept the new permission on the installation, or create the repository on GitHub and pick "Existing repository".');
     if (r.status !== 201) this.fail(r.status, 'create repo', r.body);
     return toRepo(r.body);
   }

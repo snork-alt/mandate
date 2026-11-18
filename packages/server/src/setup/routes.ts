@@ -458,7 +458,8 @@ export function registerSetupRoutes(app: FastifyInstance, d: SetupDeps): void {
         setup_on_update: true,
         request_oauth_on_install: false,
         public: b.public ?? !org,
-        default_permissions: { contents: 'write', metadata: 'read', ...(org || (d.config.parsed().auth.github?.allowedOrgs.length ?? 0) > 0 ? { members: 'read' } : {}) },
+        // administration: write lets the wizard create the project's repository with the user's token (POST /user/repos, /orgs/:org/repos).
+        default_permissions: { contents: 'write', metadata: 'read', administration: 'write', ...(org || (d.config.parsed().auth.github?.allowedOrgs.length ?? 0) > 0 ? { members: 'read' } : {}) },
         default_events: [],
       };
       const action = `${gh.webBase}${org ? `/organizations/${encodeURIComponent(org)}/settings/apps/new` : '/settings/apps/new'}?state=${encodeURIComponent(state)}`;
