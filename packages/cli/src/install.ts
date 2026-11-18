@@ -2,8 +2,9 @@
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, rmSync } from 'node:fs';
 import path from 'node:path';
+import { isSupportedAgent, SUPPORTED_AGENTS, unsupportedAgentMessage } from '../../shared/src/supported-agents.js';
 import { bool, str, type Args } from './args.js';
-import { AGENTS, agentById, can, OAUTH_AGENTS, commandChanges, projectCommandChanges, detectAgents, makeServer, mandateServersIn, mcpRemove, mcpUpsert, skillChanges, type AgentDef } from './agents.js';
+import { AGENTS, agentById, can, OAUTH_AGENTS, commandChanges, projectCommandChanges, makeServer, mandateServersIn, mcpRemove, mcpUpsert, skillChanges, type AgentDef } from './agents.js';
 import { cmdStart, entryUrl, openBrowser, printTunnel, service } from './commands.js';
 import { BIN, envFile, expand, manifestFile, PKG_NAME, PKG_ROOT, PKG_VERSION, SERVER_ENTRY, type Ctx } from './context.js';
 import { applyChanges, JsoncError, type Change } from './edits.js';
@@ -50,11 +51,34 @@ export async function chooseSettings(rt: Runtime, a: Args): Promise<ServerSettin
 
 /* ------------------------------------------------------------------ agents (user scope) */
 
-export function pickAgents(ctx: Ctx, a: Args): AgentDef[] {
-  if (bool(a, 'all')) return AGENTS;
+export function supportedAgents(supported: readonly string[] = SUPPORTED_AGENTS): AgentDef[] {
+  return AGENTS.filter((x) => isSupportedAgent(x.id, supported));
+}
+
+/**
+ * The agents to wire: only SUPPORTED_AGENTS (shared switch). `--agents` naming a known but unsupported agent is
+ * refused with a message; it is an error only when no supported agent remains. `cleanup` (uninstall) keeps every agent.
+ */
+export function pickAgents(ctx: Ctx, a: Args, out?: Pick<Out, 'log'>, supported: readonly string[] = SUPPORTED_AGENTS, cleanup = false): AgentDef[] {
+  const pool = cleanup ? AGENTS : supportedAgents(supported);
+  if (bool(a, 'all')) return pool;
   const list = str(a, 'agents');
-  if (list) return list.split(',').map((id) => agentById(id.trim()) ?? (() => { throw new Error(`unknown agent '${id}' (${AGENTS.map((x) => x.id).join(', ')})`); })());
-  return detectAgents(ctx);
+  if (list) {
+    const picked: AgentDef[] = [];
+    const refused: string[] = [];
+    for (const raw of list.split(',').map((x) => x.trim()).filter(Boolean)) {
+      const ag = agentById(raw);
+      if (!ag) throw new Error(`unknown agent '${raw}' (${pool.map((x) => x.id).join(', ')})`);
+      if (!pool.includes(ag)) {
+        const msg = unsupportedAgentMessage(ag.label, supported);
+        refused.push(msg);
+        out?.log(warn(msg));
+      } else if (!picked.includes(ag)) picked.push(ag);
+    }
+    if (!picked.length && refused.length) throw new Error(refused.join('; '));
+    return picked;
+  }
+  return pool.filter((x) => x.detect(ctx));
 }
 
 /** User-scope wiring: the master skill, /mandate-flow, the MCP entry of the project when there is exactly one, env.sh, shell rc hook. */
@@ -154,7 +178,7 @@ export async function cmdInstall(rt: Runtime, a: Args): Promise<number> {
 
   if (bool(a, 'agents-only')) {
     const s = readSettings(ctx);
-    wireAgents(rt, pickAgents(ctx, a), s.url);
+    wireAgents(rt, pickAgents(ctx, a, rt.out), s.url);
     return 0;
   }
 
@@ -225,8 +249,8 @@ export async function cmdInstall(rt: Runtime, a: Args): Promise<number> {
   out.log(step(6, TOTAL, 'Coding agents'));
   if (a.flags.agents === false) out.log(info(`skipped (--no-agents); later: ${BIN} install --agents-only`));
   else {
-    const found = pickAgents(ctx, a);
-    if (!found.length) out.log(info(`no coding agents detected (${AGENTS.map((x) => x.label).join(', ')}); later: ${BIN} install --agents-only`));
+    const found = pickAgents(ctx, a, out);
+    if (!found.length) out.log(info(`no supported coding agent detected (${supportedAgents().map((x) => x.label).join(', ')}); later: ${BIN} install --agents-only`));
     else {
       out.log(info(`detected: ${found.map((x) => c.bold(x.label)).join(', ')}`));
       if (await rt.prompt.confirm('Add the Mandate skills and the /mandate, /mandate-flow and /mandate-bootstrap commands to them (and the MCP entry when there is a single project)?', true)) wireAgents(rt, found, s.url);
@@ -328,7 +352,7 @@ export async function cmdUninstall(rt: Runtime, a: Args): Promise<number> {
 
   if (str(a, 'agents')) {
     // Only these agents' wiring; the service, keys and data stay.
-    applyChanges(uninstallChanges(ctx, pickAgents(ctx, a)), { dryRun: rt.dryRun, out, home: ctx.home });
+    applyChanges(uninstallChanges(ctx, pickAgents(ctx, a, out, SUPPORTED_AGENTS, true)), { dryRun: rt.dryRun, out, home: ctx.home });
     return 0;
   }
   const p = platformService(ctx);

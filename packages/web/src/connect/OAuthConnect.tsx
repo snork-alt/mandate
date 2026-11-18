@@ -7,7 +7,7 @@ import { uiRequest } from '../lib/ui';
 import { Notice } from './parts';
 import { relativeTime } from '../lib/time';
 import { agentGuides, maskKey, tokenEnvVar } from './snippets';
-import { agentDef, tokenEntry } from './agentCatalog';
+import { AGENT_DEFS, agentDef, tokenEntry } from './agentCatalog';
 
 export interface PersonalToken {
   id: string;
@@ -68,7 +68,7 @@ export function PersonalTokens({ projectId, url, access, agent, bare }: { projec
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['tokens', projectId] }),
   });
   const env = tokenEnvVar(projectId);
-  const all = fresh ? agentGuides({ project: projectId, url, key: fresh.token, envVar: env }) : [];
+  const all = fresh ? agentGuides({ project: projectId, url, key: fresh.token, envVar: env }).filter((g) => AGENT_DEFS.some((d) => d.id === g.id)) : [];
   const own = fresh && agent ? tokenEntry(agentDef(agent), { project: projectId, url, key: fresh.token }) : null;
   const guides = own ? [{ id: agent!, label: agentDef(agent!).label, env: own.env, register: own.register, verify: own.verify }] : all;
   return (
@@ -118,7 +118,7 @@ export function PersonalTokens({ projectId, url, access, agent, bare }: { projec
         </div>
       ) : (
         <Group gap={6} wrap="nowrap">
-          <TextInput size="sm" placeholder="Token name, e.g. laptop-cursor" value={name} onChange={(e) => setName(e.currentTarget.value)} style={{ flex: 1 }} data-testid="token-name" />
+          <TextInput size="sm" placeholder="Token name, e.g. laptop" value={name} onChange={(e) => setName(e.currentTarget.value)} style={{ flex: 1 }} data-testid="token-name" />
           <Button type="button" size="sm" variant="default" disabled={!name.trim()} loading={create.isPending} onClick={() => create.mutate()} data-testid="token-create">
             Create token
           </Button>

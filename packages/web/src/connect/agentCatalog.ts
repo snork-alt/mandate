@@ -3,6 +3,7 @@
  * `--agents` id, whether the agent signs in with GitHub by itself (MCP OAuth, `OAUTH_AGENTS`), the files the installer
  * writes (skills, slash commands, instructions) and the manual MCP entry. Pure data and builders, no React.
  */
+import { isSupportedAgent, SUPPORTED_AGENTS } from '@mandate/shared';
 import { agentGuides, genericSnippet, keyEnvVar, serverName, type Snippet } from './snippets';
 
 export type AgentTabId = 'claude-code' | 'codex' | 'cursor' | 'vscode' | 'gemini' | 'windsurf' | 'opencode' | 'junie' | 'amp' | 'goose' | 'cline' | 'zed';
@@ -35,7 +36,7 @@ export interface AgentDef {
 const AGENTS_SKILLS = '~/.agents/skills/mandate';
 const SLASH = '/mandate, /mandate-flow, /mandate-bootstrap';
 
-export const AGENT_DEFS: AgentDef[] = [
+export const ALL_AGENT_DEFS: AgentDef[] = [
   { id: 'claude-code', label: 'Claude Code', oauth: true, main: true, files: { skills: ['~/.claude/skills/mandate'], commands: { dir: '~/.claude/commands/', names: SLASH }, instructions: 'CLAUDE.md' }, flowCommand: '/mandate-flow' },
   { id: 'codex', label: 'Codex', oauth: true, main: true, files: { skills: [AGENTS_SKILLS], commands: { dir: '~/.codex/prompts/', names: '/prompts:mandate, /prompts:mandate-flow, /prompts:mandate-bootstrap' }, instructions: 'AGENTS.md' }, flowCommand: '/prompts:mandate-flow' },
   { id: 'cursor', label: 'Cursor', oauth: true, main: true, files: { skills: [AGENTS_SKILLS], commands: { dir: '~/.cursor/commands/', names: SLASH }, instructions: 'AGENTS.md' }, flowCommand: '/mandate-flow' },
@@ -64,9 +65,14 @@ export const AGENT_DEFS: AgentDef[] = [
   },
 ];
 
+/** The agents the UI offers: only SUPPORTED_AGENTS (the shared switch); the others stay defined but hidden. */
+export const visibleAgents = (supported: readonly string[] = SUPPORTED_AGENTS): AgentDef[] => ALL_AGENT_DEFS.filter((a) => isSupportedAgent(a.id, supported));
+export const AGENT_DEFS: AgentDef[] = visibleAgents();
 export const MAIN_AGENTS = AGENT_DEFS.filter((a) => a.main);
 export const MORE_AGENTS = AGENT_DEFS.filter((a) => !a.main);
 export const agentDef = (id: string) => AGENT_DEFS.find((a) => a.id === id) ?? AGENT_DEFS[0]!;
+/** One line for the dialog while only some agents are enabled (null when every agent is). */
+export const SUPPORT_NOTE: string | null = AGENT_DEFS.length < ALL_AGENT_DEFS.length ? `Mandate currently supports ${AGENT_DEFS.map((a) => a.label).join(', ')}. Other coding agents are planned.` : null;
 
 /** Flags for the one-liner: the agent, plus `--auth token` for agents that cannot sign in by themselves. */
 export const installFlags = (a: AgentDef, oauthServer: boolean) => `--agents ${a.id}${oauthServer && !a.oauth ? ' --auth token' : ''}`;

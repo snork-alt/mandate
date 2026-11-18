@@ -13,7 +13,7 @@ import { TimeAgo } from '../components/TimeAgo';
 import { useProjects, type ProjectSummary } from '../connect/projects';
 import { goTo, lastProject, projectBase } from '../project';
 import { AgentMark } from '../connect/AgentMark';
-import { AGENT_DEFS } from '../connect/agentCatalog';
+import { ALL_AGENT_DEFS } from '../connect/agentCatalog';
 import { stripActor } from '../lib/activity';
 
 const COUNTS: { key: 'specs' | 'standards' | 'components' | 'workOrders'; label: string }[] = [
@@ -37,7 +37,7 @@ export const projectTone = (id: string) => {
 /** "claude-code@mbp" → the Claude Code mark and label (null for people and unknown clients). */
 function agentOf(agent: string | undefined): { id: string; label: string } | null {
   const id = agent?.split('@')[0]?.toLowerCase();
-  const a = id ? AGENT_DEFS.find((x) => x.id === id) : undefined;
+  const a = id ? ALL_AGENT_DEFS.find((x) => x.id === id) : undefined;
   return a ? { id: a.id, label: a.label } : null;
 }
 

@@ -75,7 +75,7 @@ export function renderInstallSh(i: InstallScriptInput): string {
   return `#!/bin/sh
 # Mandate installer: installs the Mandate CLI (getmandate) from this server and wires your coding agents to it.
 #   curl -fsSL ${base}/install.sh | sh
-#   ... | sh -s -- --agents claude-code,codex --dry-run      (flags go to \`getmandate connect\`)
+#   ... | sh -s -- --agents claude-code --dry-run      (flags go to \`getmandate connect\`)
 #   ... | sh -s -- --uninstall                              (removes the agent wiring again; the CLI stays)
 #   ... | sh -s -- --reinstall                              (reinstall the CLI even if this build is installed)
 # Remove the wiring and the CLI: curl -fsSL ${i.url}/uninstall.sh | sh
@@ -135,7 +135,7 @@ else
   say "This will:"
   say "  - install the Mandate CLI, getmandate $MANDATE_VERSION, from $CLI_URL (checksum-verified, npm install -g;"
   say "    without write access to npm's global folder: into $CLI_PREFIX);"
-  say "  - for every coding agent found on this machine (Claude Code, Codex, Cursor, ...):"
+  say "  - for every coding agent found on this machine (Claude Code):"
   say "    add the Mandate MCP server ($MANDATE_URL/p/<project>/mcp) to its user config,"
   say "    and the Mandate skills and the /mandate, /mandate-flow, /mandate-bootstrap commands;"
   say "  - sign-in: your agent opens GitHub sign-in on first use (MCP OAuth); no token is written."

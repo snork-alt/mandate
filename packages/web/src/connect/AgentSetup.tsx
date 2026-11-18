@@ -32,7 +32,7 @@ import { useAgentsPresence } from '../lib/comments';
 import { WAKE_FIX } from '../lib/requests';
 import { Ticks } from '../components/Ticks';
 import { AgentMark } from './AgentMark';
-import { AGENT_DEFS, agentDef, installFlags, MAIN_AGENTS, MORE_AGENTS, oauthRegistration, tokenEntry, type AgentDef, type AgentTabId } from './agentCatalog';
+import { AGENT_DEFS, agentDef, installFlags, MAIN_AGENTS, MORE_AGENTS, oauthRegistration, SUPPORT_NOTE, tokenEntry, type AgentDef, type AgentTabId } from './agentCatalog';
 import type { ConnectInfo } from './ConnectAgentGuide';
 import { PersonalTokens } from './OAuthConnect';
 import { connectCommand, FIRST_PROMPT, genericSnippet, installCommand, isLoopbackUrl, keyEnvVar, maskKey, serverName, uninstallCommand, urlReachNote, verifyCommands, type InstallShell } from './snippets';
@@ -116,6 +116,7 @@ export function AgentTabs({ value, onChange, compact }: { value: AgentChoice; on
           {a.label}
         </UnstyledButton>
       ))}
+      {AGENT_DEFS.length > 1 && (
       <Menu position="bottom-end" withinPortal>
         <Menu.Target>
           <UnstyledButton role="tab" aria-selected={inMore} className="cg2-tab" data-more={!inMore || undefined} data-active={inMore || undefined} data-testid="agent-tab-more">
@@ -135,6 +136,12 @@ export function AgentTabs({ value, onChange, compact }: { value: AgentChoice; on
           </Menu.Item>
         </Menu.Dropdown>
       </Menu>
+      )}
+      {SUPPORT_NOTE && AGENT_DEFS.length === 1 && (
+        <span className="cg2-faint" data-testid="agent-support-note" style={{ alignSelf: 'center', marginLeft: 8, fontSize: 12, opacity: 0.7 }}>
+          {SUPPORT_NOTE}
+        </span>
+      )}
     </div>
   );
 }
@@ -471,7 +478,7 @@ function FilesSection({ a }: { a: AgentDef | null }) {
         </div>
       ) : (
         <p className="cg2-p">
-          It registers this MCP server with the coding agents it finds (Claude Code, Codex, Cursor, …), installs the Mandate skill and slash commands, and adds a “Use Mandate” section to CLAUDE.md / AGENTS.md.
+          It registers this MCP server with the coding agents it finds (Claude Code), installs the Mandate skill and slash commands, and adds a “Use Mandate” section to CLAUDE.md / AGENTS.md.
         </p>
       )}
     </Sec>

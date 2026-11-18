@@ -2,6 +2,9 @@
  * Claude Code wiring for the driven flow: permission allow rules for the project's Mandate MCP tools, the strict-flow edit
  * guard hook (only with --strict-flow), their removal, and the `mandate guard` hook decision (blocks with exit 2, fails open).
  */
+import { vi } from 'vitest';
+// These tests exercise the multi-agent wiring that stays in the code: enable every agent through the shared switch.
+vi.mock('../../shared/src/supported-agents.js', async (orig) => ({ ...(await orig<typeof import('../../shared/src/supported-agents.js')>()), SUPPORTED_AGENTS: ['claude-code', 'codex', 'cursor', 'vscode', 'gemini', 'windsurf', 'opencode', 'junie', 'amp', 'goose', 'cline', 'zed'] }));
 import { mkdirSync, readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';

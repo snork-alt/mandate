@@ -18,6 +18,7 @@ import path from 'node:path';
 import { FLOW_COMMAND, MANDATE_COMMAND, SKILL_DESCRIPTION } from '../../server/src/mcp/guide.js';
 import { BOOTSTRAP_COMMAND, BOOTSTRAP_SKILL_DESCRIPTION } from '../../server/src/mcp/bootstrap.js';
 import { BOOTSTRAP_SKILL_STUB, commandStub, SKILL_STUB, STUB_VERSION } from '../../server/src/mcp/stubs.js';
+import { isSupportedAgent, SUPPORTED_AGENTS } from '../../shared/src/supported-agents.js';
 import type { Ctx } from './context.js';
 import { change, jsonGet, jsonRemove, jsonSet, MANAGED_MARK, readText, removeBlock, upsertBlock, type Change } from './edits.js';
 
@@ -415,7 +416,8 @@ export function vscodeUserDir(ctx: Ctx): string {
 /** Short names accepted by --agents. */
 const ALIASES: Record<string, string> = { claude: 'claude-code', copilot: 'vscode', 'vs-code': 'vscode', devin: 'windsurf', 'gemini-cli': 'gemini' };
 export const agentById = (id: string) => AGENTS.find((a) => a.id === (ALIASES[id.toLowerCase()] ?? id.toLowerCase()));
-export const detectAgents = (ctx: Ctx) => AGENTS.filter((a) => a.detect(ctx));
+/** Detected agents among the supported ones (SUPPORTED_AGENTS); `all` includes hidden agents too (cleanup). */
+export const detectAgents = (ctx: Ctx, supported: readonly string[] = SUPPORTED_AGENTS) => AGENTS.filter((a) => isSupportedAgent(a.id, supported) && a.detect(ctx));
 
 /* ------------------------------------------------------------------ MCP entry changes */
 

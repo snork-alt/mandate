@@ -1571,3 +1571,4 @@ export * from './lifecycle.js';
 export * from './lineage.js';
 export * from './overview.js';
 export * from './code-context.js';
+export * from './supported-agents.js';

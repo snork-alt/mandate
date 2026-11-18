@@ -50,7 +50,7 @@ work.
 
 ```mermaid
 flowchart LR
-  subgraph Agents["Coding agents (Claude Code, Codex, Cursor, …)"]
+  subgraph Agents["Coding agent (Claude Code)"]
     A1["agent 1"]
     A2["agent 2"]
     A3["CI review agent"]
@@ -207,13 +207,13 @@ project has its own index, activity feed, Ask threads and MCP endpoint (`<server
 
 ### 4. Connect your coding agents
 
-On each developer machine, one line installs the Mandate CLI (`getmandate`) and wires every coding agent it finds to a
+On each developer machine, one line installs the Mandate CLI (`getmandate`) and wires Claude Code to a
 project: the MCP server entry, the Mandate skills and the slash commands. The **Connect agent** dialog shows it with a
 copy button:
 
 ```sh
 curl -fsSL https://mandate.example.com/p/<project>/install.sh | sh
-# flags go to `getmandate connect`:  … | sh -s -- --agents claude-code,codex --dry-run
+# flags go to `getmandate connect`:  … | sh -s -- --agents claude-code --dry-run
 # remove the wiring again:           … | sh -s -- --uninstall
 # remove the wiring AND the CLI:     curl -fsSL https://mandate.example.com/uninstall.sh | sh   (--dry-run, --purge)
 ```
@@ -238,28 +238,20 @@ repository does the same.
 - Agents sign in with GitHub on first use (MCP OAuth, with PKCE and short-lived, project-bound tokens), so nothing secret
   is written. Agents that can't sign in by themselves use a personal token (`--auth token`), kept only in
   `~/.mandate/env.sh` (0600).
-- Inside a git repo it asks before adding the repo's MCP entry and the `CLAUDE.md` / `AGENTS.md` section (`--yes` to
+- Inside a git repo it asks before adding the repo's MCP entry and the `CLAUDE.md` section (`--yes` to
   accept), and ends with a per-agent summary.
 - To read the script before running it, compare the published checksum:
   `curl -fsSLO …/install.sh && curl -fsSL …/install.sh.sha256 | shasum -a 256 -c - && sh install.sh`.
 
-**Supported agents.** Paths and formats come from each agent's official docs; capabilities that couldn't be verified are
-written only with `--force`.
+**Supported agents.** Mandate currently supports **Claude Code** only (it is required): the installer, `getmandate
+connect` and the Connect dialog wire Claude Code and nothing else, and `--agents <other>` is refused with "not supported
+yet". Other agents (Codex, Cursor, VS Code / Copilot, Gemini CLI, Windsurf, opencode and more) are planned; their
+adapters stay in the code behind one switch, `SUPPORTED_AGENTS` in `packages/shared/src/supported-agents.ts`, and
+uninstall still removes entries an older install wrote for them.
 
 | Agent | MCP | Skills | Slash commands | Instructions file |
 |---|---|---|---|---|
 | Claude Code | ✓ | ✓ `~/.claude/skills` | ✓ `.claude/commands` | `CLAUDE.md` |
-| Codex | ✓ | ✓ `~/.agents/skills` | ✓ `~/.codex/prompts` | `AGENTS.md` |
-| Cursor | ✓ | ✓ `~/.agents/skills` | ✓ `.cursor/commands` | `AGENTS.md` |
-| VS Code (Copilot) | ✓ | ✓ `~/.agents/skills`, `~/.copilot/skills` | ✓ `.github/prompts` | `AGENTS.md` |
-| Gemini CLI | ✓ | ✓ `~/.agents/skills` | ✓ `.gemini/commands` (TOML) | `GEMINI.md` |
-| Windsurf / Devin Desktop | ✓ | ✓ `~/.agents/skills` | MCP prompts | `AGENTS.md` |
-| opencode | ✓ | ✓ `~/.agents/skills` | ✓ `.opencode/commands` | `AGENTS.md` |
-| JetBrains Junie | ✓ user scope | ✓ `~/.agents/skills` | unverified | `AGENTS.md` |
-| Amp | ✓ | ✓ `~/.agents/skills` | skills | `AGENTS.md` |
-| Goose | manual (YAML snippet printed) | ✓ `~/.agents/skills` | – | `AGENTS.md` |
-| Cline | ✓ user scope | ✓ `~/.cline/skills` | MCP prompts | `AGENTS.md` |
-| Zed | unverified | ✓ `~/.agents/skills` | – | `AGENTS.md` |
 
 `mandate agents` shows what was detected on your machine and what is installed.
 

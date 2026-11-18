@@ -118,7 +118,6 @@ function HeroArt() {
       {card(580, 36, 160, 'WO-001', 'Apply a coupon', '#f59f00')}
       {card(590, 128, 150, 'DEC-002', 'Payment provider', '#5c7cfa')}
       {node(392, 26, 'claude-code')}
-      {node(488, 26, 'codex')}
     </svg>
   );
 }

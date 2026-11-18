@@ -10,6 +10,7 @@ import { bool, str, type Args } from './args.js';
 import { can, commandChanges, envVarFor, makeServer, mcpRemove, mcpUpsert, OAUTH_AGENTS, projectCommandChanges, projectScopeOnly, skillChanges, type AgentDef } from './agents.js';
 import { BIN, envFile, type Ctx } from './context.js';
 import { applyChanges, JsoncError, type Change } from './edits.js';
+import { SUPPORTED_AGENTS } from '../../shared/src/supported-agents.js';
 import { disconnectChanges, pickAgents, type Runtime } from './install.js';
 import { askAgentChange, auditAgentChange, claudeFlowWiring } from './claude-flow.js';
 import { resolveToken } from './events.js';
@@ -58,7 +59,7 @@ export async function cmdConnect(rt: Runtime, a: Args): Promise<number> {
   const remoteUrl = str(a, 'url');
   if (remoteUrl) return connectRemote(rt, a, repo, remoteUrl);
   const s = readSettings(ctx);
-  const agents = pickAgents(ctx, a);
+  const agents = pickAgents(ctx, a, out, SUPPORTED_AGENTS, bool(a, 'remove'));
   const projects = listProjects(ctx);
 
   if (bool(a, 'remove')) {
@@ -136,7 +137,7 @@ async function connectRemote(rt: Runtime, a: Args, repo: string, url: string): P
   }
   // Repo wiring (the current repo) unless --no-repo; the installer asks first inside a git repo, and passes --no-repo outside one.
   const wireRepo = a.flags.repo !== false;
-  const agents = pickAgents(ctx, a);
+  const agents = pickAgents(ctx, a, out, SUPPORTED_AGENTS, bool(a, 'remove'));
   const server = makeServer(base, project);
   const v = envVarFor(project);
   let push: PushMode;
@@ -234,7 +235,7 @@ async function connectRemote(rt: Runtime, a: Args, repo: string, url: string): P
   }
 
   out.log(`\n${ok(`connected to ${c.bold(project)} at ${base} as MCP server ${c.bold(server.name)}${oauth ? ' (MCP sign-in: your agent opens GitHub sign-in on first use)' : ''}`)}`);
-  if (!agents.length) out.log(warn('no coding agents detected (choose with --agents claude-code,codex,…)'));
+  if (!agents.length) out.log(warn('no coding agents detected (Mandate currently supports Claude Code: --agents claude-code)'));
   for (const line of wiringSummary(ctx, agents, wired)) out.log(`  ${line}`);
   if (wireRepo) out.log(info(`repo ${repo}: project MCP entries and the Mandate section (safe to commit: no key)`));
   if (key && !ctx.env[v]) out.log(info(`load the token in this terminal: ${c.cyan(`. ${envFile(ctx)}`)} ${c.dim('(new terminals load it automatically)')}`));

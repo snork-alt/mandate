@@ -1,11 +1,14 @@
 // @vitest-environment jsdom
 /** The one-line installer: sh / PowerShell by platform, per-agent `--agents`, copy; the compact per-agent block. */
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { InstallOneLiner } from '../src/connect/InstallOneLiner';
 import { agentDef, installFlags } from '../src/connect/agentCatalog';
 import { installCommand, shellFor, uninstallCommand, verifyCommands } from '../src/connect/snippets';
 import { installDom, Wrap } from './dom';
+
+// Multi-agent UI: enable every agent through the shared switch (the default shows Claude Code only: supported-agents.test.tsx).
+vi.mock('@mandate/shared', async (orig) => ({ ...(await orig<typeof import('@mandate/shared')>()), SUPPORTED_AGENTS: ['claude-code', 'codex', 'cursor', 'vscode', 'gemini', 'windsurf', 'opencode', 'junie', 'amp', 'goose', 'cline', 'zed'] }));
 
 beforeAll(installDom);
 afterEach(cleanup);

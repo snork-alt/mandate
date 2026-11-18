@@ -3,6 +3,9 @@
  * scope (through the adapter registry), skills and commands, a per-agent summary, idempotent updates, `--remove`;
  * never a literal secret in a file an agent could commit.
  */
+import { vi } from 'vitest';
+// These tests exercise the multi-agent wiring that stays in the code: enable every agent through the shared switch.
+vi.mock('../../shared/src/supported-agents.js', async (orig) => ({ ...(await orig<typeof import('../../shared/src/supported-agents.js')>()), SUPPORTED_AGENTS: ['claude-code', 'codex', 'cursor', 'vscode', 'gemini', 'windsurf', 'opencode', 'junie', 'amp', 'goose', 'cline', 'zed'] }));
 import { describe, expect, it } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';

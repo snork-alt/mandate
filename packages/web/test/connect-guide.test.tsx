@@ -5,6 +5,9 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { ConnectAgentGuide, type ConnectInfo } from '../src/connect/ConnectAgentGuide';
 import { installDom, Wrap } from './dom';
 
+// Multi-agent UI: enable every agent through the shared switch (the default shows Claude Code only: supported-agents.test.tsx).
+vi.mock('@mandate/shared', async (orig) => ({ ...(await orig<typeof import('@mandate/shared')>()), SUPPORTED_AGENTS: ['claude-code', 'codex', 'cursor', 'vscode', 'gemini', 'windsurf', 'opencode', 'junie', 'amp', 'goose', 'cline', 'zed'] }));
+
 vi.mock('../src/mcp/client', () => ({
   callTool: vi.fn(async () => ({})),
   callRootTool: vi.fn(async () => ({
