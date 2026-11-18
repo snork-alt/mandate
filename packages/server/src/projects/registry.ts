@@ -84,9 +84,14 @@ export class ProjectRegistry {
   constructor(
     projects: ProjectConfig[],
     private readonly opener: ProjectOpener,
-    readonly defaultProject: string = projects[0]?.id ?? 'default',
+    private readonly configuredDefault: string = projects[0]?.id ?? '',
   ) {
     this.byId = new Map(projects.map((p) => [p.id, p]));
+  }
+
+  /** The default project (legacy URLs): the configured one while registered, else the first project, '' with none. */
+  get defaultProject(): string {
+    return this.byId.has(this.configuredDefault) ? this.configuredDefault : ([...this.byId.keys()][0] ?? '');
   }
 
   list(): ProjectConfig[] {

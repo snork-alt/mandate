@@ -194,6 +194,11 @@ Useful flags: `--port N`, `--bind ADDR`, `--no-service`, `--no-open`, `--no-agen
 
 Everything can be changed later in Settings.
 
+A fresh install starts with **zero projects** (an empty `projects.json`): no sample data is picked up from the folder you
+ran it in. After you sign in, the UI opens *New project*, where you pick a GitHub repository (new or existing) to create
+the first one. Setting `MANDATE_DATA_DIR` explicitly keeps the old behaviour of creating a `default` project on that folder
+(used by development and tests).
+
 ### 3. Create a project
 
 A project is a GitHub repository (or a folder in one) that holds its specs. **New project** in the UI lists the
@@ -426,6 +431,7 @@ Everything lives in `~/.mandate/`. Secrets are only ever referenced by environme
 | `secrets.env` | API keys and the GitHub client secret (`KEY=value`, mode 0600, never logged) |
 | `projects.json` | The project registry, managed by Mandate |
 | `keys.json` | Service-account keys for CI (mode 0600) |
+| `index/` | Search indexes (derived, rebuilt from git); under `MANDATE_HOME`, so a separate instance never touches `~/.mandate` |
 | `state.sqlite` | Server state: sessions, encrypted GitHub tokens, personal / OAuth tokens (or Postgres, below) |
 | `env.sh` | Personal tokens for `connect --auth token` (mode 0600) |
 | `logs/server.log` | The background service's log (`mandate logs -f`) |

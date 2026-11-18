@@ -113,21 +113,21 @@ describe('config: git.auth.method', () => {
     return home;
   };
   it("defaults to 'app' for the embedded backend when a GitHub App is configured; the remote becomes plain HTTPS", async () => {
-    const cfg = loadConfig({ HOME: await setup({ remote: 'git@github.com:acme/specs.git' }) });
+    const cfg = loadConfig({ MANDATE_DATA_DIR: '/tmp/mandate-app-auth-data', HOME: await setup({ remote: 'git@github.com:acme/specs.git' }) });
     expect(cfg.remote?.url).toBe('https://github.com/acme/specs.git');
     expect(cfg.remote?.auth).toMatchObject({ type: 'github-app', owner: 'acme', repo: 'specs' });
     expect(JSON.stringify(cfg.remote)).not.toMatch(/ghs_|token":"/);
   });
   it("stays 'ssh' without an App, with an SSH key, or for system git unless chosen", async () => {
-    expect(loadConfig({ HOME: await setup({ remote: 'git@github.com:acme/specs.git' }, false) }).remote?.auth?.type).toBe('ssh-agent');
-    expect(loadConfig({ HOME: await setup({ remote: 'git@github.com:acme/specs.git', auth: { sshKeyPath: '/k' } }) }).remote?.auth?.type).toBe('ssh');
-    expect(loadConfig({ HOME: await setup({ backend: 'cli', remote: 'https://github.com/acme/specs.git' }) }).remote?.auth).toBeUndefined();
-    expect(loadConfig({ HOME: await setup({ backend: 'cli', remote: 'https://github.com/acme/specs.git', auth: { method: 'app' } }) }).remote?.auth?.type).toBe('github-app');
-    expect(loadConfig({ HOME: await setup({ remote: 'git@github.com:acme/specs.git', auth: { method: 'ssh' } }) }).remote?.auth?.type).toBe('ssh-agent');
+    expect(loadConfig({ MANDATE_DATA_DIR: '/tmp/mandate-app-auth-data', HOME: await setup({ remote: 'git@github.com:acme/specs.git' }, false) }).remote?.auth?.type).toBe('ssh-agent');
+    expect(loadConfig({ MANDATE_DATA_DIR: '/tmp/mandate-app-auth-data', HOME: await setup({ remote: 'git@github.com:acme/specs.git', auth: { sshKeyPath: '/k' } }) }).remote?.auth?.type).toBe('ssh');
+    expect(loadConfig({ MANDATE_DATA_DIR: '/tmp/mandate-app-auth-data', HOME: await setup({ backend: 'cli', remote: 'https://github.com/acme/specs.git' }) }).remote?.auth).toBeUndefined();
+    expect(loadConfig({ MANDATE_DATA_DIR: '/tmp/mandate-app-auth-data', HOME: await setup({ backend: 'cli', remote: 'https://github.com/acme/specs.git', auth: { method: 'app' } }) }).remote?.auth?.type).toBe('github-app');
+    expect(loadConfig({ MANDATE_DATA_DIR: '/tmp/mandate-app-auth-data', HOME: await setup({ remote: 'git@github.com:acme/specs.git', auth: { method: 'ssh' } }) }).remote?.auth?.type).toBe('ssh-agent');
   });
   it("an explicit 'app' with a non-GitHub remote is a config error", async () => {
     const home = await setup({ remote: 'https://gitlab.com/acme/specs.git', auth: { method: 'app' } });
-    expect(() => loadConfig({ HOME: home })).toThrow(/not a GitHub repository URL/);
+    expect(() => loadConfig({ MANDATE_DATA_DIR: '/tmp/mandate-app-auth-data', HOME: home })).toThrow(/not a GitHub repository URL/);
   });
 });
 

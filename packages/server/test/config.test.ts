@@ -54,23 +54,37 @@ describe('older settings (one setup: GitHub sign-in)', () => {
 });
 
 describe('config', () => {
-  it('runs on defaults without creating config.json; seeds projects.json (existing ./data/repo kept as data dir)', async () => {
+  it('a fresh install (no projects.json, no legacy projects, no MANDATE_DATA_DIR) starts with zero projects', async () => {
     const home = await tempDir();
     const cwd = await tempDir();
     mkdirSync(path.join(cwd, 'data/repo/.git'), { recursive: true });
     const cfg = loadConfig({ HOME: home, INIT_CWD: cwd });
     expect(cfg.configPath).toBe(path.join(home, '.mandate/config.json'));
     expect(existsSync(cfg.configPath)).toBe(false);
-    const reg = JSON.parse(readFileSync(path.join(home, '.mandate/projects.json'), 'utf8'));
-    expect(reg.projects).toEqual([{ id: 'default', name: 'Default', dataDir: path.join(cwd, 'data/repo'), createdAt: expect.any(String) }]);
-    expect(cfg.projects.map((p) => p.id)).toEqual(['default']);
-    expect(cfg.defaultProject).toBe('default');
+    expect(JSON.parse(readFileSync(path.join(home, '.mandate/projects.json'), 'utf8')).projects).toEqual([]);
+    expect(cfg.projects).toEqual([]);
+    expect(cfg.defaultProject).toBe('');
     expect(cfg.embedding).toMatchObject({ provider: 'openai-compatible', model: 'nomic-embed-text', dimensions: 768 });
     expect(cfg.port).toBe(4000);
+  });
+
+  it('an explicit MANDATE_DATA_DIR creates the default project; the index follows MANDATE_HOME', async () => {
+    const home = await tempDir();
+    const dataDir = await tempDir();
+    const cfg = loadConfig({ HOME: home, MANDATE_DATA_DIR: dataDir });
+    expect(JSON.parse(readFileSync(path.join(home, '.mandate/projects.json'), 'utf8')).projects).toMatchObject([{ id: 'default', name: 'Default' }]);
+    expect(cfg.projects.map((p) => p.id)).toEqual(['default']);
+    expect(cfg.defaultProject).toBe('default');
+    expect(cfg.dataDir).toBe(dataDir);
     expect(cfg.index.path).toMatch(new RegExp(`^${home}/\\.mandate/index/[0-9a-f]{16}\\.sqlite$`));
-    // Without ./data/repo: ~/.mandate/repos/default
-    const home2 = await tempDir();
-    expect(loadConfig({ HOME: home2, INIT_CWD: home2 }).dataDir).toBe(path.join(home2, '.mandate/repos/default'));
+    // A separate MANDATE_HOME never writes into ~/.mandate
+    const other = path.join(await tempDir(), 'inst');
+    const c2 = loadConfig({ HOME: home, MANDATE_HOME: other, MANDATE_DATA_DIR: dataDir });
+    expect(c2.index.path.startsWith(path.join(other, 'index') + path.sep)).toBe(true);
+    // An explicit index.path in config.json is kept
+    const cj = path.join(other, 'config.json');
+    writeFileSync(cj, JSON.stringify({ index: { path: path.join(other, 'custom.sqlite') } }));
+    expect(loadConfig({ HOME: home, MANDATE_HOME: other, MANDATE_DATA_DIR: dataDir }).index.path).toBe(path.join(other, 'custom.sqlite'));
   });
 
   it('env > file > defaults; secrets only from named env vars', async () => {

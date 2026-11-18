@@ -357,9 +357,9 @@ export interface AppConfig {
   host: string;
   /** Loopback browser origins allowed for the web UI cookie session besides same-origin. */
   uiOrigins: string[];
-  /** Every registered project (at least one). */
+  /** Every registered project (none on a fresh install until the setup wizard creates the first). */
   projects: ProjectConfig[];
-  /** Id of the default project (legacy URLs, `/health`). */
+  /** Id of the default project (legacy URLs, `/health`); '' with no projects. */
   defaultProject: string;
   /** `~/.mandate/keys.json` (MANDATE_KEYS_FILE overrides): agent keys, one or more per project. */
   keysPath: string;
@@ -644,8 +644,10 @@ export function loadConfig(rawEnv: NodeJS.ProcessEnv = process.env): AppConfig {
   const file = readConfigFile(configPath, env);
   const rawJson = existsSync(configPath) ? readRawConfig(configPath) : null;
   const projectsPath = projectsPathOf(env);
-  const registry = loadProjectsRegistry(projectsPath, file.projects.length ? file : { ...file, projects: defaultFileConfig(env).projects }, configPath, rawJson);
-  if (!registry.projects.length) throw new ConfigError(projectsPath, ['projects: no projects registered (create one in the web UI: New project)']);
+  // A fresh install (no projects.json, no legacy `projects` / `dataDir` in config.json, no MANDATE_DATA_DIR) starts with
+  // zero projects: the setup wizard creates the first one. An explicit MANDATE_DATA_DIR keeps the default project.
+  const seed = file.projects.length && rawJson ? file : { ...file, projects: env.MANDATE_DATA_DIR ? defaultFileConfig(env).projects : [] };
+  const registry = loadProjectsRegistry(projectsPath, seed, configPath, rawJson);
   const baseDir = env.INIT_CWD ?? process.cwd();
   const resolvePath = (p: string, base: string) => path.resolve(base, expandHome(p, home));
 
@@ -659,8 +661,10 @@ export function loadConfig(rawEnv: NodeJS.ProcessEnv = process.env): AppConfig {
   const embedding = resolveEmbeddingConfig(file.embedding, env, configPath, rawEnv === process.env ? configPath : undefined);
 
   const port = intEnv(env.MANDATE_PORT ?? env.PORT, 'MANDATE_PORT', configPath) ?? file.server.port;
-  const defaultProject = file.defaultProject && registry.projects.some((p) => p.id === file.defaultProject) ? file.defaultProject : registry.projects[0]!.id;
-  const indexTemplate = env.MANDATE_INDEX_PATH ?? file.index.path;
+  const defaultProject = file.defaultProject && registry.projects.some((p) => p.id === file.defaultProject) ? file.defaultProject : (registry.projects[0]?.id ?? '');
+  // The default index location follows MANDATE_HOME (an explicit index.path in config.json is kept as written).
+  const explicitIndexPath = !!rawJson && typeof (rawJson.index as { path?: unknown } | undefined)?.path === 'string';
+  const indexTemplate = env.MANDATE_INDEX_PATH ?? (explicitIndexPath ? file.index.path : path.join(mandateHome(env), 'index', '{dataDirHash}.sqlite'));
   const projects = registry.projects.map((p): ProjectConfig => {
     const isDefault = p.id === defaultProject;
     const dataDir = isDefault && env.MANDATE_DATA_DIR ? resolvePath(env.MANDATE_DATA_DIR, baseDir) : resolvePath(p.dataDir, path.dirname(configPath));
@@ -718,7 +722,8 @@ export function loadConfig(rawEnv: NodeJS.ProcessEnv = process.env): AppConfig {
       autoPush: { ...file.git.autoPush, ...(p.git?.autoPush ?? {}) },
     };
   });
-  const def = projects.find((p) => p.id === defaultProject)!;
+  const def = projects.find((p) => p.id === defaultProject);
+  const noProjectIndex = { ...file.index, path: ':memory:' };
 
   return {
     configPath,
@@ -737,13 +742,13 @@ export function loadConfig(rawEnv: NodeJS.ProcessEnv = process.env): AppConfig {
     auth: file.auth,
     projectsPath,
     warnings: [...registry.notices, ...(file.auth.required !== undefined ? ['auth.required is deprecated and ignored: sign-in is always on (GitHub)'] : []), ...(file.ask !== undefined ? ['the `ask` block in config.json is ignored: Ask is answered by your coding agents now (no model or API key on the server); delete the block'] : []), ...(file.server.users || file.server.mode ? ['server.users / server.mode are ignored: Mandate always signs in with GitHub (the setup wizard creates the GitHub App)'] : [])],
-    dataDir: def.dataDir,
-    branch: def.branch,
-    remote: def.remote,
+    dataDir: def?.dataDir ?? '',
+    branch: def?.branch ?? file.git.branch,
+    remote: def?.remote,
     author,
     git: gitBackend,
     embedding,
-    index: def.index,
+    index: def?.index ?? noProjectIndex,
   };
 }
 

@@ -39,9 +39,9 @@ const startedAt = Date.now();
 const app = buildApp({
   logger: true,
   health: async () => {
-    const def = config.projects.find((p) => p.id === config.defaultProject)!;
+    const def = config.projects.find((p) => p.id === config.defaultProject);
     // startedAt: the UI waits for the restarted server (a new public URL / bind address) by polling this.
-    return { ok: true, version: process.env.MANDATE_VERSION ?? '0.1.0', dataDir: def.dataDir, remote: def.remote?.url.replace(/\/\/[^/@]*@/, '//***@') ?? null, startedAt };
+    return { ok: true, version: process.env.MANDATE_VERSION ?? '0.1.0', dataDir: def?.dataDir ?? '', remote: def?.remote?.url.replace(/\/\/[^/@]*@/, '//***@') ?? null, startedAt };
   },
 });
 for (const w of config.warnings) app.log.warn(w);
@@ -259,4 +259,4 @@ else {
 await app.listen({ port: config.port, host: config.host });
 app.log.info(`projects: ${config.projects.map((p) => `${p.id} (${p.dataDir})`).join(', ')}; registry: ${config.projectsPath}; config: ${config.configPath}`);
 // The default project opens eagerly (index sync starts now); the others on first use.
-projects.open(config.defaultProject).catch((e: Error) => app.log.error(e.message));
+if (projects.defaultProject) projects.open(projects.defaultProject).catch((e: Error) => app.log.error(e.message));

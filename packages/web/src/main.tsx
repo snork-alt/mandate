@@ -96,7 +96,7 @@ function LegacyRedirect() {
     const go = (id: string) => goTo(legacyTarget(id, pathname, search, hash), true);
     const last = lastProject();
     listProjects()
-      .then((r) => go(last && r.items.some((p) => p.id === last) ? last : r.defaultProject))
+      .then((r) => (last && r.items.some((p) => p.id === last) ? go(last) : r.defaultProject ? go(r.defaultProject) : goTo('/', true)))
       .catch((e: Error) => (last ? go(last) : setError(e.message)));
   }, []);
   return <Center h="100vh">{error ? <Text c="red">{error}</Text> : <Loader size="sm" />}</Center>;
