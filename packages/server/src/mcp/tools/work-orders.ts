@@ -93,7 +93,7 @@ Example: {"ref":"wo-01jc...","section":"auth-flow","files":["app:src/auth/callba
       const commits: string[] = [];
       const id = idOf(a.ref);
       // Code locations carry repo + commit: code (stamped on files without commits; dirty: linked on completion) or per-file commits.
-      const st = stampLocations(ctx, [{ files: a.files, path: 'files' }], a.code);
+      const st = await stampLocations(ctx, [{ files: a.files, path: 'files' }], a.code);
       await ctx.storage.workOrderService.touch(id, ctx.commit!.agent, { section: a.section, files: st.lists[0]! }, metaOf(ctx, commits));
       return woResult(ctx, id, commits, {}, st.warnings);
     },
@@ -102,13 +102,13 @@ Example: {"ref":"wo-01jc...","section":"auth-flow","files":["app:src/auth/callba
     name: 'work_order_touch_from_commits',
     title: 'Touched code from commits',
     kind: 'write',
-    description: `Compute touched files (paths, changed line ranges, renames) and commits from code commits (commits: [sha] or range: "base..head") and merge them like work_order_touch + work_order_git_update (commits, headCommit). Only works when the server can read a local checkout of the code repo (Mandate on this computer, repo wired with \`mandate connect\`); otherwise it fails with code_repo_unavailable: then report the files yourself (work_order_touch).${COMMON}
+    description: `Compute touched files (paths, changed line ranges, renames) and commits from code commits (commits: [sha] or range: "base..head") and merge them like work_order_touch + work_order_git_update (commits, headCommit). Only works when the server can read a local checkout of the code repo (Mandate on this computer, repo wired with \`mandate connect\`); otherwise it fails with code_repo_unavailable: report touched files from your own git diff (work_order_touch).${COMMON}
 Example: {"ref":"wo-01jc...","repo":"app","range":"main..HEAD"}`,
     input: workOrderTouchFromCommitsInputSchema,
     run: async (a, ctx) => {
       const commits: string[] = [];
       const id = idOf(a.ref);
-      const cw = checkCodeRepos(ctx, [a.repo], 'repo');
+      const cw = await checkCodeRepos(ctx, [a.repo], 'repo');
       const r = await ctx.storage.workOrderService.touchFromCommits(id, ctx.commit!.agent, a, ctx.codeRepos, metaOf(ctx, commits));
       return woResult(ctx, id, commits, { files: r.files, codeCommits: r.commits }, cw);
     },
@@ -125,7 +125,7 @@ Example: {"ref":"wo-01jc...","repo":"app","branch":"wo/login-callback","baseBran
       const { ref, ...patch } = a;
       const id = idOf(ref);
       // `branch` (the common write input) is the code branch of this repo.
-      const cw = checkCodeRepos(ctx, [patch.repo], 'repo');
+      const cw = await checkCodeRepos(ctx, [patch.repo], 'repo');
       await ctx.storage.workOrderService.gitUpdate(id, ctx.commit!.agent, { ...patch, ...(ctx.commit!.branch ? { branch: ctx.commit!.branch } : {}) }, metaOf(ctx, commits));
       return woResult(ctx, id, commits, {}, cw);
     },

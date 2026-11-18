@@ -155,7 +155,7 @@ describe('work orders in lineage (phase B)', () => {
     const id = await newSpec(as('zed'));
     const wo = (await call(as('dave'), 'work_order_create', { spec: id, kind: 'implement', sections: ['design'], plan: { tasks: [{ text: '1. do', sections: ['design'] }] } })).ref;
     await call(as('dave'), 'work_order_claim', { ref: wo });
-    await call(as('dave'), 'work_order_touch', { ref: wo, files: ['app:src/blast/radius.ts#L1-L20'] });
+    await call(as('dave'), 'work_order_touch', { ref: wo, files: ['app:src/blast/radius.ts#L1-L20'], code: { repo: 'app', commit: 'abcdef1' } });
     const b = await call(as(null), 'blast_radius', { ref: 'mandate://code/app/src/blast/radius.ts' });
     expect(b.openWorkOrders.map((x: { uri: string }) => x.uri)).toContain(wo);
     expect(b.openWorkOrders.find((x: { uri: string }) => x.uri === wo).via).toMatch(/^touches /);
@@ -170,7 +170,7 @@ describe('work orders in lineage (phase B)', () => {
     await call(as('zed'), 'spec_section_link_add', { ref: `mandate://specs/${id}/sections/design`, rel: 'follows', to: `mandate://standards/${std}/sections/r-one` });
     const wo = (await call(as('dave'), 'work_order_create', { spec: id, kind: 'implement', sections: ['design'], plan: { tasks: [{ text: '1. do', sections: ['design'] }] } })).ref;
     await call(as('dave'), 'work_order_claim', { ref: wo });
-    await call(as('dave'), 'work_order_touch', { ref: wo, section: 'design', files: ['app:src/touched/rule.ts#L5-L9'] });
+    await call(as('dave'), 'work_order_touch', { ref: wo, section: 'design', files: ['app:src/touched/rule.ts#L5-L9'], code: { repo: 'app', commit: 'abcdef1' } });
     await call(as('dave'), 'work_order_section_done', { ref: wo, sections: ['design'], notes: 'Built.' });
     const crit = `mandate://specs/${id}/sections/ac-works`;
     await call(as('dave'), 'verification_record', { criterion: crit, code: { repo: 'app', commit: 'abcdef1234' }, result: 'pass', method: 'test' });

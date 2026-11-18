@@ -76,17 +76,26 @@ describe('code repo lists', () => {
   });
 });
 
-describe('code claims with no code repos registered (existing projects)', () => {
-  it('accepts claims with a warning; project_info lists none', async () => {
+describe('auto-registration of code repos', () => {
+  it('registers an unknown repo on its first code ref (who / when / remote recorded) instead of refusing it', async () => {
     await settings.setCodeRepos!([]);
     const info = await ok('project_info');
     expect(info.codeRepos).toEqual([]);
     const spec = await specWithCriterion();
     const v = await ok('verification_record', { criterion: `mandate://specs/${spec}/sections/ac-works`, code: { repo: 'app', commit: 'abcdef1234' }, result: 'pass', method: 'test' });
-    expect(v.warnings.join('\n')).toContain('code_repos_unregistered');
+    expect(v.warnings.join('\n')).toContain("code_repo_registered: 'app'");
+    expect(settings.codeRepos!()).toEqual([expect.objectContaining({ name: 'app', auto: true, registeredBy: expect.any(String), registeredAt: expect.any(String)})]);
+    expect(settings.codeRepos!()[0]!.remote).toBeUndefined();
     const wo = await claimedWorkOrder(spec);
-    const t = await ok('work_order_touch', { ref: wo, files: ['app:src/a.ts#L1-L2'] });
-    expect(t.warnings.join('\n')).toMatch(/code_repos_unregistered|code_commit_missing/);
+    const t = await ok('code_context_set', { repo: 'lib', commit: 'abcdef1234', remote: 'https://tok:secret@github.com/acme/lib.git' });
+    expect(t.warnings.join('\n')).toContain("code_repo_registered: 'lib'");
+    await ok('work_order_touch', { ref: wo, files: ['lib:src/a.ts#L1-L2'], code: { repo: 'lib', commit: 'abcdef1234' } });
+    expect(settings.codeRepos!().find((r) => r.name === 'lib')!.remote).toBe('https://github.com/acme/lib.git');
+    expect(JSON.stringify(settings.codeRepos!())).not.toContain('secret');
+    // Already known: no second registration; a missing remote is filled in once, never overwritten.
+    await ok('code_context_set', { repo: 'app', remote: 'git@github.com:acme/app.git', commit: 'abcdef1' });
+    await ok('code_context_set', { repo: 'app', remote: 'git@github.com:evil/app.git', commit: 'abcdef1' });
+    expect(settings.codeRepos!().filter((r) => r.name === 'app')).toEqual([expect.objectContaining({ remote: 'git@github.com:acme/app.git' })]);
   });
 });
 
@@ -102,19 +111,21 @@ describe('code context (session)', () => {
     const spec = await specWithCriterion();
     await ok('request_create', { targets: [`mandate://specs/${spec}/sections/overview`], kind: 'bug', body: 'b' });
     expect(lastMessage()).toContain('Code-Context: web-app@a1b2c3d');
-    // An unknown repo is refused.
-    expect((await fail('code_context_set', { repo: 'nope', commit: 'abcdef1' })).code).toBe('unknown_code_repo');
+    // An unknown repo is registered; a malformed short name is refused.
+    expect((await ok('code_context_set', { repo: 'nope', commit: 'abcdef1' })).warnings.join('')).toContain('code_repo_registered');
+    expect((await fail('code_context_set', { repo: 'No Pe', commit: 'abcdef1' })).code).toBe('unknown_code_repo');
   });
 });
 
 describe('code claims with registered code repos', () => {
-  it('refuses unregistered repos (with the short-name hint) and code locations without a commit', async () => {
+  it('refuses malformed repo names (with a short-name hint) and code locations without a commit', async () => {
     await settings.setCodeRepos!([{ name: 'web-app', github: 'acme/web-app' }]);
     const spec = await specWithCriterion();
     const crit = `mandate://specs/${spec}/sections/ac-works`;
     const e = await fail('verification_record', { criterion: crit, code: { repo: 'acme/web-app', commit: 'abcdef1234' }, result: 'pass', method: 'test' });
     expect(e.code).toBe('unknown_code_repo');
     expect(e.hint).toContain("'web-app'");
+    expect((await ok('verification_record', { criterion: crit, code: { repo: 'other-app', commit: 'abcdef1234' }, result: 'pass', method: 'test' })).warnings.join('')).toContain('code_repo_registered');
     expect((await fail('verification_record', { criterion: crit, code: { repo: 'web-app', commit: 'xyz' }, result: 'pass', method: 'test' })).code).toBe('invalid_input');
     await ok('code_context_set', { repo: 'web-app', commit: 'abcdef1234' });
     const v = await ok('verification_record', { criterion: crit, code: { repo: 'web-app', commit: 'abcdef1' }, result: 'pass', method: 'test' });
@@ -124,11 +135,11 @@ describe('code claims with registered code repos', () => {
 
     const wo = await claimedWorkOrder(spec);
     expect((await fail('work_order_touch', { ref: wo, files: ['web-app:src/a.ts'] })).code).toBe('code_commit_required');
-    expect((await fail('work_order_touch', { ref: wo, files: ['app:src/a.ts'], code: { repo: 'web-app', commit: 'abcdef1' } })).code).toBe('unknown_code_repo');
+    expect((await fail('work_order_touch', { ref: wo, files: ['app:src/a.ts'], code: { repo: 'web-app', commit: 'abcdef1' } })).code).toBe('code_commit_required');
     await ok('work_order_touch', { ref: wo, files: ['web-app:src/a.ts#L1-L3'], code: { repo: 'web-app', commit: 'abcdef1234' } });
     const got = await ok('work_order_get', { ref: wo });
     expect(JSON.stringify(got)).toContain('"commits":["abcdef1234"]');
-    expect((await fail('work_order_git_update', { ref: wo, repo: 'app', headCommit: 'abcdef1' })).code).toBe('unknown_code_repo');
+    expect((await fail('work_order_git_update', { ref: wo, repo: 'Not A Name', headCommit: 'abcdef1' })).code).toBe('unknown_code_repo');
     expect((await fail('audit_start', { target: `mandate://specs/${spec}` })).code).toBe('code_commit_required');
   });
 

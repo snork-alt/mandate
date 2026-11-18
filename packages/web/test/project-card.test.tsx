@@ -79,7 +79,7 @@ describe('project cards', () => {
     const billing = screen.getByTestId('project-billing');
     expect(billing.querySelector('[data-testid="access-read"]')?.textContent).toContain('Read only');
     expect(screen.getByTestId('active-billing').textContent).toBe('none active');
-    expect(screen.getByTestId('code-repos-billing').textContent).toContain('No code repositories');
+    expect(screen.queryByTestId('code-repos-billing')).toBeNull(); // repos register themselves when agents report code
     expect(screen.queryByTestId('actions-billing')).toBeNull();
     expect(billing.textContent).toContain('No activity yet');
   });

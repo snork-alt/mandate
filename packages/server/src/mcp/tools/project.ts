@@ -94,12 +94,12 @@ Example: {"name":"core","stubVersion":1}`,
     title: 'Set my code context',
     kind: 'ops',
     agentOnly: true,
-    description: `Declare the code this session works on: repo (your short name in project_info.codeRepos: match \`git remote get-url origin\` with codeRepos[].github), commit (HEAD sha), branch, dirty (uncommitted changes). Call at task start and after each commit or branch switch. Every write of this session is stamped with it (Code-Context trailer). Session state only (no commit; works with the flow off).
+    description: `Declare the code this session works on: repo (short name, e.g. checkout folder; new names register automatically), remote (optional git origin URL), commit (HEAD sha), branch, dirty (uncommitted changes). Call at task start and after each commit or branch switch. Every write of this session is stamped with it (Code-Context trailer). Session state only (no commit; works with the flow off).
 Example: {"repo":"web-app","commit":"3f9c2a1","branch":"main","dirty":true}`,
     input: codeContextSetInputSchema,
     run: async (a, ctx) => {
       if (!ctx.session) throw new ToolError('unavailable', 'code context is per MCP session; this call has none', 'call it over the project MCP endpoint');
-      const warnings = checkCodeRepos(ctx, [a.repo], 'repo');
+      const warnings = await checkCodeRepos(ctx, [{ repo: a.repo, remote: a.remote }], 'repo');
       ctx.session.codeContext = { ...a, at: new Date().toISOString() };
       return { codeContext: ctx.session.codeContext, label: codeContextLabel(a), warnings };
     },

@@ -402,8 +402,29 @@ export interface ProjectSettings {
   codeRepos?(): CodeRepo[];
   /** Replace the code repositories (validated: slug names, unique, not the specs repo). */
   setCodeRepos?(list: CodeRepo[]): Promise<CodeRepo[]>;
+  /**
+   * Register a code repo reported by an agent (idempotent): creates it (who / when recorded) or fills in a missing
+   * remote URL; never changes an existing remote. `created` = it did not exist.
+   */
+  registerCodeRepo?(entry: { name: string; remote?: string }, by: string): Promise<{ repo: CodeRepo; created: boolean }>;
   /** The specs repository `owner/repo` (GitHub projects), else null. */
   specsRepo?(): string | null;
+}
+
+export const MAX_CODE_REPOS = 50;
+
+/** Pure step of registerCodeRepo over a list. */
+export function withRegisteredRepo(list: CodeRepo[], entry: { name: string; remote?: string }, by: string): { list: CodeRepo[]; repo: CodeRepo; created: boolean } {
+  const i = list.findIndex((r) => r.name === entry.name);
+  if (i >= 0) {
+    const cur = list[i]!;
+    if (cur.remote || !entry.remote) return { list, repo: cur, created: false };
+    const repo = { ...cur, remote: entry.remote };
+    return { list: list.map((r, j) => (j === i ? repo : r)), repo, created: false };
+  }
+  if (list.length >= MAX_CODE_REPOS) throw Object.assign(new Error(`this project already has ${MAX_CODE_REPOS} code repositories; remove unused ones in Settings → Code repositories`), { statusCode: 400, code: 'invalid_code_repos', path: 'repo' });
+  const repo: CodeRepo = { name: entry.name, ...(entry.remote ? { remote: entry.remote } : {}), auto: true, registeredBy: by, registeredAt: new Date().toISOString() };
+  return { list: [...list, repo], repo, created: true };
 }
 
 /** Validate a code repo list (throws `invalid_code_repos` with the first problem). */
@@ -434,6 +455,14 @@ export function projectSettings(store: ProjectsStore, id: string, clients: Clien
         if (next.length) e.codeRepos = next;
         else delete e.codeRepos;
         return next;
+      }),
+    registerCodeRepo: (entry, by) =>
+      store.mutate((reg) => {
+        const e = reg.projects.find((p) => p.id === id);
+        if (!e) throw new Error(`project '${id}' is not in the project registry (${store.file})`);
+        const r = withRegisteredRepo(e.codeRepos ?? [], entry, by);
+        if (r.list !== (e.codeRepos ?? [])) e.codeRepos = r.list;
+        return { repo: r.repo, created: r.created };
       }),
     setPolicy: (patch) =>
       store.mutate((reg) => {
@@ -489,6 +518,11 @@ export function memorySettings(initial: Partial<Policy> = {}, project = 'test', 
     codeRepos: () => [...repos],
     specsRepo: () => specs,
     setCodeRepos: async (list) => (repos = checkCodeRepos(list, specs)),
+    registerCodeRepo: async (entry, by) => {
+      const r = withRegisteredRepo(repos, entry, by);
+      repos = r.list;
+      return { repo: r.repo, created: r.created };
+    },
   };
 }
 

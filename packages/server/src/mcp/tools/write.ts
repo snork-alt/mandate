@@ -428,7 +428,7 @@ async function completionCode(ctx: ToolContext, id: string, git: { repo: string;
   const warnings: string[] = [];
   const wo = await ctx.storage.workOrderService.get(id);
   const doc = await ctx.storage.workOrderDocs.get(id);
-  warnings.push(...checkCodeRepos(ctx, [...(git ?? []).map((g) => g.repo), ...(touched ?? []).map((t) => repoOfLocation(t) ?? '').filter(Boolean)], 'git'));
+  warnings.push(...(await checkCodeRepos(ctx, [...(git ?? []).map((g) => g.repo), ...(touched ?? []).map((t) => repoOfLocation(t) ?? '').filter(Boolean)], 'git')));
   // Final commit per repo: this call's git, else what was recorded before.
   const head = new Map<string, string>();
   for (const g of doc.git ?? []) {
@@ -582,7 +582,7 @@ const workOrderTools: AnyToolDef[] = [
     run: async (a, ctx) => {
       const commits: string[] = [];
       const id = idOf(a.ref);
-      const cw = checkCodeRepos(ctx, (a.git ?? []).map((g) => g.repo), 'git');
+      const cw = await checkCodeRepos(ctx, (a.git ?? []).map((g) => g.repo), 'git');
       // Plan-only requests: no claim (no code) until the user approved the plan in the web UI.
       const wo = await ctx.storage.workOrderService.get(id);
       const unapproved = (await ctx.storage.feedbackService.list()).find((f) => f.status !== 'closed' && f.planOnly && wo.reason.includes(f.id));
@@ -601,7 +601,7 @@ const workOrderTools: AnyToolDef[] = [
     run: async (a, ctx) => {
       const commits: string[] = [];
       const id = idOf(a.ref);
-      const cw = checkCodeRepos(ctx, (a.git ?? []).map((g) => g.repo), 'git');
+      const cw = await checkCodeRepos(ctx, (a.git ?? []).map((g) => g.repo), 'git');
       await ctx.storage.workOrderService.heartbeat({ id, agent: ctx.commit!.agent, ...(a.git ? { git: a.git } : {}) }, metaOf(ctx, commits));
       return woResult(ctx, id, commits, {}, cw);
     },
@@ -640,7 +640,7 @@ const workOrderTools: AnyToolDef[] = [
       const id = idOf(a.ref);
       // MW-12: the caller must hold the claim (checked inside the write lock).
       // Code locations carry repo + commit (code, per-file commits, or a commit recorded in git for that repo).
-      const stamped = stampLocations(ctx, [{ files: a.codeRefs, path: 'codeRefs' }, { files: a.touched, path: 'touched' }], a.code, committedRepos(a.git));
+      const stamped = await stampLocations(ctx, [{ files: a.codeRefs, path: 'codeRefs' }, { files: a.touched, path: 'touched' }], a.code, committedRepos(a.git));
       // Sections follow tasks (work_order_task_set): marking a section done marks the tasks covering it done (with these code refs), which records the section.
       const keys = a.sections;
       if ((a.status ?? 'done') === 'done') {
@@ -658,7 +658,7 @@ const workOrderTools: AnyToolDef[] = [
         { id, agent: ctx.commit!.agent, sections: keys, status: a.status, notes: a.notes, codeRefs: stamped.lists[0], deviations: a.deviations, verifications: a.verifications, git: a.git, touched: stamped.lists[1] },
         metaOf(ctx, commits),
       );
-      const warnings: string[] = [...checkCodeRepos(ctx, (a.git ?? []).map((g) => g.repo), 'git'), ...stamped.warnings];
+      const warnings: string[] = [...(await checkCodeRepos(ctx, (a.git ?? []).map((g) => g.repo), 'git')), ...stamped.warnings];
       const open = (w.planSteps ?? []).filter((s) => s.status === 'pending' || s.status === 'in_progress');
       if (w.sections.every((s) => s.status !== 'pending') && open.length) warnings.push(`${open.length} task(s) still unfinished (${open.map((s) => s.id).join(', ')}): work_order_complete refuses until each is done or skipped with a note (work_order_task_set)`);
       if (w.sections.every((s) => s.status !== 'pending')) warnings.push('every section is finished and your claim was released automatically: reconcile specs / components with the code, then call work_order_complete with the outcome (no claim needed)');
@@ -843,7 +843,7 @@ const verificationTools: AnyToolDef[] = [
         }
       }
       // A claim about code: repo (registered) + commit; codeRefs in registered repos too.
-      const cw = [...checkClaim(ctx, a.code, 'code'), ...checkCodeRepos(ctx, (a.codeRefs ?? []).map((x) => repoOfLocation(x) ?? '').filter(Boolean), 'codeRefs')];
+      const cw = [...(await checkClaim(ctx, a.code, 'code')), ...(await checkCodeRepos(ctx, (a.codeRefs ?? []).map((x) => repoOfLocation(x) ?? '').filter(Boolean), 'codeRefs'))];
       const r = await ctx.storage.verificationService.record(
         {
           criterion: buildRef({ kind: c.kind, id: c.id, sectionId: c.sectionId }),

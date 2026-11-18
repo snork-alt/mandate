@@ -26,11 +26,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { relativeTime } from '../lib/time';
 import { goTo, projectBase } from '../project';
+import { clearDraft, restoreDraft, stashDraft, withResume } from './newProjectDraft';
 import { CREATE_STEPS, githubApi, slugify, UiApiError, type CreateStep, type GithubRepo, type NewProjectInput, type RepoList } from './github';
 import { devApiPort } from './snippets';
 import { Notice, SummaryRow } from './parts';
 import { OwnerAvatar, OwnerTabs, ownerLabel } from './ownerTabs';
-import { codeRepoErrors, CodeReposEditor, toEntry, type CodeRepoDraft } from './CodeRepos';
 import { PostCreateConnect } from './PostCreateConnect';
 import { buildCodeRef } from '@mandate/shared';
 import './newProject.css';
@@ -43,42 +43,18 @@ interface Draft {
   repo: GithubRepo | null;
   branch: string;
   owner: string;
-  /** Code repositories (read-only), by short name. */
-  codeRepos: CodeRepoDraft[];
 }
 
-const EMPTY: Draft = { name: '', id: '', idTouched: false, description: '', repo: null, branch: '', owner: 'all', codeRepos: [] };
-const DRAFT_KEY = 'mandate.newProject';
-
-function loadDraft(): Draft {
-  try {
-    const raw = sessionStorage.getItem(DRAFT_KEY);
-    if (!raw) return EMPTY;
-    const d = { ...EMPTY, ...(JSON.parse(raw) as Partial<Draft>) };
-    return { ...d, codeRepos: Array.isArray(d.codeRepos) ? d.codeRepos : [] };
-  } catch {
-    return EMPTY;
-  }
-}
-function saveDraft(d: Draft | null) {
-  try {
-    if (d) sessionStorage.setItem(DRAFT_KEY, JSON.stringify(d));
-    else sessionStorage.removeItem(DRAFT_KEY);
-  } catch {
-    /* storage unavailable */
-  }
-}
-
+const EMPTY: Draft = { name: '', id: '', idTouched: false, description: '', repo: null, branch: '', owner: 'all' };
 /** One line per step, shown above its fields. */
 const STEPS = [
   { label: 'Details', lead: 'Give the project a name. Coding agents connect to it by its id.' },
   { label: 'Specs repository', lead: 'Choose the repository for the specs, then its branch.' },
-  { label: 'Code repositories', lead: null },
   { label: 'Confirm', lead: 'Check the setup. Mandate prepares the specs repository when you create the project.' },
 ] as const;
 
 /** Which step a server error's `path` belongs to. */
-const STEP_OF: Record<string, number> = { id: 0, name: 0, description: 0, repo: 1, owner: 1, branch: 1, path: 1, codeRepos: 2 };
+const STEP_OF: Record<string, number> = { id: 0, name: 0, description: 0, repo: 1, owner: 1, branch: 1, path: 1 };
 
 const PROGRESS: Record<CreateStep, string> = { clone: 'Cloning the repository', init: 'Initialising the project', push: 'Pushing the first commit', key: 'Creating an agent key' };
 
@@ -135,10 +111,10 @@ function RepoRow({ r, selected, onPick }: { r: GithubRepo; selected: boolean; on
   );
 }
 
-function InstallLink({ url }: { url: string | null }) {
+function InstallLink({ url, onLeave }: { url: string | null; onLeave: () => void }) {
   if (!url) return null;
   return (
-    <Anchor href={url} target="_blank" rel="noreferrer" size="sm" className="pj-install" data-testid="install-app">
+    <Anchor href={url} onClick={() => onLeave()} target="_blank" rel="noreferrer" size="sm" className="pj-install" data-testid="install-app">
       Install the GitHub App on more repositories
       <IconExternalLink size={13} />
     </Anchor>
@@ -206,7 +182,7 @@ function CreateRepo({ data, draft, onCreated, onCancel }: { data: RepoList | und
   );
 }
 
-function RepoStep({ draft, setOwner, onPick, error }: { draft: Draft; setOwner: (o: string) => void; onPick: (r: GithubRepo) => void; error?: string }) {
+function RepoStep({ draft, setOwner, onPick, onLeave, error }: { draft: Draft; setOwner: (o: string) => void; onPick: (r: GithubRepo) => void; /** Stash the form before going to GitHub; returns the resume nonce. */ onLeave: () => string; error?: string }) {
   const [q, setQ] = useState('');
   const [debounced] = useDebouncedValue(q, 250);
   const owner = draft.owner || 'all';
@@ -219,8 +195,7 @@ function RepoStep({ draft, setOwner, onPick, error }: { draft: Draft; setOwner: 
 
   if (data?.needsScope) {
     const upgrade = (url: string) => {
-      saveDraft(draft);
-      window.location.assign(url);
+      window.location.assign(withResume(url, onLeave()));
     };
     return (
       <Notice
@@ -247,7 +222,7 @@ function RepoStep({ draft, setOwner, onPick, error }: { draft: Draft; setOwner: 
   const placeholder = owner === 'all' ? 'Search repositories' : selectedOwner?.type === 'user' ? 'Search your repositories' : `Search ${selectedOwner ? ownerLabel(selectedOwner) : owner} repositories`;
   return (
     <div className="pj-repo-step">
-      {owners.length > 0 && <OwnerTabs owners={owners} value={owner} onChange={(o) => (setOwner(o), setCreating(false))} addUrl={installUrl ?? data?.grantUrl} app={!!installUrl} />}
+      {owners.length > 0 && <OwnerTabs owners={owners} value={owner} onChange={(o) => (setOwner(o), setCreating(false))} addUrl={installUrl ?? data?.grantUrl} app={!!installUrl} onLeave={() => onLeave()} />}
       {restricted ? (
         <Notice
           icon={<IconBuilding size={16} />}
@@ -257,7 +232,7 @@ function RepoStep({ draft, setOwner, onPick, error }: { draft: Draft; setOwner: 
           actions={
             <>
               {data?.grantUrl && (
-                <Button size="sm" variant="default" component="a" href={data.grantUrl} target="_blank" rel="noreferrer" rightSection={<IconExternalLink size={13} />}>
+                <Button size="sm" variant="default" component="a" href={data.grantUrl} onClick={onLeave} target="_blank" rel="noreferrer" rightSection={<IconExternalLink size={13} />}>
                   Grant access
                 </Button>
               )}
@@ -272,8 +247,7 @@ function RepoStep({ draft, setOwner, onPick, error }: { draft: Draft; setOwner: 
                   color="gray"
                   leftSection={<IconLogin2 size={14} />}
                   onClick={() => {
-                    saveDraft(draft);
-                    window.location.assign(data.reauthUrl!);
+                    window.location.assign(withResume(data.reauthUrl!, onLeave()));
                   }}
                 >
                   Sign in again
@@ -345,7 +319,7 @@ function RepoStep({ draft, setOwner, onPick, error }: { draft: Draft; setOwner: 
                 </Text>
                 {!installUrl && q && data?.grantUrl && (
                   <Group gap="xs" justify="center" mt={6}>
-                    <Button component="a" href={data.grantUrl} target="_blank" rel="noreferrer" size="sm" variant="default" leftSection={<IconBrandGithub size={15} />} rightSection={<IconExternalLink size={13} />}>
+                    <Button component="a" href={data.grantUrl} onClick={onLeave} target="_blank" rel="noreferrer" size="sm" variant="default" leftSection={<IconBrandGithub size={15} />} rightSection={<IconExternalLink size={13} />}>
                       Give access to an organization
                     </Button>
                     <Button type="button" size="sm" variant="subtle" color="gray" leftSection={<IconRefresh size={14} />} loading={repos.isFetching} onClick={() => void repos.refetch()}>
@@ -354,7 +328,7 @@ function RepoStep({ draft, setOwner, onPick, error }: { draft: Draft; setOwner: 
                   </Group>
                 )}
                 {installUrl && (
-                  <Button component="a" href={installUrl} target="_blank" rel="noreferrer" size="sm" variant="default" leftSection={<IconBrandGithub size={15} />} rightSection={<IconExternalLink size={13} />} mt={6}>
+                  <Button component="a" href={installUrl} onClick={onLeave} target="_blank" rel="noreferrer" size="sm" variant="default" leftSection={<IconBrandGithub size={15} />} rightSection={<IconExternalLink size={13} />} mt={6}>
                     Install the GitHub App
                   </Button>
                 )}
@@ -371,7 +345,7 @@ function RepoStep({ draft, setOwner, onPick, error }: { draft: Draft; setOwner: 
             <Button type="button" size="sm" variant="default" leftSection={<IconPlus size={15} />} onClick={() => setCreating(true)} data-testid="create-repo">
               Create a new repository
             </Button>
-            {!!data?.items.length && <InstallLink url={installUrl} />}
+            {!!data?.items.length && <InstallLink url={installUrl} onLeave={onLeave} />}
           </div>
         </>
       )}
@@ -384,7 +358,7 @@ function RepoStep({ draft, setOwner, onPick, error }: { draft: Draft; setOwner: 
 type Progress = Partial<Record<CreateStep, 'start' | 'done'>>;
 
 /** "New project": details, GitHub repository, branch + folder, confirm with live progress. Registers a project (no document writes). */
-export function NewProjectModal({ opened, onClose }: { opened: boolean; onClose: () => void }) {
+export function NewProjectModal({ opened, onClose, resume }: { opened: boolean; onClose: () => void; /** Nonce of a form stashed before a GitHub round trip (restored on open). */ resume?: string | null }) {
   const qc = useQueryClient();
   const phone = useMediaQuery('(max-width: 36em)');
   const [step, setStep] = useState(0);
@@ -396,21 +370,20 @@ export function NewProjectModal({ opened, onClose }: { opened: boolean; onClose:
   const [created, setCreated] = useState<{ id: string; name: string } | null>(null);
   useEffect(() => {
     if (!opened) return;
-    const d = loadDraft();
+    const back = resume !== undefined ? restoreDraft<Draft>(resume) : null;
+    const d: Draft = back ? { ...EMPTY, ...back.draft } : EMPTY;
     setDraft(d);
-    setStep(d.repo ? 2 : d.name ? 1 : 0);
+    setStep(back ? Math.min(back.step, d.name ? 1 : 0) : 0);
+    if (back) void qc.invalidateQueries({ queryKey: ['github'] });
     setFieldErrors({});
     setTried({});
     setProgress({});
     setCreated(null);
-    saveDraft(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [opened]);
 
   const set = (patch: Partial<Draft>) => setDraft((d) => ({ ...d, ...patch }));
-  const specsRepo = draft.repo?.fullName ?? null;
-  const codeErrors = codeRepoErrors(draft.codeRepos, specsRepo);
-  const codeOk = Object.keys(codeErrors).length === 0;
-  const canNext = [!!draft.name.trim(), !!draft.repo && !!draft.branch.trim(), draft.codeRepos.length > 0 && codeOk, true][step]!;
+  const canNext = [!!draft.name.trim(), !!draft.repo && !!draft.branch.trim(), true][step]!;
   const mcpUrl = `${apiHost()}/p/${draft.id || '…'}/mcp`;
 
   const create = useMutation({
@@ -421,11 +394,11 @@ export function NewProjectModal({ opened, onClose }: { opened: boolean; onClose:
         ...(draft.description.trim() ? { description: draft.description.trim() } : {}),
         repo: draft.repo!.fullName,
         ...(draft.branch.trim() ? { branch: draft.branch.trim() } : {}),
-        ...(draft.codeRepos.length ? { codeRepos: draft.codeRepos.map(toEntry) } : {}),
       };
       return githubApi.createProjectStreaming(body, (e) => setProgress((p) => ({ ...p, [e.step]: e.status })));
     },
     onSuccess: ({ project }) => {
+      clearDraft();
       void qc.invalidateQueries({ queryKey: ['projects'] });
       // A beat on the finished checklist, then the "connect your coding agent" step.
       setTimeout(() => setCreated({ id: project.id, name: project.name }), 900);
@@ -450,7 +423,7 @@ export function NewProjectModal({ opened, onClose }: { opened: boolean; onClose:
       setTried((t) => ({ ...t, [step]: true }));
       return;
     }
-    if (step < 3) setStep(step + 1);
+    if (step < 2) setStep(step + 1);
     else create.mutate();
   };
   const onSubmit = (e: FormEvent) => {
@@ -581,6 +554,7 @@ export function NewProjectModal({ opened, onClose }: { opened: boolean; onClose:
                     pick(r);
                     setFieldErrors((f) => ({ ...f, owner: '' }));
                   }}
+                  onLeave={() => stashDraft(draft, 1)}
                   error={repoErr || undefined}
                 />
                 {draft.repo && (
@@ -602,17 +576,6 @@ export function NewProjectModal({ opened, onClose }: { opened: boolean; onClose:
             )}
 
             {step === 2 && (
-              <>
-                <CodeReposEditor value={draft.codeRepos} onChange={(codeRepos) => (set({ codeRepos }), setFieldErrors((f) => ({ ...f, codeRepos: '' })))} specsRepo={specsRepo} />
-                {fieldErrors.codeRepos && (
-                  <Text size="sm" c="red" role="alert" mt="xs">
-                    {fieldErrors.codeRepos}
-                  </Text>
-                )}
-              </>
-            )}
-
-            {step === 3 && (
               <div className="pj-stack">
                 <div className="np-summary">
                   <SummaryRow icon={<IconFolderPlus size={14} />} label="Name" value={draft.name.trim()} />
@@ -634,35 +597,10 @@ export function NewProjectModal({ opened, onClose }: { opened: boolean; onClose:
                     }
                     mono
                   />
-                  <div className="np-summary-row" data-testid="summary-code-repos">
-                    <span className="np-summary-label">
-                      <IconCode size={14} />
-                      <span>
-                        Code repositories
-                        <span className="cr-sub">read-only</span>
-                      </span>
-                    </span>
-                    <span className="np-summary-value cr-summary">
-                      {draft.codeRepos.length ? (
-                        draft.codeRepos.map((c) => (
-                          <span key={c.github} className="cr-summary-row">
-                            <span className="cr-tag np-mono">{c.name}</span>
-                            <IconArrowRight size={13} className="np-faint" />
-                            <OwnerAvatar url={c.ownerAvatarUrl} login={c.github.split('/')[0]!} size={16} />
-                            <span className="np-mono">{c.github}</span>
-                            {c.defaultBranch && <span className="np-faint np-mono">@{c.defaultBranch}</span>}
-                          </span>
-                        ))
-                      ) : (
-                        <span className="np-faint">None yet: add them later in Settings → Code repositories</span>
-                      )}
-                    </span>
-                  </div>
                 </div>
                 {!create.isPending && !create.isSuccess && !err && (
                   <Text size="sm" className="np-muted">
-                    Mandate clones <code>{draft.repo?.fullName}</code>, sets it up on <code>{draft.branch}</code>, pushes the first commit
-                    {draft.codeRepos.length ? `, links ${draft.codeRepos.length} code ${draft.codeRepos.length === 1 ? 'repository' : 'repositories'} (read-only)` : ''} and creates an agent key for this project.
+                    Mandate clones <code>{draft.repo?.fullName}</code>, sets it up on <code>{draft.branch}</code>, pushes the first commit and creates an agent key for this project.
                   </Text>
                 )}
                 {(create.isPending || create.isSuccess || (err && Object.keys(progress).length > 0)) && (
@@ -708,37 +646,17 @@ export function NewProjectModal({ opened, onClose }: { opened: boolean; onClose:
                 Back
               </Button>
             )}
-            {step === 2 && !busy && (
-              <>
-                <Text size="sm" className="np-faint pj-foot-note cr-foot-note">
-                  You can add them later in project settings
-                </Text>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="default"
-                  ml="auto"
-                  onClick={() => {
-                    set({ codeRepos: [] });
-                    setStep(3);
-                  }}
-                  data-testid="code-repos-skip"
-                >
-                  Skip for now
-                </Button>
-              </>
-            )}
             <Button
               type="submit"
               size="sm"
-              disabled={busy || (step === 2 && !canNext)}
+              disabled={busy || !canNext}
               data-busy={busy || undefined}
-              data-testid={step < 3 ? 'new-project-next' : 'new-project-create'}
-              leftSection={busy ? <Loader size={14} color="currentColor" /> : step === 3 && !err ? <IconBrandGithub size={15} /> : err && step === 3 ? <IconRefresh size={15} /> : null}
-              rightSection={step < 3 ? <IconArrowRight size={15} /> : null}
+              data-testid={step < 2 ? 'new-project-next' : 'new-project-create'}
+              leftSection={busy ? <Loader size={14} color="currentColor" /> : step === 2 && !err ? <IconBrandGithub size={15} /> : err && step === 2 ? <IconRefresh size={15} /> : null}
+              rightSection={step < 2 ? <IconArrowRight size={15} /> : null}
               className="np-primary"
             >
-              {step < 3 ? 'Continue' : create.isSuccess ? 'Opening project…' : busy ? 'Creating…' : err ? 'Try again' : 'Create project'}
+              {step < 2 ? 'Continue' : create.isSuccess ? 'Opening project…' : busy ? 'Creating…' : err ? 'Try again' : 'Create project'}
             </Button>
           </footer>
         </form>

@@ -60,15 +60,17 @@ export interface NewProjectInput {
   branch?: string;
   /** Folder inside the repo (older projects; the dialog no longer offers it). */
   path?: string;
-  /** Code repositories (read-only for Mandate) by short name. */
-  codeRepos?: CodeRepoEntry[];
 }
 
-/** A registered code repository: stable short name (code refs use it) → GitHub repo. */
+/** A registered code repository: stable short name (code refs use it), optional remote URL; auto = registered by an agent. */
 export interface CodeRepoEntry {
   name: string;
-  github: string;
+  github?: string;
+  remote?: string;
   defaultBranch?: string;
+  auto?: boolean;
+  registeredBy?: string;
+  registeredAt?: string;
 }
 
 /** Settings → Code repositories, per project. */

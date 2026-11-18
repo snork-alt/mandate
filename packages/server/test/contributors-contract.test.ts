@@ -58,7 +58,7 @@ beforeAll(async () => {
   // work order by dave: claim with a branch + PR, touched code, a code commit; bob comments; erin verifies
   const wo = (await call(as('dave'), 'work_order_create', { spec, kind: 'implement', sections: ['design'], plan: { tasks: [{ text: '1. do', sections: ['design'] }] } })).ref;
   await call(as('dave'), 'work_order_claim', { ref: wo, git: [{ repo: `app${S}`, branch: `wo/cc-${S}`, baseBranch: 'main', headCommit: 'abc1234', pr: { number: 77, status: 'open', url: 'https://example.com/pr/77' } }] });
-  await call(as('dave'), 'work_order_touch', { ref: wo, section: 'design', files: [`app${S}:src/cc/file.ts#L1-L9`] });
+  await call(as('dave'), 'work_order_touch', { ref: wo, section: 'design', files: [`app${S}:src/cc/file.ts#L1-L9`], code: { repo: `app${S}`, commit: 'abcdef1' } });
   const comment = await call(as('bob'), 'comment_add', { target: wo, body: 'Check the edge case.' });
   // gina's agent asks a question about the spec; hank answers it in the web UI
   const question = (await call(as('gina'), 'question_ask', { purpose: 'decision', request: fb.split('/').pop(), context: [`mandate://specs/${spec}`], questions: [{ header: 'Scope', question: 'Ship design v2?', options: [{ label: 'Yes', description: 'Now' }, { label: 'No', description: 'Later' }], recommended: 'Yes' }] })).ref as string;

@@ -63,7 +63,7 @@ export const auditSectionGetInputSchema = z
 
 /** audit_record_item: finding code refs in registered repos; the audit itself names the audited code (repo + commit). */
 async function itemCodeWarnings(ctx: ToolContext, auditId: string, codeRefs: unknown[]): Promise<string[]> {
-  const warnings = checkCodeRepos(ctx, codeRefs.map(repoOfLocation).filter((r): r is string => !!r), 'findings.codeRefs');
+  const warnings = await checkCodeRepos(ctx, codeRefs.map(repoOfLocation).filter((r): r is string => !!r), 'findings.codeRefs');
   const doc = await ctx.storage.audits.get(auditId).catch(() => null);
   if (doc && !doc.code && ctx.settings) warnings.push('code_commit_missing: this audit was started without code { repo, commit }; its results are not tied to a code commit (start audits with code)');
   return warnings;
@@ -93,13 +93,13 @@ Example: {"target":"mandate://specs/login-sso","code":{"repo":"app","commit":"3f
         // The agent that was asked to do it (audit-request event) starts THAT audit.
         const news = newsOfProject(ctx);
         const me = clientIdentity(ctx);
-        const cw = a.code ? checkClaim(ctx, a.code, 'code') : [];
+        const cw = a.code ? await checkClaim(ctx, a.code, 'code') : [];
         const id = a.request.replace(/^mandate:\/\/audits\//, '');
         await ctx.storage.auditService.begin({ auditId: id, ...(a.code ? { code: a.code } : {}) }, auditor(ctx), { id: me.id, handles: news?.presence.get(me.id)?.label ? [news.presence.get(me.id)!.label] : [] }, metaOf(ctx, commits));
         return { ...(await result(ctx, id, commits)), warnings: cw };
       }
       // The audited code is a claim about code: repo (registered) + commit.
-      const warnings: string[] = a.code ? checkClaim(ctx, a.code, 'code') : requireCommit(ctx, 'an audit asserts the state of code: pass code { repo, commit } (the code you audit)', 'code: { "repo": "<short name from project_info.codeRepos>", "commit": "<sha>" }', 'code');
+      const warnings: string[] = a.code ? await checkClaim(ctx, a.code, 'code') : requireCommit(ctx, 'an audit asserts the state of code: pass code { repo, commit } (the code you audit)', 'code: { "repo": "<short name from project_info.codeRepos>", "commit": "<sha>" }', 'code');
       const target = a.target!;
       const doc = await ctx.storage.auditService.start({ ...a, target }, auditor(ctx), metaOf(ctx, commits));
       const plan = await ctx.storage.auditService.plan(target);

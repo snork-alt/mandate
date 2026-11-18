@@ -205,6 +205,15 @@ A project is a GitHub repository (or a folder in one) that holds its specs. **Ne
 repositories the GitHub App is installed on, personal or from an organization, with a link to install it on more. Each
 project has its own index, activity feed, Ask threads and MCP endpoint (`<server>/p/<project>/mcp`).
 
+A project is its Mandate data repository only: there is no code repository step. Mandate works through Claude Code,
+which has the code locally and never needs the server to read it. The first time an agent reports a code ref or git
+context (`code { repo, remote?, commit, branch, dirty }`, `repo:path` refs, work-order `git`), an unknown repo short name
+(lowercase letters, digits, dashes) is registered automatically, with who and when, and the remote URL if the agent
+reports one. Agents report changed files from their own `git diff` (`codeRefs` on task completion, `work_order_touch`);
+`work_order_touch_from_commits` only works when the server can read the repo. Code links open GitHub only when a remote
+is known, otherwise just the path is shown. Settings → Code repositories (optional) lists the registered repos: rename,
+set a remote URL, remove.
+
 ### 4. Connect your coding agents
 
 On each developer machine, one line installs the Mandate CLI (`getmandate`) and wires Claude Code to a

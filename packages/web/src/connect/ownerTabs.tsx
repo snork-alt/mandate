@@ -18,7 +18,7 @@ export function OwnerAvatar({ url, login, size = 20 }: { url?: string | null; lo
  * `addUrl`: where the user gives Mandate access to another account / organization (GitHub App: install it there;
  * OAuth App: GitHub's page with the per-organization Grant / Request buttons). Opens in a new tab; refresh after.
  */
-export function OwnerTabs({ owners, value, onChange, addUrl, app }: { owners: GithubOwner[]; value: string; onChange: (v: string) => void; addUrl?: string | null; app?: boolean }) {
+export function OwnerTabs({ owners, value, onChange, addUrl, app, onLeave }: { owners: GithubOwner[]; value: string; onChange: (v: string) => void; addUrl?: string | null; app?: boolean; /** Called before the link leaves for GitHub (stash the form). */ onLeave?: () => void }) {
   return (
     <Tabs value={value} onChange={(v) => v && onChange(v)} className="pj-owners" data-testid="owner-switcher" aria-label="Repository owner">
       <Tabs.List>
@@ -40,7 +40,7 @@ export function OwnerTabs({ owners, value, onChange, addUrl, app }: { owners: Gi
         ))}
         {addUrl && (
           <Tooltip label={app ? 'Install the Mandate GitHub App on another account or organization, then come back' : 'Grant (or request) access for another organization on GitHub, then come back'}>
-            <a href={addUrl} target="_blank" rel="noreferrer" className="pj-owner-add" data-testid="owner-add">
+            <a href={addUrl} onClick={() => onLeave?.()} target="_blank" rel="noreferrer" className="pj-owner-add" data-testid="owner-add">
               <IconPlus size={14} />
               Add organization
               <IconExternalLink size={12} className="pj-owner-add-ext" />

@@ -886,7 +886,7 @@ export class WorkOrderService {
     if (!dir) {
       throw new WorkOrderError(
         'code_repo_unavailable',
-        `the server cannot read a local checkout of code repo '${input.repo}' (it only reads repos wired to this project with \`mandate connect\` on the same machine): report the files yourself with work_order_touch and the commits with work_order_git_update`,
+        `the server cannot read a local checkout of code repo '${input.repo}' (it only reads repos wired to this project with \`mandate connect\` on the same machine): report the touched files from your own git diff (work_order_touch, or codeRefs / touched with the task or completion) and the commits with work_order_git_update`,
         { kind: 'code_repo', repo: input.repo },
         400,
       );

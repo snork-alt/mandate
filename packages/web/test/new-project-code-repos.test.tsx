@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-/** New project: Details → Specs repository (+ Branch, no Folder) → Code repositories → Confirm; Settings → Code repositories. */
+/** New project: Details → Specs repository (+ Branch) → Confirm, no code repositories; Settings → Code repositories (auto-registered, optional). */
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { NewProjectModal } from '../src/connect/NewProjectModal';
@@ -44,114 +44,94 @@ function serve(extra: (method: string, url: string, body: unknown) => unknown = 
   return calls;
 }
 
-async function toCodeRepos() {
+async function toConfirm() {
   render(<NewProjectModal opened onClose={() => undefined} />, { wrapper: Wrap });
   fireEvent.change(await screen.findByLabelText('Name'), { target: { value: 'Checkout' } });
   fireEvent.click(screen.getByTestId('new-project-next'));
-  expect(screen.getByTestId('specs-dedicated').textContent).toContain('Use a dedicated repository for specs.');
-  expect(screen.getByTestId('specs-dedicated').textContent).toContain('Mandate writes to it.');
   fireEvent.click(await screen.findByTestId('repo-acme/product-specs'));
-  // Branch is on the specs repository step; the Folder field is gone.
   expect((screen.getByTestId('specs-branch') as HTMLInputElement).value).toBe('main');
   expect(screen.queryByLabelText('Folder')).toBeNull();
   fireEvent.click(screen.getByTestId('new-project-next'));
 }
 
 describe('New project dialog', () => {
-  it('shows the four steps', async () => {
+  it('has three steps and no code repositories step', async () => {
     serve();
     render(<NewProjectModal opened onClose={() => undefined} />, { wrapper: Wrap });
-    const steps = await screen.findByLabelText('Step 1 of 4');
-    expect(steps.textContent).toBe('1Details2Specs repository3Code repositories4Confirm');
+    const steps = await screen.findByLabelText('Step 1 of 3');
+    expect(steps.textContent).toBe('1Details2Specs repository3Confirm');
   });
 
-  it('code repositories: empty state, picker (specs repo disabled), duplicate short name with one-click fix, confirm, create', async () => {
+  it('creates a project with the data repo only (no codeRepos in the request)', async () => {
     const calls = serve();
-    await toCodeRepos();
-    expect(screen.getByTestId('code-repos-readonly').textContent).toContain('Read-only. Mandate only reads these to link specs to code; it never writes to them.');
-    expect(screen.getByTestId('code-repos-empty').textContent).toContain('No code repositories yet');
-    expect((screen.getByTestId('new-project-next') as HTMLButtonElement).disabled).toBe(true);
+    await toConfirm();
+    expect(screen.queryByTestId('summary-code-repos')).toBeNull();
+    fireEvent.click(screen.getByTestId('new-project-create'));
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.url.startsWith('/ui/projects'))).toBe(true));
+    const post = calls.find((c) => c.method === 'POST' && c.url.startsWith('/ui/projects'))!;
+    expect(post.body).toMatchObject({ name: 'Checkout', repo: 'acme/product-specs' });
+    expect(post.body).not.toHaveProperty('codeRepos');
+  });
 
-    fireEvent.click(screen.getByTestId('code-repo-add'));
-    const specs = await screen.findByTestId('pick-acme/product-specs');
-    expect(specs.getAttribute('aria-disabled')).toBe('true');
-    expect(specs.textContent).toContain('Specs');
-    fireEvent.click(specs);
-    fireEvent.click(screen.getByTestId('pick-acme/api'));
-    fireEvent.click(screen.getByTestId('pick-acme/mobile'));
-    expect(screen.getByTestId('code-repo-add-picked').textContent).toBe('Add 2 repositories');
-    fireEvent.click(screen.getByTestId('code-repo-add-picked'));
-
-    const rows = screen.getByTestId('code-repo-rows');
-    expect(within(rows).getByTestId('code-repo-acme/api').textContent).toContain('Read-only');
-    expect((screen.getByTestId('code-repo-name-acme/api') as HTMLInputElement).value).toBe('api');
-    fireEvent.change(screen.getByTestId('code-repo-name-acme/mobile'), { target: { value: 'api' } });
-    expect(screen.getByTestId('code-repo-error-acme/mobile').textContent).toContain('api is already used by acme/api. Short names must be unique.');
-    expect((screen.getByTestId('new-project-next') as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.click(screen.getByTestId('code-repo-fix-acme/mobile'));
-    expect(screen.queryByTestId('code-repo-error-acme/mobile')).toBeNull();
-    expect((screen.getByTestId('code-repo-name-acme/mobile') as HTMLInputElement).value).toBe('mobile');
-    expect(screen.getByTestId('code-ref-example').textContent).toContain('mandate://code/api/src/auth.ts');
-
+  it('restores the form after the GitHub round trip', async () => {
+    serve();
+    const { stashDraft } = await import('../src/connect/newProjectDraft');
+    const nonce = stashDraft({ name: 'Checkout', id: 'checkout', idTouched: false, description: '', repo: null, branch: '', owner: 'all' }, 1);
+    render(<NewProjectModal opened resume={nonce} onClose={() => undefined} />, { wrapper: Wrap });
+    expect(await screen.findByTestId('repo-acme/product-specs')).toBeTruthy(); // on the specs repository step, name kept
+    fireEvent.click(screen.getByTestId('repo-acme/product-specs'));
     fireEvent.click(screen.getByTestId('new-project-next'));
-    const summary = await screen.findByTestId('summary-code-repos');
-    expect(summary.textContent).toContain('api');
-    expect(summary.textContent).toContain('acme/mobile@main');
-    expect(screen.getByText(/links 2 code repositories \(read-only\)/)).toBeTruthy();
-    fireEvent.click(screen.getByTestId('new-project-create'));
-    await waitFor(() => expect(calls.some((c) => c.url === '/ui/projects')).toBe(true));
-    const body = calls.find((c) => c.url === '/ui/projects')!.body;
-    expect(body).toEqual({
-      name: 'Checkout',
-      repo: 'acme/product-specs',
-      branch: 'main',
-      codeRepos: [
-        { name: 'api', github: 'acme/api', defaultBranch: 'main' },
-        { name: 'mobile', github: 'acme/mobile', defaultBranch: 'main' },
-      ],
-    });
-    expect(body.path).toBeUndefined();
-  });
-
-  it('skip for now: no code repositories', async () => {
-    const calls = serve();
-    await toCodeRepos();
-    fireEvent.click(screen.getByTestId('code-repos-skip'));
-    expect((await screen.findByTestId('summary-code-repos')).textContent).toContain('None yet');
-    fireEvent.click(screen.getByTestId('new-project-create'));
-    await waitFor(() => expect(calls.some((c) => c.url === '/ui/projects')).toBe(true));
-    expect(calls.find((c) => c.url === '/ui/projects')!.body.codeRepos).toBeUndefined();
+    expect(screen.getByTestId('new-project-create')).toBeTruthy();
+    expect(screen.getByText('Checkout')).toBeTruthy();
   });
 });
 
 describe('Settings → Code repositories', () => {
   const state = (admin: boolean) => ({
     admin,
-    projects: [{ id: 'web', name: 'Web', specsRepo: 'acme/product-specs', codeRepos: [{ name: 'web-app', github: 'acme/web-app', defaultBranch: 'main' }], unlinked: [{ name: 'api', uses: 3 }] }],
+    projects: [
+      {
+        id: 'web',
+        name: 'Web',
+        specsRepo: 'acme/product-specs',
+        codeRepos: [
+          { name: 'web-app', auto: true, registeredBy: 'claude-code', registeredAt: '2026-11-01T10:00:00Z' },
+          { name: 'api', remote: 'https://github.com/acme/api.git' },
+        ],
+        unlinked: [],
+      },
+    ],
   });
 
-  it('admins rename, link unregistered names and save', async () => {
-    const calls = serve((method, url, body) => (url.startsWith('/ui/code-repos') ? (method === 'GET' ? state(true) : { ...state(true).projects[0], codeRepos: (body as { codeRepos: unknown[] }).codeRepos, unlinked: [] }) : undefined));
+  it('admins rename, set a remote URL, remove and save', async () => {
+    const calls = serve((method, url, body) => (url.startsWith('/ui/code-repos') ? (method === 'GET' ? state(true) : { ...state(true).projects[0], codeRepos: (body as { codeRepos: unknown[] }).codeRepos }) : undefined));
     render(<CodeReposSection state={{} as never} register={() => undefined} variant="settings" />, { wrapper: Wrap });
-    expect((await screen.findByTestId('code-repo-name-acme/web-app') as HTMLInputElement).value).toBe('web-app');
-    expect(screen.getByTestId('code-repos-unlinked-web').textContent).toContain('3 references');
-    fireEvent.click(screen.getByTestId('code-repo-link-api'));
-    fireEvent.click(await screen.findByTestId('pick-acme/api'));
-    fireEvent.click(screen.getByTestId('code-repo-add-picked'));
-    expect((screen.getByTestId('code-repo-name-acme/api') as HTMLInputElement).value).toBe('api');
-    expect(screen.queryByTestId('code-repos-unlinked-web')).toBeNull();
-    fireEvent.change(screen.getByTestId('code-repo-name-acme/web-app'), { target: { value: 'web' } });
+    expect(((await screen.findByTestId('code-repo-name-web-app')) as HTMLInputElement).value).toBe('web-app');
+    expect(screen.getByTestId('code-repo-by-web-app').textContent).toContain('registered by claude-code on 2026-11-01');
+    fireEvent.change(screen.getByTestId('code-repo-remote-web-app'), { target: { value: 'https://tok@github.com/acme/web-app.git' } });
+    fireEvent.change(screen.getByTestId('code-repo-name-web-app'), { target: { value: 'web' } });
+    fireEvent.click(screen.getByTestId('code-repo-remove-api'));
     fireEvent.click(screen.getByTestId('code-repos-save-web'));
     await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true));
-    expect(calls.find((c) => c.method === 'PUT')).toMatchObject({ url: '/ui/code-repos/web', body: { codeRepos: [{ name: 'web', github: 'acme/web-app', defaultBranch: 'main' }, { name: 'api', github: 'acme/api', defaultBranch: 'main' }] } });
+    expect(calls.find((c) => c.method === 'PUT')).toMatchObject({
+      url: '/ui/code-repos/web',
+      body: { codeRepos: [{ name: 'web', remote: 'https://github.com/acme/web-app.git', auto: true, registeredBy: 'claude-code', registeredAt: '2026-11-01T10:00:00Z' }] },
+    });
   });
 
-  it('read-only for non-admins', async () => {
+  it('refuses a malformed short name or remote, and is read-only for non-admins', async () => {
+    serve((method, url) => (url.startsWith('/ui/code-repos') ? state(true) : undefined));
+    const { unmount } = render(<CodeReposSection state={{} as never} register={() => undefined} variant="settings" />, { wrapper: Wrap });
+    const nameInput = await screen.findByTestId('code-repo-name-web-app');
+    fireEvent.change(nameInput, { target: { value: 'Web App' } });
+    expect((screen.getByTestId('code-repos-save-web') as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(nameInput, { target: { value: 'web-app' } });
+    fireEvent.change(screen.getByTestId('code-repo-remote-api'), { target: { value: 'nonsense' } });
+    expect((screen.getByTestId('code-repos-save-web') as HTMLButtonElement).disabled).toBe(true);
+    unmount();
     serve((method, url) => (url.startsWith('/ui/code-repos') ? state(false) : undefined));
     render(<CodeReposSection state={{} as never} register={() => undefined} variant="settings" />, { wrapper: Wrap });
-    expect((await screen.findByTestId('code-repo-name-acme/web-app') as HTMLInputElement).readOnly).toBe(true);
-    expect(screen.queryByTestId('code-repo-add')).toBeNull();
-    expect(screen.queryByTestId('code-repo-link-api')).toBeNull();
+    expect(((await screen.findByTestId('code-repo-name-web-app')) as HTMLInputElement).disabled).toBe(true);
     expect(screen.getByText('Only Mandate admins change code repositories.')).toBeTruthy();
   });
 });

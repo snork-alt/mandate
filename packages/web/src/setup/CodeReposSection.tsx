@@ -1,36 +1,52 @@
 /**
- * Settings → Code repositories: per project, the code repositories coding agents reference by short name (admins add,
- * rename, remove; the same rows as New project). Repo names already used in a project's data but not registered yet
- * are listed so an admin can link each to its GitHub repository.
+ * Settings → Code repositories: the code repositories coding agents reported, per project. They register themselves
+ * the first time an agent reports a code ref (Mandate never reads the code); admins can rename one, set its remote URL
+ * (code chips link to GitHub only when a remote is known) or remove it. Optional: nothing here is needed to work.
  */
-import { Alert, Button, Group, Loader, Text } from '@mantine/core';
-import { IconLink } from '@tabler/icons-react';
+import { ActionIcon, Alert, Button, Group, Loader, Text, TextInput } from '@mantine/core';
+import { IconTrash } from '@tabler/icons-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
-import { buildCodeRef } from '@mandate/shared';
+import { buildCodeRef, CODE_REPO_NAME_RE, cleanRemote, codeRepoProblems } from '@mandate/shared';
 import { StepIntro } from './widgets';
 import type { SectionProps } from './sections';
-import { codeReposApi, type CodeReposProject } from '../connect/github';
-import { codeRepoErrors, CodeRepoPicker, CodeReposEditor, fromRepo, toEntry, type CodeRepoDraft } from '../connect/CodeRepos';
+import { codeReposApi, type CodeRepoEntry, type CodeReposProject } from '../connect/github';
 import '../connect/newProject.css';
 
 const KEY = ['ui-code-repos'];
-const draftsOf = (p: CodeReposProject): CodeRepoDraft[] => p.codeRepos.map((r) => ({ name: r.name, github: r.github, defaultBranch: r.defaultBranch ?? null }));
-const same = (a: CodeRepoDraft[], b: CodeRepoDraft[]) => JSON.stringify(a.map(toEntry)) === JSON.stringify(b.map(toEntry));
+
+/** Per row problems of an edited list (empty = valid). */
+export function codeRepoRowErrors(list: CodeRepoEntry[]): Record<number, { name?: string; remote?: string }> {
+  const out: Record<number, { name?: string; remote?: string }> = {};
+  for (const p of codeRepoProblems(list.map((r) => ({ name: r.name.trim() })))) if (p.field === 'name') (out[p.index] ??= {}).name = CODE_REPO_NAME_RE.test(list[p.index]!.name.trim()) ? 'Already used' : 'Lowercase letters, digits and dashes';
+  list.forEach((r, i) => {
+    if (r.remote?.trim() && !cleanRemote(r.remote)) (out[i] ??= {}).remote = 'Not a git remote URL';
+  });
+  return out;
+}
+
+/** The list to save: trimmed, empty remote dropped. */
+export const cleanEntries = (list: CodeRepoEntry[]): CodeRepoEntry[] =>
+  list.map((r) => {
+    const { remote, ...rest } = r;
+    const clean = remote?.trim() ? (cleanRemote(remote) ?? remote.trim()) : undefined;
+    return { ...rest, name: r.name.trim(), ...(clean ? { remote: clean } : {}) };
+  });
+
+const same = (a: CodeRepoEntry[], b: CodeRepoEntry[]) => JSON.stringify(cleanEntries(a)) === JSON.stringify(cleanEntries(b));
 
 function ProjectCodeRepos({ p, admin }: { p: CodeReposProject; admin: boolean }) {
   const qc = useQueryClient();
-  const [value, setValue] = useState<CodeRepoDraft[]>(() => draftsOf(p));
-  const [linking, setLinking] = useState<string | null>(null);
-  useEffect(() => setValue(draftsOf(p)), [p]);
+  const [value, setValue] = useState<CodeRepoEntry[]>(p.codeRepos);
+  useEffect(() => setValue(p.codeRepos), [p]);
   const save = useMutation({
-    mutationFn: (list: CodeRepoDraft[]) => codeReposApi.save(p.id, list.map(toEntry)),
+    mutationFn: (list: CodeRepoEntry[]) => codeReposApi.save(p.id, cleanEntries(list)),
     onSuccess: () => void qc.invalidateQueries({ queryKey: KEY }),
   });
-  const dirty = !same(value, draftsOf(p));
-  const invalid = Object.keys(codeRepoErrors(value, p.specsRepo)).length > 0;
-  const linked = new Set(value.map((d) => d.name.trim()));
-  const unlinked = p.unlinked.filter((u) => !linked.has(u.name));
+  const dirty = !same(value, p.codeRepos);
+  const errors = codeRepoRowErrors(value);
+  const invalid = Object.keys(errors).length > 0;
+  const patch = (i: number, x: Partial<CodeRepoEntry>) => setValue(value.map((r, j) => (j === i ? { ...r, ...x } : r)));
   return (
     <div className="flow-project" data-testid={`code-repos-${p.id}`}>
       <Group gap={8} mb={6}>
@@ -38,48 +54,52 @@ function ProjectCodeRepos({ p, admin }: { p: CodeReposProject; admin: boolean })
         <Text size="xs" c="dimmed" ff="monospace">
           {p.id}
         </Text>
-        {p.specsRepo && (
-          <Text size="xs" c="dimmed">
-            · specs in <span className="np-mono">{p.specsRepo}</span>
-          </Text>
-        )}
       </Group>
-      <CodeReposEditor value={value} onChange={setValue} specsRepo={p.specsRepo} readOnly={!admin} />
-      {unlinked.length > 0 && (
-        <div className="cr-unlinked" data-testid={`code-repos-unlinked-${p.id}`}>
-          <Text size="sm" fw={500} mt="sm">
-            Used in this project but not linked yet
-          </Text>
-          <Text size="xs" c="dimmed" mb={6}>
-            Code refs already name these repositories. Link each to its GitHub repository so agents can match it.
-          </Text>
-          {unlinked.map((u) => (
-            <Group key={u.name} gap={10} className="cr-unlinked-row" data-testid={`code-repo-unlinked-${u.name}`}>
-              <span className="cr-tag np-mono">{u.name}</span>
-              <Text size="xs" c="dimmed">
-                {u.uses} {u.uses === 1 ? 'reference' : 'references'}
-              </Text>
-              {admin && (
-                <Button type="button" size="compact-sm" variant="subtle" leftSection={<IconLink size={14} />} onClick={() => setLinking(u.name)} data-testid={`code-repo-link-${u.name}`}>
-                  Link to a GitHub repository
-                </Button>
-              )}
-            </Group>
-          ))}
-          {linking && (
-            <CodeRepoPicker
-              single
-              title={`Link ${linking}`}
-              specsRepo={p.specsRepo}
-              added={value.map((d) => d.github)}
-              onCancel={() => setLinking(null)}
-              onAdd={(repos) => {
-                if (repos[0]) setValue([...value, fromRepo(repos[0], linking)]);
-                setLinking(null);
-              }}
-            />
+      {value.length === 0 && (
+        <Text size="sm" c="dimmed" data-testid={`code-repos-empty-${p.id}`}>
+          None yet. A repository appears here when a coding agent first reports code in it.
+        </Text>
+      )}
+      {value.map((r, i) => (
+        <div key={r.name + i} className="cr-row" data-testid={`code-repo-${r.name}`} data-invalid={errors[i] ? true : undefined}>
+          <TextInput
+            size="xs"
+            aria-label={`Short name of ${r.name}`}
+            value={r.name}
+            disabled={!admin}
+            error={errors[i]?.name}
+            onChange={(e) => patch(i, { name: e.currentTarget.value })}
+            className="np-mono-input"
+            data-testid={`code-repo-name-${r.name}`}
+          />
+          <TextInput
+            size="xs"
+            aria-label={`Remote URL of ${r.name}`}
+            placeholder="Remote URL (optional): code links open it on GitHub"
+            value={r.remote ?? r.github ?? ''}
+            disabled={!admin}
+            error={errors[i]?.remote}
+            onChange={(e) => patch(i, { remote: e.currentTarget.value })}
+            style={{ flex: 1 }}
+            data-testid={`code-repo-remote-${r.name}`}
+          />
+          {admin && (
+            <ActionIcon variant="subtle" color="gray" aria-label={`Remove ${r.name}`} onClick={() => setValue(value.filter((_, j) => j !== i))} data-testid={`code-repo-remove-${r.name}`}>
+              <IconTrash size={15} />
+            </ActionIcon>
+          )}
+          {r.auto && r.registeredBy && (
+            <Text size="xs" c="dimmed" data-testid={`code-repo-by-${r.name}`}>
+              registered by {r.registeredBy}
+              {r.registeredAt ? ` on ${r.registeredAt.slice(0, 10)}` : ''}
+            </Text>
           )}
         </div>
+      ))}
+      {p.unlinked.length > 0 && (
+        <Text size="xs" c="dimmed" mt={6} data-testid={`code-repos-unlinked-${p.id}`}>
+          Named in this project&apos;s data but not registered: {p.unlinked.map((u) => u.name).join(', ')}. They register when an agent next reports them.
+        </Text>
       )}
       {admin ? (
         <Group justify="flex-end" gap={8} mt="sm">
@@ -89,7 +109,7 @@ function ProjectCodeRepos({ p, admin }: { p: CodeReposProject; admin: boolean })
             </Text>
           )}
           {dirty && (
-            <Button type="button" size="xs" variant="default" onClick={() => setValue(draftsOf(p))}>
+            <Button type="button" size="xs" variant="default" onClick={() => setValue(p.codeRepos)}>
               Discard
             </Button>
           )}
@@ -112,8 +132,8 @@ export function CodeReposSection(_p: SectionProps) {
   return (
     <div className="su-section" data-testid="code-repos-section">
       <StepIntro title="Code repositories">
-        The repositories where each project&apos;s code lives. Coding agents reference them by short name (<code>{buildCodeRef({ repo: '<name>', path: '<path>' })}</code>) and record the commit they
-        worked on. The short name is the stable key: renaming a GitHub repository only changes its link.
+        Optional. Coding agents work on the code locally and reference it by short name (<code>{buildCodeRef({ repo: '<name>', path: '<path>' })}</code>); a repository is registered automatically the first time an
+        agent reports it. Set a remote URL to make code references link to GitHub; without one only the path is shown.
       </StepIntro>
       {q.isLoading && <Loader size="sm" />}
       {q.error && <Alert color="red">{(q.error as Error).message}</Alert>}

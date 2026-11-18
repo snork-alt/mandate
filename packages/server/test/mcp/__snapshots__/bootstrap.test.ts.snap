@@ -7,7 +7,7 @@ Three stages, each in a **fresh** agent: EXTRACT (raw notes) → DISTILL (Mandat
 Forms: \`/mandate-bootstrap\` (all) · \`extract|distill|review [--run <id>] [--area <path>]\` · \`--resume\` · other words = scope.
 
 ## Rules (every stage)
-- \`project_info\` first; \`effective.flow\` off: stop and give its \`reason\` (writes are refused with \`flow_off\`). Then \`tools_enable { sets: ["bootstrap"] }\`, \`code_context_set\` (repo: the \`codeRepos\` entry matching \`git remote get-url origin\`); code refs and verifications use that short name + commit.
+- \`project_info\` first; \`effective.flow\` off: stop and give its \`reason\` (writes are refused with \`flow_off\`). Then \`tools_enable { sets: ["bootstrap"] }\`, \`code_context_set\` (repo: your checkout's short name; new names register automatically); code refs and verifications use that short name + commit.
 - Never duplicate: \`list\` (of specs / components / standards) and \`spec_match\` before any create; extend instead.
 - Never invent requirements: unclear intent → \`question\` note (extract), \`request_create\` kind \`question\` on the section (distill).
 - Every section written: \`provenance: "inferred"\` + \`confidence\` (0..1). \`cause\`: the answered question when one decided the write; otherwise none (bootstrap writes are marked by \`provenance: "inferred"\`; ignore \`missing_cause\` warnings). Ids are assigned by Mandate: use the ids returned.

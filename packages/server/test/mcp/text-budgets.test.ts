@@ -66,7 +66,7 @@ describe('total tool descriptions', () => {
     for (const t of AGENT_TOOLS) total += tok(JSON.stringify(toolJsonSchema(t)));
     // 28,865 over 143 tools before the prompts review; 26,870 over the 132 agent tools after it (incl. the 5 question tools);
     // 22,513 over the 98 tools of all sets after merging per-type tools (tool-sets.ts).
-    expect(total).toBeLessThanOrEqual(25100);
+    expect(total).toBeLessThanOrEqual(25200);
     const gn = AGENT_TOOLS.find((t) => t.name === 'graph_neighbors')!;
     expect(JSON.stringify(toolJsonSchema(gn))).not.toContain('duplicate_finding_of');
   });

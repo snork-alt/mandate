@@ -1,8 +1,9 @@
 /**
  * Code repositories of a project and the code context of claims about code.
- * - A project registers its CODE repositories (read-only for Mandate) by a stable short name (`web-app`), linked to a
- *   GitHub repo (`owner/repo`). Code refs use the short name only: `mandate://code/<name>/<path>[#La-Lb]`. Renaming the
- *   GitHub repo changes the link, never the name.
+ * - A project's CODE repositories are known by a stable short name (`web-app`). Mandate works through the agent, which
+ *   has the code locally: the first time an agent reports an unknown short name it is registered automatically
+ *   (optional `remote` URL the agent reports; who / when recorded). Older projects may link a GitHub repo
+ *   (`owner/repo`). Code refs use the short name only: `mandate://code/<name>/<path>[#La-Lb]`.
  * - Claims about code (verifications, work-order completion, code locations, audits) carry repo + commit; uncommitted
  *   work is `dirty: true` with the base commit ("at a1b2c3 + uncommitted changes").
  * - A session declares its code context (`code_context_set`); every write of that session is stamped with it
@@ -21,11 +22,44 @@ export const GITHUB_REPO_RE = /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/;
 export const codeRepoSchema = z
   .object({
     name: codeRepoNameSchema,
-    github: z.string().regex(GITHUB_REPO_RE, 'owner/repo'),
+    /** Legacy: `owner/repo` linked at project setup. */
+    github: z.string().regex(GITHUB_REPO_RE, 'owner/repo').optional(),
+    /** Remote URL as the agent reported it (`git remote get-url origin`, credentials stripped); optional. */
+    remote: z.string().trim().min(1).max(500).optional(),
     defaultBranch: z.string().trim().min(1).max(200).optional(),
+    /** Registered automatically when an agent first reported it (who / when). */
+    auto: z.boolean().optional(),
+    registeredBy: z.string().max(200).optional(),
+    registeredAt: z.string().max(40).optional(),
   })
   .strict();
 export type CodeRepo = z.infer<typeof codeRepoSchema>;
+
+/** A remote URL an agent may report (`git remote get-url origin`). */
+export const codeRemoteSchema = z.string().trim().min(1).max(500).regex(/^(https?:\/\/|ssh:\/\/|git:\/\/|[A-Za-z0-9_.-]+@[A-Za-z0-9.-]+:)\S+$/, 'a git remote URL');
+
+/** A remote URL without credentials (`https://token@host/..` -> `https://host/..`), or null when it is not a usable URL. */
+export function cleanRemote(raw: string | undefined | null): string | null {
+  const r = codeRemoteSchema.safeParse(raw ?? '');
+  if (!r.success) return null;
+  return r.data.replace(/^([a-z+]+:\/\/)[^/@\s]*@/i, '$1');
+}
+
+/** Browsable web URL of a remote or `owner/repo` GitHub link (github.com only); null = no known remote, show the path only. */
+export function codeRepoWebUrl(r: { github?: string | undefined; remote?: string | undefined }): string | null {
+  if (r.github && GITHUB_REPO_RE.test(r.github)) return `https://github.com/${r.github}`;
+  const remote = cleanRemote(r.remote);
+  if (!remote) return null;
+  const m = /^(?:https?:\/\/|ssh:\/\/(?:[^/@]+@)?|git:\/\/|[A-Za-z0-9_.-]+@)(github\.com)[:/]([A-Za-z0-9-]{1,39})\/([A-Za-z0-9._-]{1,100}?)(?:\.git)?\/?$/i.exec(remote);
+  if (m) return `https://github.com/${m[2]}/${m[3]}`;
+  return /^https?:\/\//i.test(remote) ? remote.replace(/\.git\/?$/, '') : null;
+}
+
+/** Web link to a file of a code repo (at a commit when given), or null without a known remote. */
+export function codeFileWebUrl(r: { github?: string | undefined; remote?: string | undefined }, path: string, ref?: string): string | null {
+  const base = codeRepoWebUrl(r);
+  return base && /github\.com/i.test(base) ? `${base}/blob/${ref ?? 'HEAD'}/${path.replace(/^\/+/, '')}` : null;
+}
 
 /** Default short name of a GitHub repo: its name, slugified. */
 export function defaultCodeRepoName(github: string): string {
@@ -41,14 +75,15 @@ export function defaultCodeRepoName(github: string): string {
 }
 
 /** Problems of a code repo list (empty = valid): slug names, unique names and repos, not the specs repo. */
-export function codeRepoProblems(list: { name: string; github: string }[], specsRepo?: string | null): { index: number; field: 'name' | 'github'; message: string }[] {
+export function codeRepoProblems(list: { name: string; github?: string | undefined }[], specsRepo?: string | null): { index: number; field: 'name' | 'github'; message: string }[] {
   const out: { index: number; field: 'name' | 'github'; message: string }[] = [];
   const names = new Map<string, number>();
   const repos = new Map<string, number>();
   list.forEach((r, i) => {
     if (!CODE_REPO_NAME_RE.test(r.name) || r.name.length > CODE_REPO_NAME_MAX) out.push({ index: i, field: 'name', message: `'${r.name}': short names use lowercase letters, digits and dashes` });
-    else if (names.has(r.name)) out.push({ index: i, field: 'name', message: `${r.name} is already used by ${list[names.get(r.name)!]!.github}. Short names must be unique.` });
+    else if (names.has(r.name)) out.push({ index: i, field: 'name', message: `${r.name} is already used by ${list[names.get(r.name)!]!.github ?? 'another repository'}. Short names must be unique.` });
     else names.set(r.name, i);
+    if (!r.github) return;
     const g = r.github.toLowerCase();
     if (!GITHUB_REPO_RE.test(r.github)) out.push({ index: i, field: 'github', message: `'${r.github}' is not owner/repo` });
     else if (specsRepo && g === specsRepo.toLowerCase()) out.push({ index: i, field: 'github', message: `${r.github} is the specs repository; it can't also be a code repository` });
@@ -64,7 +99,7 @@ export const codeShaSchema = z.string().trim().toLowerCase().regex(/^[0-9a-f]{7,
 /** Repo + commit of a claim about code. dirty: uncommitted changes on top of `commit` (the base). */
 export const codeClaimSchema = z
   .object({
-    /** Short name of the code repo (project_info.codeRepos). */
+    /** Short name of the code repo (project_info.codeRepos; a new name is registered automatically). */
     repo: z.string().trim().min(1).max(200),
     commit: codeShaSchema,
     branch: z.string().trim().min(1).max(200).regex(/^[^\s]+$/, 'no whitespace').optional(),
@@ -75,8 +110,10 @@ export const codeClaimSchema = z
 export type CodeClaim = z.infer<typeof codeClaimSchema>;
 
 /** The session's declared code context (`code_context_set`). */
-export const codeContextSetInputSchema = codeClaimSchema;
+/** `remote`: `git remote get-url origin`, when you know it (registers the repo with a link; optional). */
+export const codeContextSetInputSchema = codeClaimSchema.extend({ remote: z.string().trim().max(500).optional() });
 export interface CodeContext extends CodeClaim {
+  remote?: string | undefined;
   /** When it was declared (ISO). */
   at: string;
 }

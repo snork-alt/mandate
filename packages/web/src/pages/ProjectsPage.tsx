@@ -3,11 +3,12 @@ import { ActionIcon, Alert, Box, Button, Group, Skeleton, Text, Tooltip, useComp
 import { useDisclosure } from '@mantine/hooks';
 import { IconAlertTriangle, IconArrowRight, IconBrandGithub, IconClock, IconCode, IconFolder, IconGitBranch, IconMoon, IconPlus, IconStar, IconSun } from '@tabler/icons-react';
 import { NewProjectModal } from '../connect/NewProjectModal';
+import { clearDraft, isResumeSearch } from '../connect/newProjectDraft';
 import { AccessBadge } from '../connect/AccessBadge';
 import { UserMenu } from '../connect/UserFooter';
 import { repoLabel } from '../connect/github';
 import { githubLoginUrl, useAuth } from '../auth';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { APP_NAME, Logo } from '../components/Logo';
 import { TimeAgo } from '../components/TimeAgo';
 import { useProjects, type ProjectSummary } from '../connect/projects';
@@ -139,33 +140,13 @@ function ProjectCard({ p, isDefault, isLast, canAddRepos }: { p: ProjectSummary;
             </span>
           </Tooltip>
         )}
-        {repos && (
+        {repos && repos.length > 0 && (
           <span className="project-meta-item" data-testid={`code-repos-${p.id}`}>
             <IconCode size={14} className="project-meta-ico" />
-            {repos.length ? (
-              <>
-                <span className="mono-trunc project-meta-strong">{repos.join(', ')}</span>
-                <span className="project-meta-at">
-                  · {repos.length} code repo{repos.length === 1 ? '' : 's'}
-                </span>
-              </>
-            ) : (
-              <span className="project-meta-at">
-                No code repositories
-                {canAddRepos && (
-                  <button
-                    type="button"
-                    className="project-meta-link"
-                    onClick={(e) => {
-                      stop(e);
-                      goTo('/settings#settings-code-repos');
-                    }}
-                  >
-                    Add
-                  </button>
-                )}
-              </span>
-            )}
+            <span className="mono-trunc project-meta-strong">{repos.join(', ')}</span>
+            <span className="project-meta-at">
+              · {repos.length} code repo{repos.length === 1 ? '' : 's'}
+            </span>
           </span>
         )}
       </div>
@@ -235,15 +216,20 @@ export function ProjectsPage() {
   const scheme = useComputedColorScheme('light');
   const last = lastProject();
   const [newOpened, newProject] = useDisclosure(false);
+  const [resume, setResume] = useState<string | null | undefined>(undefined);
   const auth = useAuth();
   // Only admins create projects (auth.github.allowedUsers).
   const canCreate = auth?.isAdmin !== false;
   useEffect(() => {
     document.title = `Projects · ${APP_NAME}`;
-    // Back from a GitHub scope upgrade (`/?new=1`): reopen the New-project flow.
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('new') === '1') {
-      if (canCreate) newProject.open();
+    // Back from GitHub (scope upgrade `/?new=1&resume=<nonce>`, App install `/?github=installed`): reopen the
+    // New-project flow with the form the user had filled in.
+    const back = isResumeSearch(window.location.search);
+    if (back.resume) {
+      if (canCreate) {
+        setResume(back.nonce);
+        newProject.open();
+      }
       history.replaceState(null, '', '/');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -307,7 +293,15 @@ export function ProjectsPage() {
           />
         )}
       </main>
-      <NewProjectModal opened={newOpened} onClose={newProject.close} />
+      <NewProjectModal
+        opened={newOpened}
+        resume={resume}
+        onClose={() => {
+          clearDraft();
+          setResume(undefined);
+          newProject.close();
+        }}
+      />
     </div>
   );
 }
