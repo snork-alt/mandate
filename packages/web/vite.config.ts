@@ -29,6 +29,13 @@ export default defineConfig({
       // GitHub sign-in: /auth/status, /auth/github/login, /auth/github/callback, /auth/logout.
       '/auth': apiTarget,
       '/health': apiTarget,
+      // The setup wizard saves the address it was opened on (this port, in dev) as the public URL, so everything the
+      // server hands out points here: installer and CLI downloads, MCP OAuth (discovery, authorize, token), events.
+      '^/(p/[^/]+/)?(un)?install\\.(sh|ps1)': apiTarget,
+      '/getmandate.tgz': apiTarget,
+      '/.well-known': apiTarget,
+      '/oauth': apiTarget,
+      '^/p/[^/]+/events': apiTarget,
     },
   },
 });
