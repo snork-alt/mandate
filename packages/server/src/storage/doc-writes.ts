@@ -272,7 +272,7 @@ export class DocWriteService {
 
   /**
    * A section that is implemented, or that other sections depend on (incoming depends_on / extends / follows /
-   * deviates_from / affects), is not edited without saying what changed in 1-2 plain sentences (shown on the Outdated /
+   * deviates_from), is not edited without saying what changed in 1-2 plain sentences (shown on the Outdated /
    * Upstream changed badges of the sections that depend on it).
    */
   private async requireSummary(kind: DocKind, doc: Doc, section: Section, summary?: string): Promise<void> {

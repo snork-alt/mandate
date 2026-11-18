@@ -956,7 +956,7 @@ const acceptTools: AnyToolDef[] = [
     title: 'Acknowledge an upstream change (no impact)',
     kind: 'write',
     uiAllowed: true,
-    description: `"Upstream changed" on a section: the item it depends on (depends_on / extends / follows / deviates_from / affects) was edited since this section was implemented or last acknowledged, and the change has NO impact on this section: this sets seenAt = the current commit on its link(s) (to: one link, else every upstream link of the section). If it does have impact, cover it with a work order task instead. Agents and the web UI ("Accept") may call it.
+    description: `"Upstream changed" on a section: the item it depends on (depends_on / extends / follows / deviates_from; not affects: a component is downstream of its spec) was edited since this section was implemented or last acknowledged, and the change has NO impact on this section: this sets seenAt = the current commit on its link(s) (to: one link, else every upstream link of the section). If it does have impact, cover it with a work order task instead. Agents and the web UI ("Accept") may call it.
 Example: {"ref":"mandate://specs/login/sections/session","to":"mandate://specs/auth/sections/tokens"}`,
     input: z.object({ ref: z.string().trim().min(1).max(600), to: z.string().trim().min(1).max(600).optional(), reason: z.string().trim().max(500).optional() }).strict(),
     run: async (a, ctx) => {

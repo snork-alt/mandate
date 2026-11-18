@@ -35,11 +35,20 @@ export function ApprovalRef({ id }: { id?: string }) {
   );
 }
 
+/** "Doc" for a whole document, "Standard · rule X" for a standard section, "Doc › Section" for spec / component sections. */
+export function linkLabel(link: SectionLink, resolved?: ResolvedLink): string {
+  if (!resolved) return refLabel(link.to);
+  const doc = resolved.docTitle ?? resolved.docId;
+  if (!resolved.sectionId) return doc;
+  const sec = resolved.sectionTitle ?? resolved.sectionId;
+  return resolved.kind === 'standards' ? `${doc} · ${sec}` : `${doc} › ${sec}`;
+}
+
 /** A section link chip: relation icon, target doc › section, target state; hover shows the target summary. */
-export function LinkChip({ link, resolved }: { link: SectionLink; resolved?: ResolvedLink }) {
+export function LinkChip({ link, resolved, grouped }: { link: SectionLink; resolved?: ResolvedLink; grouped?: boolean }) {
   const meta = REL_META[link.rel] ?? REL_META.relates_to!;
   const Icon = meta.icon;
-  const label = resolved ? (resolved.sectionId ? `${resolved.docTitle ?? resolved.docId} › ${resolved.sectionTitle ?? resolved.sectionId}` : `${resolved.docTitle ?? resolved.docId} (whole standard)`) : refLabel(link.to);
+  const label = linkLabel(link, resolved);
   const deviation = link.rel === 'deviates_from';
   const tip = (
     <div style={{ maxWidth: 300 }}>
@@ -65,7 +74,7 @@ export function LinkChip({ link, resolved }: { link: SectionLink; resolved?: Res
     <ChipCopy target={uriTarget(link.to)}>
       <Tooltip label={tip} multiline>
         <Link to={sectionHref(link.to)} className="chip chip-link" data-rel={link.rel} data-tone={meta.tone} data-missing={resolved && !resolved.exists ? true : undefined}>
-          <Icon size={12} />
+          {!grouped && <Icon size={12} />}
           {deviation && <span className="chip-link-kind">{resolved?.waiver?.effective ? 'Waived' : 'Deviation'}</span>}
           <span className="chip-path">{label}</span>
           {resolved?.kind === 'specs' &&

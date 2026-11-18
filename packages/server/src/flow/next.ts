@@ -371,7 +371,7 @@ function uncoveredOutdated(f: Feedback, snap: FlowSnapshot, mine: WorkOrder[]): 
 }
 
 /**
- * A section this request changed has dependent sections (depends_on / extends / follows / deviates_from / affects) that now
+ * A section this request changed has dependent sections (depends_on / extends / follows / deviates_from; not affects: a component is downstream of its spec) that now
  * show "Upstream changed": review each one. No impact -> section_link_ack; impact -> a task of the request's work order.
  */
 function dependentReview(f: Feedback, snap: FlowSnapshot, mine: WorkOrder[]): FlowStep | null {

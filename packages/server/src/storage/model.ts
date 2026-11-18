@@ -56,8 +56,28 @@ export function standardInForce(std: Pick<StoredStandard, 'status' | 'effectiveF
 }
 export const sectionUri = (kind: Kind, id: string, sid: string) => buildRef({ kind, id, sectionId: sid });
 export const docUri = (kind: Kind, id: string) => buildRef({ kind, id });
-/** Relations whose target changing matters to the source ("upstream changed"). */
-export const UPSTREAM_RELS = new Set(['depends_on', 'extends', 'follows', 'deviates_from', 'affects']);
+/**
+ * Relations whose target changing matters to the source ("upstream changed"): the source builds on / is bound by the target.
+ * `affects` is NOT upstream: a spec section drives the component it affects (the component is downstream, so editing it
+ * while delivering the spec never makes the spec outdated). `deviates_from` stays: a waiver is judged against the standard
+ * as it was, so a changed standard needs a new look. `extends` stays: the extender inherits the extended section.
+ */
+export const UPSTREAM_RELS = new Set(['depends_on', 'extends', 'follows', 'deviates_from']);
+
+/**
+ * Is this commit part of a work order's own delivery: trailers Work-Order / Caused-By / Request / Feedback naming the work
+ * order or one of the requests (`reason`) it acts on?
+ */
+export function isDeliveryCommit(message: string, wo: { id: string; reason?: string[] }): boolean {
+  const lines = message.split('\n');
+  const val = (k: string) => lines.filter((l) => l.toLowerCase().startsWith(`${k.toLowerCase()}:`)).flatMap((l) => l.slice(k.length + 1).split(/[\s,]+/).filter(Boolean));
+  const reason = wo.reason ?? [];
+  return (
+    val('Work-Order').includes(wo.id) ||
+    val('Caused-By').some((x) => x.replace(/^mandate:\/\//, '').replace(/^work-orders\//, '').split('#')[0] === wo.id || reason.includes(x.replace(/^mandate:\/\//, '').replace(/^(requests|feedback)\//, '').split('#')[0]!)) ||
+    [...val('Request'), ...val('Feedback')].some((x) => reason.includes(x))
+  );
+}
 /** Relations that may not point at a superseded section when added. */
 export const NO_SUPERSEDED_RELS = new Set(['follows', 'extends', 'depends_on']);
 

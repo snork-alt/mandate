@@ -6,7 +6,7 @@
 import path from 'node:path';
 import { appendFile, readFile, rm, writeFile } from 'node:fs/promises';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createSpecSchema, createStandardSchema, standardUsage, type Section } from '@mandate/shared';
+import { createComponentSchema, createSpecSchema, createStandardSchema, standardUsage, type Section } from '@mandate/shared';
 import { createStorage, deriveSpecs, derivedStatus, setSpecStatus, type CommitMeta } from '../src/storage/index.js';
 import { cleanupTempDirs, newStore, tempDir } from './helpers.js';
 
@@ -387,6 +387,49 @@ describe('I8: upstream changed only for obliging relations, acknowledgeable via 
     await patch('a', (x) => ({ ...x, links: x.links.map((l) => (l.rel === 'depends_on' ? { ...l, seenAt: 'f'.repeat(40) } : l)) }));
     info = (await storage.linkService.forDoc('specs', await storage.specs.get('a'))).sections.s!;
     expect(info.pinLost).toBe(true);
+  });
+});
+
+describe('upstream changed: affects is downstream; the work order\'s own upstream edits do not flag it', () => {
+  const C = (id: string) => `mandate://components/${id}`;
+  it('a component edit does not flag the specs that affect it; depends_on / follows still do', async () => {
+    const { git, storage, spec, std, patch } = await setup();
+    await storage.components.create(createComponentSchema.parse({ id: 'svc', title: 'svc', kind: 'service', sections: [sec('interfaces')] }));
+    await std('st', [rule('r1')]);
+    await spec('b', [sec('t')]);
+    await spec('a', [sec('s', { links: [link(C('svc'), 'affects'), link(T('st', 'r1'), 'follows'), link(S('b', 't'), 'depends_on')] })]);
+    await patch('a', (x) => ({ ...x, implementedCommit: undefined }));
+    const head = (await git.log(1))[0]!.id;
+    await patch('a', (x) => ({ ...x, implementedCommit: head }));
+    const c = await storage.components.get('svc');
+    await storage.components.update('svc', { sections: c.sections.map((x) => ({ ...x, body: 'new interface' })) } as never);
+    const flags = async () => Object.fromEntries((await storage.linkService.forDoc('specs', await storage.specs.get('a'))).sections.s!.outgoing.map((o) => [o.rel, o.upstreamChanged]));
+    expect(await flags()).toEqual({ affects: false, follows: false, depends_on: false });
+    const st = await storage.standards.get('st');
+    await storage.standards.update('st', { sections: st.sections.map((x) => ({ ...x, body: 'stricter' })) } as never);
+    await patch('b', (x) => ({ ...x, body: 'b changed' }));
+    expect(await flags()).toEqual({ affects: false, follows: true, depends_on: true });
+  });
+
+  it('edits made by the work order (or its request) do not flag its sections; edits by others do', async () => {
+    const { storage, spec, std, feedback } = await setup();
+    await std('st', [sec('r1'), sec('r2')]);
+    await spec('a', [sec('x', { links: [link(T('st', 'r1'), 'follows')] }), sec('y', { links: [link(T('st', 'r2'), 'follows')] })], { status: 'active' });
+    const fb = await feedback(S('a', 'x'), 'ana');
+    const w = storage.workOrderService;
+    const o = await w.create({ spec: 'a', kind: 'implement', status: 'pending', sections: [{ id: 'x' }, { id: 'y' }], reason: [fb] } as never);
+    const edit = async (rid: string, meta: CommitMeta) => {
+      const st = await storage.standards.get('st');
+      await storage.standards.update('st', { sections: st.sections.map((q) => (q.id === rid ? { ...q, body: `${q.body} edited` } : q)) } as never, meta);
+    };
+    await edit('r1', { trailers: { 'Caused-By': `mandate://requests/${fb}` } });
+    await edit('r2', as('someone'));
+    await w.sectionDone({ id: o.id, sections: ['x', 'y'] });
+    await w.complete(o.id, 'agent', { outcome: 'done' });
+    const info = (await storage.linkService.forDoc('specs', await storage.specs.get('a'))).sections;
+    expect(info.x!.upstreamChanged).toBe(false);
+    expect((await storage.specs.get('a')).sections.find((q) => q.id === 'x')!.links[0]!.seenAt).toBeTruthy();
+    expect(info.y!.upstreamChanged).toBe(true);
   });
 });
 

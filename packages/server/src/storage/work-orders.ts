@@ -1,3 +1,4 @@
+import { parseLinkTarget } from '@mandate/doc';
 import {
   buildRef,
   parseNodeUri,
@@ -63,7 +64,7 @@ import { effectiveHeartbeat, MemoryHeartbeats, type HeartbeatStore } from './hea
 import type { HistoryService } from './history.js';
 import { newId } from './ids.js';
 import type { MarkdownDirRepository } from './MarkdownDirRepository.js';
-import { openChangingOrders } from './model.js';
+import { isDeliveryCommit, openChangingOrders, UPSTREAM_RELS } from './model.js';
 import { applyCodeToSection, checkPlanTests, type InheritedCriterion, checkStepLinks, checkTaskCoverage, coveredCriteria, renderPlan } from './work-order-plan.js';
 import type { Mutex } from './Mutex.js';
 import {
@@ -262,6 +263,9 @@ export class WorkOrderService {
     return effectiveHeartbeat(this.heartbeats, id, claim);
   }
 
+  /** Wired by createStorage: were all edits of an upstream target since a pin made by this work order's own delivery? */
+  upstreamOwn?: (kind: 'specs' | 'standards' | 'components', id: string, sectionId: string | undefined, since: string, wo: { id: string; reason?: string[] }) => Promise<boolean>;
+
   /**
    * The spec version a work order's implementation of a section matches (`implementedCommit`): the pinned specCommit, or the
    * spec HEAD when every change to the section since then was part of the delivery (a commit of this work order or of the
@@ -281,15 +285,7 @@ export class WorkOrderService {
         if (c.id === base) break;
         chain.push(c);
       }
-      const mine = (m: string) => {
-        const lines = m.split('\n');
-        const val = (k: string) => lines.filter((l) => l.toLowerCase().startsWith(`${k.toLowerCase()}:`)).flatMap((l) => l.slice(k.length + 1).split(/[\s,]+/).filter(Boolean));
-        return (
-          val('Work-Order').includes(doc.id) ||
-          val('Caused-By').some((x) => x.replace(/^mandate:\/\//, '').replace(/^work-orders\//, '').split('#')[0] === doc.id || (doc.reason ?? []).includes(x.replace(/^mandate:\/\//, '').replace(/^(requests|feedback)\//, '').split('#')[0]!)) ||
-          [...val('Request'), ...val('Feedback')].some((x) => (doc.reason ?? []).includes(x))
-        );
-      };
+      const mine = (m: string) => isDeliveryCommit(m, doc);
       const at = async (c: string) => (await this.specAt(doc.spec, c))?.sections.find((x) => x.id === sectionId);
       let prev = await at(doc.specCommit);
       let changed = false;
@@ -997,16 +993,39 @@ export class WorkOrderService {
     if (!spec) return;
     const ids = doc.sections.filter(isWoSection).filter((s) => s.status !== 'obsolete').map(targetSection);
     const next = new Map<string, string>();
+    const seen = new Map<string, Map<number, string>>();
+    const head = await this.git.resolveCommit('HEAD').catch(() => null);
     for (const s of spec.sections) {
       if (!ids.includes(s.id) || s.archived || !s.implementedCommit || s.implementedBy !== id) continue;
       const b = await this.deliveryBase(doc, s.id);
       if (b !== s.implementedCommit) next.set(s.id, b);
+      // Upstream edits (a standard created and followed, a depends_on target) made by this work order or its requests are
+      // part of the delivery: acknowledge them (seenAt = HEAD) so they do not flag the section.
+      if (head && this.upstreamOwn) {
+        for (const [i, l] of s.links.entries()) {
+          if (!UPSTREAM_RELS.has(l.rel)) continue;
+          const t = parseLinkTarget(l.to);
+          const pin = l.seenAt ?? b;
+          if (t && (t.kind === 'specs' || t.kind === 'standards' || t.kind === 'components') && (await this.upstreamOwn(t.kind, t.id, t.sectionId, pin, doc))) {
+            if (!seen.has(s.id)) seen.set(s.id, new Map());
+            seen.get(s.id)!.set(i, head);
+          }
+        }
+      }
     }
-    if (!next.size) return;
+    if (!next.size && !seen.size) return;
+    const touched = [...new Set([...next.keys(), ...seen.keys()])];
     await this.specs.modify(
       doc.spec,
-      (sp) => ({ ...sp, sections: sp.sections.map((s) => (next.has(s.id) ? ({ ...s, implementedCommit: next.get(s.id)! } as typeof s) : s)) }),
-      { ...meta, message: `spec(${doc.spec}): delivery of ${[...next.keys()].join(', ')} recorded @${[...new Set(next.values())].map((x) => x.slice(0, 7)).join(', ')}`, trailers: { ...meta.trailers, 'Work-Order': id } },
+      (sp) => ({
+        ...sp,
+        sections: sp.sections.map((s) => {
+          if (!next.has(s.id) && !seen.has(s.id)) return s;
+          const marks = seen.get(s.id);
+          return { ...s, ...(next.has(s.id) ? { implementedCommit: next.get(s.id)! } : {}), ...(marks ? { links: s.links.map((l, i) => (marks.has(i) ? { ...l, seenAt: marks.get(i)! } : l)) } : {}) } as typeof s;
+        }),
+      }),
+      { ...meta, message: `spec(${doc.spec}): delivery of ${touched.join(', ')} recorded${next.size ? ` @${[...new Set(next.values())].map((x) => x.slice(0, 7)).join(', ')}` : ''}`, trailers: { ...meta.trailers, 'Work-Order': id } },
     );
   }
 

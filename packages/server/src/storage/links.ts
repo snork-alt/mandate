@@ -16,6 +16,7 @@ import {
   sectionUri,
   specCriteria,
   UPSTREAM_RELS,
+  isDeliveryCommit,
   waiverPin,
   type Doc,
   type Kind,
@@ -190,6 +191,16 @@ export class LinkService {
    * gave (`Change-Summary` trailer; null for legacy edits). Whole-document targets: every section that changed.
    */
   async changes(kind: Kind, id: string, sectionId: string | undefined, since: string): Promise<SectionChange[]> {
+    return (await this.chain(kind, id, sectionId, since)).map(({ message: _m, ...c }) => c);
+  }
+
+  /** True when every edit of the target after `since` is a commit of the work order's own delivery (see isDeliveryCommit). */
+  async changedOnlyBy(kind: Kind, id: string, sectionId: string | undefined, since: string, wo: { id: string; reason?: string[] }): Promise<boolean> {
+    const edits = await this.chain(kind, id, sectionId, since).catch(() => null);
+    return !!edits?.length && edits.every((e) => isDeliveryCommit(e.message, wo));
+  }
+
+  private async chain(kind: Kind, id: string, sectionId: string | undefined, since: string): Promise<(SectionChange & { message: string })[]> {
     const path = this.repo(kind).pathOf(id);
     const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
     const hist = (await this.git.fileHistory([dir])).get(path) ?? [];
@@ -199,7 +210,7 @@ export class LinkService {
       if (c.id === base) break;
       chain.push(c);
     }
-    const out: SectionChange[] = [];
+    const out: (SectionChange & { message: string })[] = [];
     const view = async (commit: string) => {
       const d = await this.docAt(kind, id, commit);
       return sectionId ? [d?.sections.find((x) => x.id === sectionId)] : (d?.sections ?? []);
@@ -210,7 +221,7 @@ export class LinkService {
       const differs = sectionId ? !sameBody(prev[0], cur[0]) : cur.length !== prev.length || cur.some((x) => !sameBody(prev.find((y) => y?.id === x?.id), x));
       if (differs) {
         const m = /^Change-Summary:[ \t]*(.+)$/im.exec(c.message);
-        out.push({ commit: c.id, by: c.authorName, at: c.date, summary: m ? m[1]!.trim() : null });
+        out.push({ commit: c.id, by: c.authorName, at: c.date, summary: m ? m[1]!.trim() : null, message: c.message });
       }
       prev = cur;
     }
@@ -246,6 +257,9 @@ export class LinkService {
         const pin = l.seenAt ?? s.implementedCommit;
         if (UPSTREAM_RELS.has(l.rel) && t.doc && (t.section || !t.sectionId) && pin) {
           ({ changed: upstreamChanged, pinLost } = await this.changedSince(t, pin));
+          // Edits made by the work order that implemented this section (or its requests) are part of its delivery.
+          const wo = upstreamChanged && s.implementedBy ? m.workOrders?.find((w) => w.id === s.implementedBy) : undefined;
+          if (wo && (await this.changedOnlyBy(t.kind, t.id, t.sectionId, pin, wo as { id: string; reason?: string[] }))) upstreamChanged = false;
         }
         const archived = !!t.section?.archived || docArchived(t.doc);
         const waiver = l.rel === 'deviates_from' ? [...waivers.values()].find((w) => w.section === s.id && (w.feedback ?? '') === (l.feedback ?? ''))?.state ?? approval({ feedback: l.feedback, by: l.by }, m) : undefined;
@@ -286,7 +300,7 @@ export class LinkService {
           ...(x.link.note ? { note: x.link.note } : {}),
           ...('status' in x.doc ? { docStatus: x.doc.status } : {}),
         }));
-      // depends_on, and affects links to components (an archived component makes both a "Broken dependency").
+      // depends_on, and affects links to components (an archived component makes both a "Broken dependency"); not upstream-changed.
       const deps = s.links.filter((l) => l.rel === 'depends_on' || (l.rel === 'affects' && l.to.startsWith('mandate://components/'))).map((l) => dependencyState(l.to, f));
       sections[s.id] = {
         outgoing,

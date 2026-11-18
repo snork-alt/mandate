@@ -226,6 +226,7 @@ export function createStorage(git: GitStore, opts: StorageOptions = {}): Storage
   linkService = new LinkService(specs, standards, git);
   workOrderService = new WorkOrderService(workOrderDocs, specs, git, history, heartbeats);
   const wos = workOrderService;
+  wos.upstreamOwn = (kind, id, sid, since, wo) => linkService!.changedOnlyBy(kind, id, sid, since, wo);
   const workOrders = { list: () => wos.list(), get: (id: string) => wos.get(id) };
   const commentService = new CommentService(git, lock, beforeCommit, hook(null));
   commentService.wire({

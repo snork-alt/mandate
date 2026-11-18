@@ -1036,8 +1036,40 @@ body {
 .section-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 6px 14px;
   margin-bottom: 14px;
+}
+.meta-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  min-width: 0;
+  max-width: 100%;
+  font-size: var(--mantine-font-size-sm);
+}
+.meta-label {
+  color: var(--app-text-faint);
+}
+.meta-files {
+  font-family: var(--mantine-font-family-monospace);
+  overflow-wrap: anywhere;
+}
+.meta-file,
+.meta-more {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.meta-file:hover {
+  text-decoration: underline;
+}
+.meta-more {
+  margin-left: 6px;
+  color: var(--app-text-faint);
 }
 .section-empty {
   color: var(--app-text-faint);
