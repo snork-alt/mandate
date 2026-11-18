@@ -255,7 +255,7 @@ export class DocWriteService {
         const sid = (withId as { id: string }).id;
         const created = { type: 'markdown', body: '', refs: [], symbols: [], links: [], verifiedBy: [], ...withId } as Section;
         const sections = [...doc.sections];
-        sections.splice(this.index(doc, place, sid), 0, created);
+        sections.splice(this.index(doc, place, sid, created.type), 0, created);
         return { sections, touched: [sid], message: `${label(kind)}(${doc.id}): insert section ${sid}`, result: sid };
       },
       meta,
@@ -461,7 +461,8 @@ export class DocWriteService {
     );
   }
 
-  private index(doc: Doc, place: Placement, self: string): number {
+  /** Without explicit placement a non-criterion section goes before the first criterion (acceptance / rule), a criterion last. */
+  private index(doc: Doc, place: Placement, self: string, type?: string): number {
     const at = (sid: string) => {
       const i = doc.sections.findIndex((s) => s.id === sid);
       if (i < 0) throw new WriteError('not_found', `no section '${sid}' in ${doc.id}`, 404, `sections: ${doc.sections.map((s) => s.id).join(', ')}`);
@@ -471,6 +472,10 @@ export class DocWriteService {
     if (place.before) return at(place.before);
     if (place.position === 'first') return 0;
     void self;
+    if (!place.position && type && type !== 'acceptance' && type !== 'rule') {
+      const first = doc.sections.findIndex((s) => !s.archived && (s.type === 'acceptance' || s.type === 'rule'));
+      if (first >= 0) return first;
+    }
     return doc.sections.length;
   }
 

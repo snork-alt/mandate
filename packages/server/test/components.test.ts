@@ -114,7 +114,7 @@ describe('component reference gaps (integrity warnings)', () => {
 
   it('flags unreferenced, no-standards and no-code components; external, indirect code refs, follows links and inactive components pass', async () => {
     const { storage, comp, spec } = await setup();
-    await storage.standards.create(createStandardSchema.parse({ id: 'sec', title: 'Security', sections: [{ id: 'r', title: 'R', type: 'rule', level: 'must', rationale: 'x', body: 'y' }] }));
+    await storage.standards.create(createStandardSchema.parse({ id: 'sec', title: 'Security', appliesTo: ['component:bare'], sections: [{ id: 'r', title: 'R', type: 'rule', level: 'must', rationale: 'x', body: 'y' }] }));
     const follows = { links: [{ to: 'mandate://standards/sec', rel: 'follows' }] };
     await comp('bare', [sec('a')]); // all three gaps
     await comp('linked', [sec('a', follows)], { owns: [{ repo: 'app', paths: ['src/linked/**'] }] }); // affects link: no gaps
@@ -139,7 +139,28 @@ describe('component reference gaps (integrity warnings)', () => {
     await storage.standards.create(createStandardSchema.parse({ id: 'svc', title: 'Services', appliesTo: ['componentKind:service'], sections: [{ id: 'r', title: 'R', type: 'rule', level: 'must', rationale: 'x', body: 'y' }] }));
     await comp('api', [sec('a')]);
     await spec('s', [sec('x', { links: [{ to: C('api'), rel: 'affects' }] })], { status: 'ready' });
-    expect(componentGaps(await storage.model()).get('api')!.map((g) => g.rule)).toEqual(['component_no_code']);
+    // The standard applies (componentKind) but the component does not follow it yet: a gap naming it.
+    expect(componentGaps(await storage.model()).get('api')!.map((g) => g.rule)).toEqual(['component_no_standards', 'component_no_code']);
+    expect(componentGaps(await storage.model()).get('api')![0]!.hint).toContain('mandate://standards/svc');
+    await comp('web', [sec('a', { links: [{ to: 'mandate://standards/svc', rel: 'follows' }] })], { owns: [{ repo: 'app', paths: ['src/web/**'] }] });
+    await spec('s2', [sec('x', { links: [{ to: C('web'), rel: 'affects' }] })], { status: 'ready' });
+    expect(componentGaps(await storage.model()).get('web')).toBeUndefined();
+  });
+
+  it('no standards, or none applicable, is no gap; a standard followed by a spec section that affects the component applies', async () => {
+    const { storage, comp, spec, patchComp } = await setup();
+    await comp('hv', [sec('resp')], { owns: [{ repo: 'app', paths: ['src/hv/**'] }] });
+    await spec('s', [sec('x', { links: [{ to: C('hv'), rel: 'affects' }] })], { status: 'ready' });
+    expect(componentGaps(await storage.model()).get('hv')).toBeUndefined(); // no standards at all
+    await storage.standards.create(createStandardSchema.parse({ id: 'other', title: 'Other', appliesTo: ['component:nobody'], sections: [{ id: 'r', title: 'R', type: 'rule', level: 'must', rationale: 'x', body: 'y' }] }));
+    expect(componentGaps(await storage.model()).get('hv')).toBeUndefined(); // none applicable
+    await storage.standards.create(createStandardSchema.parse({ id: 'api-auth', title: 'Auth', sections: [{ id: 'r', title: 'R', type: 'rule', level: 'must', rationale: 'x', body: 'y' }] }));
+    await spec('s2', [sec('y', { links: [{ to: C('hv'), rel: 'affects' }, { to: 'mandate://standards/api-auth', rel: 'follows' }] })], { status: 'ready' });
+    const gap = componentGaps(await storage.model()).get('hv')!;
+    expect(gap.map((g) => g.rule)).toEqual(['component_no_standards']);
+    expect(gap[0]!.hint).toContain('mandate://standards/api-auth');
+    await patchComp('hv', () => ({ links: [{ to: 'mandate://standards/api-auth', rel: 'follows' }] }));
+    expect(componentGaps(await storage.model()).get('hv')).toBeUndefined();
   });
 });
 

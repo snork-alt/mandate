@@ -11,6 +11,7 @@ import { AcceptanceCard, CriterionStateIcon, VerificationCount } from './Accepta
 import { PropGroup } from '../PropertyList';
 import { DocOutline } from './DocOutline';
 import { HistoryTimeline } from './HistoryTimeline';
+import { displayOrder } from './order';
 import { SectionBlock } from './SectionBlock';
 import { sectionAnchor } from './anchors';
 import { SectionTypeIcon } from './SectionTypeIcon';
@@ -149,7 +150,7 @@ const NO_TRACKING: TrackedState = {
 export function DocPage({
   doc,
   header,
-  sections,
+  sections: storedSections,
   history: h,
   tracked = NO_TRACKING,
   panels,
@@ -172,6 +173,7 @@ export function DocPage({
   attribution,
   lineageRef,
 }: DocPageProps) {
+  const sections = useMemo(() => displayOrder(storedSections), [storedSections]);
   const mainRef = useRef<HTMLElement>(null);
   // Deep link to a section that no longer exists at HEAD (only meaningful when viewing an old version).
   const hashSection = typeof window !== 'undefined' ? decodeURIComponent(window.location.hash.replace(/^#(section-)?/, '')) : '';

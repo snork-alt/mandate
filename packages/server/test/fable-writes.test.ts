@@ -459,6 +459,20 @@ describe('fable data fixes: DF-*', () => {
     expect((await errOf(docs.sectionArchive('specs', S('s', 'crit'), as('x')))).code).toBe('criteria_shrink');
   });
 
+  it('section_insert default placement: a non-criterion before the first criterion, a criterion last; explicit placement wins', async () => {
+    const { storage, docs, spec } = await setup();
+    await spec('ord', [sec('overview'), sec('create'), crit('ac1'), crit('ac2')]);
+    const ids = async () => (await storage.specs.get('ord')).sections.map((x) => x.id);
+    await docs.sectionInsert('specs', 'ord', { title: 'Authentication', body: 'a' } as never, {}, as('x'));
+    expect(await ids()).toEqual(['overview', 'create', 'authentication', 'ac1', 'ac2']);
+    await docs.sectionInsert('specs', 'ord', { title: 'Late', type: 'acceptance', method: 'review', body: 'l' } as never, {}, as('x'));
+    expect((await ids()).at(-1)).toBe('late');
+    await docs.sectionInsert('specs', 'ord', { title: 'Tail', body: 't' } as never, { position: 'last' }, as('x'));
+    expect((await ids()).at(-1)).toBe('tail');
+    await docs.sectionInsert('specs', 'ord', { title: 'Mid', body: 'm' } as never, { after: 'ac1' }, as('x'));
+    expect((await ids()).indexOf('mid')).toBe((await ids()).indexOf('ac1') + 1);
+  });
+
   it('DF-7: feedback relatedTo accepts any resolvable element reference', async () => {
     const { storage, spec } = await setup();
     await spec('s', [sec('a'), crit('ac')]);

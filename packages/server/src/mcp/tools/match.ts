@@ -260,6 +260,11 @@ Example: {"request":"let users stay signed in for 30 days","files":["app:src/aut
           byFile.set(id, e);
         }
       }
+      const owners = new Set<string>();
+      for (const f of files) {
+        const o = f.repo ? ownerOf(f.repo, f.path, model.components ?? []) : (model.components ?? []).flatMap((c) => c.owns.map((w) => ownerOf(w.repo, f.path, [c]))).find(Boolean);
+        if (o && o.component.status !== 'archived') owners.add(o.component.id);
+      }
       const candidates = stds
         .map((st) => {
           const rules = st.sections.filter((x) => x.type === 'rule' && !x.archived);
@@ -276,7 +281,7 @@ Example: {"request":"let users stay signed in for 30 days","files":["app:src/aut
             ...(r ? [`search rank ${r}${res.semantic.used ? '' : ' (text only: semantic search unavailable)'}`] : []),
           ];
           const shown = hit ? [...hit.rules.values()] : rules.slice(0, 5).map((x) => ({ uri: `mandate://standards/${st.id}/sections/${x.id}`, title: x.title, level: levelOf(x) }));
-          return { standard: { ref: `mandate://standards/${st.id}`, title: st.title, ...(st.tldr ? { tldr: st.tldr } : {}) }, fit, reasons, rules: shown, files: hit ? [...hit.files] : [] };
+          return { standard: { ref: `mandate://standards/${st.id}`, title: st.title, ...(st.tldr ? { tldr: st.tldr } : {}) }, fit, reasons, rules: shown, files: hit ? [...hit.files] : [], ...(hit && owners.size ? { components: [...owners].map((c) => `mandate://components/${c}`) } : {}) };
         })
         .filter((x) => x.fit > 0.1 || x.files.length)
         .sort((x, y) => y.fit - x.fit)
@@ -294,7 +299,7 @@ Example: {"request":"let users stay signed in for 30 days","files":["app:src/aut
         candidates,
         suggestion: {
           decision,
-          note: decision === 'follow' ? 'Link the changed spec sections to these standards (section_link_add rel follows) so they inherit the criteria; read the rules before coding (rules_for_code).' : 'No standard applies: nothing to follow. A convention this request introduces: propose it through a standard_confirmation question (needs the user\'s confirmation; it never blocks the work).',
+          note: decision === 'follow' ? 'Link the changed spec sections to these standards (section_link_add rel follows) so they inherit the criteria, and the components owning the planned files (candidates[].components) too (component_section_link_add rel follows); read the rules before coding (rules_for_code).' : 'No standard applies: nothing to follow. A convention this request introduces: propose it through a standard_confirmation question (needs the user\'s confirmation; it never blocks the work).',
         },
         semantic: res.semantic,
       };

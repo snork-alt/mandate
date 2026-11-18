@@ -139,7 +139,7 @@ describe('integrity is always checked', () => {
     const c = await ok('component_create', { title: 'Billing', kind: 'service' });
     expect(c.integrity).toBeDefined();
     const rules = (c.integrity as IntegrityDelta).introduced.map((i) => i.rule).sort();
-    expect(rules).toEqual(['component_no_code', 'component_no_standards', 'component_unreferenced']);
+    expect(rules).toEqual(['component_no_code', 'component_unreferenced']);
     expect(c.warnings.some((w: string) => w.startsWith('integrity: component_no_code') && w.includes('fix:'))).toBe(true);
     const s = await ok('spec_create', SPEC('Bill', [{ title: 'Charge', body: 'c' }]));
     expect(s.integrity).toEqual({ introduced: [], resolved: [] });
@@ -255,7 +255,7 @@ describe('integrity is always checked', () => {
     await storage.components.create(createComponentSchema.parse({ id: 'q', title: 'Q', kind: 'service', sections: [] }));
     const r = await storage.integrity.current();
     expect(storage.integrity.fullRuns).toBe(runs);
-    expect(r.issues.filter((i) => i.uri === 'mandate://components/q')).toHaveLength(3);
+    expect(r.issues.filter((i) => i.uri === 'mandate://components/q')).toHaveLength(2);
     expect(seen.at(-1)).toBe(r.issues.length);
   });
 

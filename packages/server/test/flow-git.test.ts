@@ -146,4 +146,14 @@ describe('flow_next: commit, branch, push and component steps', () => {
     expect(flowFor(req, snap(w, git({ components: 1, componentsRequired: false, unowned: { 'wo-1': ['app:src/new.ts'] } }), { verifications: recs })).next?.why).not.toContain('components_missing');
     expect(flowFor(req, snap(w, git({ components: 2, unowned: {} }), { verifications: recs })).state).toBe('complete');
   });
+
+  it('owning components that do not follow an applicable standard: a follows step before completion', () => {
+    const w = wo({ sections: [{ id: 'a', status: 'done' }], planSteps: [] });
+    const recs = [{ criterion: 'mandate://specs/s/sections/ac', appliedTo: 'mandate://specs/s', at: '2026-01-01T11:59:50Z', result: 'pass', evidence: { test: 't' } }] as never;
+    const r = flowFor(req, snap(w, git({ components: 1, unfollowed: { 'wo-1': [{ component: 'hv', standards: ['api-auth'] }] } }), { verifications: recs }));
+    expect(r.state).toBe('components');
+    expect(r.next?.tool).toBe('component_section_link_add');
+    expect(r.next?.args).toMatchObject({ rel: 'follows', to: 'mandate://standards/api-auth' });
+    expect(r.next?.why).toContain('hv -> api-auth');
+  });
 });

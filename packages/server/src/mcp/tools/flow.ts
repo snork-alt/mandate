@@ -12,6 +12,8 @@ import { flowAll, flowFor, type FlowDecision, type FlowGit, type FlowItem, type 
 import { clientIdentity, effective } from '../../projects/settings.js';
 import type { CommitMeta } from '../../storage/index.js';
 import { newsOfProject, routeState, seedKnownClients, shortTarget, unansweredFor } from '../../comments/route.js';
+import { ownerOf, type StoredComponent } from '@mandate/shared';
+import { unfollowedStandards } from '../../storage/components.js';
 import { componentsRequired, liveComponents, unownedOf } from '../component-gate.js';
 import { defineTool, type ToolContext } from '../define.js';
 import { ToolError } from '../errors.js';
@@ -87,12 +89,24 @@ async function gitOf(ctx: ToolContext, eff: { commit: 'auto' | 'ask'; branch: 'c
   const dirty = tree?.dirty ?? (tree?.noHead ? undefined : cc?.dirty);
   const live = await liveComponents(ctx);
   const unowned: Record<string, string[]> = {};
+  const unfollowed: Record<string, { component: string; standards: string[] }[]> = {};
+  const model = live.length ? await ctx.storage.model().catch(() => null) : null;
   for (const w of workOrders) {
     if (!['pending', 'in_progress'].includes(w.status)) continue;
     const miss = unownedOf(live, w.touched ?? []);
     if (miss.length) unowned[w.id] = miss;
+    if (model) {
+      const owners = new Map<string, StoredComponent>();
+      for (const t of w.touched ?? []) {
+        if (t.change === 'deleted') continue;
+        const o = ownerOf(t.repo, t.path, live);
+        if (o) owners.set(o.component.id, o.component);
+      }
+      const list = [...owners.values()].map((c) => ({ component: c.id, standards: unfollowedStandards(c, model) })).filter((x) => x.standards.length);
+      if (list.length) unfollowed[w.id] = list;
+    }
   }
-  return { commit: eff.commit, branch: eff.branch, push: eff.push, ...(dirty || tree?.noHead ? { tree: { ...(dirty ? { dirty: true } : {}), ...(tree?.noHead ? { noHead: true } : {}) } } : {}), components: live.length, componentsRequired: componentsRequired(ctx), unowned };
+  return { ...(Object.keys(unfollowed).length ? { unfollowed } : {}), commit: eff.commit, branch: eff.branch, push: eff.push, ...(dirty || tree?.noHead ? { tree: { ...(dirty ? { dirty: true } : {}), ...(tree?.noHead ? { noHead: true } : {}) } } : {}), components: live.length, componentsRequired: componentsRequired(ctx), unowned };
 }
 
 const compact = (i: FlowItem) => ({ request: i.request.ref, summary: i.request.summary, state: i.state, ...(i.queued ? { queued: true } : {}), ...(i.request.assignee ? { assignee: i.request.assignee } : {}), ...(i.request.priority ? { priority: i.request.priority } : {}), ...(i.request.planOnly ? { planOnly: true } : {}), next: i.next, ...(i.waitingOn ? { waitingOn: i.waitingOn } : {}), ...(i.waitingOnWorkOrders ? { waitingOnWorkOrders: i.waitingOnWorkOrders } : {}) });

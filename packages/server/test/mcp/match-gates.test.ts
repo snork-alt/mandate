@@ -95,6 +95,7 @@ describe('standard_match', () => {
     expect(hit).toBeTruthy();
     expect(hit.files).toEqual(['app:src/zq/limit.ts']);
     expect(hit.rules[0]).toMatchObject({ level: 'must' });
+    expect(hit.components).toEqual([expect.stringMatching(/^mandate:\/\/components\/zq-/)]); // the owner of the planned file is to follow it too
     expect(r.suggestion.decision).toBe('follow');
     expect((await read('request_get', { ref: rid })).request.standardMatch).toMatchObject({ decision: 'follow', refs: expect.arrayContaining([std]) });
   });

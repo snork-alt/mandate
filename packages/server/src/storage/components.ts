@@ -112,7 +112,8 @@ export function componentGaps(m: Model): Map<string, ComponentGap[]> {
     const gaps: ComponentGap[] = [];
     const ref = `mandate://components/${c.id}`;
     if (!referenced.has(c.id)) gaps.push({ rule: 'component_unreferenced', message: `${c.id}: no spec section affects it`, hint: `Add an affects link to ${ref} on the spec sections that change it (or a code ref to a file it owns).` });
-    if (c.kind !== 'external' && !followedStandards(c) && !componentRules(c, m).length) gaps.push({ rule: 'component_no_standards', message: `${c.id}: follows no standard`, hint: `Add follows links from ${ref} sections to the standards that apply (mandate://standards/<id>).` });
+    const unfollowed = c.kind === 'external' ? [] : unfollowedStandards(c, m);
+    if (unfollowed.length) gaps.push({ rule: 'component_no_standards', message: `${c.id}: follows no standard${unfollowed.length ? ` (${unfollowed.join(', ')} apply${unfollowed.length === 1 ? 'es' : ''})` : ''}`, hint: `Add follows links from ${ref} sections (e.g. Responsibility / Interfaces) to the standards that apply: ${unfollowed.map((u) => `mandate://standards/${u}`).join(', ')}.` });
     if (c.kind !== 'external' && !c.owns.some((o) => o.paths.length)) gaps.push({ rule: 'component_no_code', message: `${c.id}: owns no code`, hint: `Declare owns globs (repo + paths) on ${ref}, or set kind: external for a third-party service.` });
     if (gaps.length) out.set(c.id, gaps);
   }
@@ -179,6 +180,55 @@ export async function deriveComponents(
   }
   return out;
 }
+
+/** Ids of the standards a component's sections follow (whole standard or one of its sections). */
+export function followedStandardIds(c: StoredComponent): Set<string> {
+  const ids = new Set<string>();
+  for (const s of c.sections) {
+    if (s.archived) continue;
+    for (const l of s.links) {
+      const t = parseLinkTarget(l.to);
+      if (l.rel === 'follows' && t?.kind === 'standards') ids.add(t.id);
+    }
+  }
+  return ids;
+}
+
+/**
+ * Standards in force that apply to a component: `appliesTo` naming it (component / componentKind) or matching the code it owns
+ * (path / lang on its owns globs and known owned files), a rule scope covering owned code, or an (active) spec section
+ * that affects it and follows the standard.
+ */
+export function applicableStandards(c: StoredComponent, m: Model): Set<string> {
+  const out = new Set<string>();
+  const owned = knownRefs(m).filter((r) => ownerOf(r.repo, r.path, m.components ?? [])?.component.id === c.id);
+  const paths = [...c.owns.flatMap((o) => o.paths), ...owned.map((r) => r.path)];
+  const spec = { repo: undefined, tags: [] as string[], category: undefined, sections: [{ refs: paths.map((path) => ({ path })) }] } as unknown as Parameters<typeof matchingAppliesTo>[1];
+  for (const std of m.standards) {
+    if (!standardInForce(std)) continue;
+    if (matchingAppliesTo(std.appliesTo.filter((a) => /^(component|componentKind|path|lang):/.test(a)), spec, [{ id: c.id, kind: c.kind }]).length) out.add(std.id);
+    if (std.sections.some((s) => s.type === 'rule' && !s.archived && s.scope && (s.scope.paths?.length || s.scope.languages?.length) && owned.some((r) => inScope(s.scope, r.path)))) out.add(std.id);
+  }
+  for (const sp of m.specs) {
+    if (sp.status === 'archived') continue;
+    const secs = specComponents(sp, m).find((x) => x.id === c.id)?.sections ?? [];
+    for (const s of sp.sections) {
+      if (s.archived || !secs.includes(s.id)) continue;
+      for (const l of s.links) {
+        const t = parseLinkTarget(l.to);
+        const std = l.rel === 'follows' && t?.kind === 'standards' ? m.standards.find((x) => x.id === t.id) : undefined;
+        if (std && standardInForce(std)) out.add(std.id);
+      }
+    }
+  }
+  return out;
+}
+
+/** Applicable standards the component does not follow yet. */
+export const unfollowedStandards = (c: StoredComponent, m: Model): string[] => {
+  const f = followedStandardIds(c);
+  return [...applicableStandards(c, m)].filter((id) => !f.has(id)).sort();
+};
 
 /** Distinct standards a component's sections follow (whole standard or one of its sections). */
 function followedStandards(c: StoredComponent): number {
