@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { specMaturity, type MaturityInput } from '../src/storage/maturity.js';
 
 const sec = (id: string, extra: Record<string, unknown> = {}) => ({ id, title: id, type: 'markdown', refs: [], symbols: [], links: [], verifiedBy: [], body: '', ...extra });
-const spec = (status: StoredSpec['status'], sections = [sec('a'), sec('b'), sec('ac-1', { type: 'acceptance', method: 'test' })]): StoredSpec =>
+const spec = (status: StoredSpec['status'], sections = [sec('a', { verifiedBy: ['ac-1'] }), sec('b', { verifiedBy: ['ac-1'] }), sec('ac-1', { type: 'acceptance', method: 'test' })]): StoredSpec =>
   ({ id: 's', title: 'S', status, tags: [], sections }) as unknown as StoredSpec;
 const crit = (state: CriterionState['state'], extra: Partial<CriterionState> = {}): CriterionState => ({ uri: `mandate://specs/s/sections/ac-${state}`, sectionId: 'ac', title: `c-${state}`, state, history: [], level: 'must', ...extra });
 const ver = (own: CriterionState[], inherited: CriterionState[] = []): SpecVerification => ({ own, inherited: inherited.length ? [{ standard: 'mandate://standards/x', title: 'X', criteria: inherited }] : [], total: 0, verified: 0, failing: 0, stale: 0 });
@@ -21,12 +21,22 @@ describe('maturity ladder', () => {
     expect(ip).toMatchObject({ step: 'in_progress', label: 'In progress · 1/2', tone: 'lilac' });
     const claimed = run({ workOrders: [wo([{ id: 'a', status: 'pending' }], { status: 'in_progress', claim: { agent: 'x', startedAt: '', heartbeatAt: '' } as never })] });
     expect(claimed).toMatchObject({ step: 'in_progress', label: 'In progress · 0/2', sections: { inProgress: 1 } });
-    const impl = run({ spec: spec('active', [sec('a', { implementedCommit: 'a'.repeat(40) }), sec('b', { implementedCommit: 'b'.repeat(40) })]) });
+    const impl = run({ spec: spec('active', [sec('a', { implementedCommit: 'a'.repeat(40), verifiedBy: ['ac-1'] }), sec('b', { implementedCommit: 'b'.repeat(40) })]) });
     expect(impl).toMatchObject({ step: 'implemented', tone: 'blue' });
   });
 
+  it('descriptive sections (overview type, or untargeted markdown without criteria) are not implementable; a targeted one without criteria counts', () => {
+    const s = spec('active', [sec('overview', { type: 'overview' }), sec('intro'), sec('a', { verifiedBy: ['ac-1'] }), sec('t'), sec('ac-1', { type: 'acceptance', method: 'test' })]);
+    const done = run({ spec: s, workOrders: [wo([{ id: 'a', status: 'done' }, { id: 't', status: 'done' }])] });
+    expect(done).toMatchObject({ step: 'implemented', sections: { implemented: 2, total: 2 } });
+    expect(run({ spec: s, workOrders: [wo([{ id: 'a', status: 'done' }])] })).toMatchObject({ step: 'implemented', sections: { implemented: 1, total: 1 } });
+    expect(run({ spec: s }).sections.total).toBe(1);
+    const targetedOnly = run({ spec: s, workOrders: [wo([{ id: 'a', status: 'done' }, { id: 't', status: 'pending' }])] });
+    expect(targetedOnly).toMatchObject({ step: 'in_progress', sections: { implemented: 1, total: 2 } });
+  });
+
   it('archived sections are excluded; a review work order does not count', () => {
-    const s = spec('active', [sec('a', { implementedCommit: 'a'.repeat(40) }), sec('old', { archived: true })]);
+    const s = spec('active', [sec('a', { implementedCommit: 'a'.repeat(40), verifiedBy: ['ac-1'] }), sec('old', { archived: true })]);
     expect(run({ spec: s }).sections).toEqual({ implemented: 1, total: 1, inProgress: 0 });
     expect(run({ workOrders: [wo([{ id: 'a', status: 'done' }], { kind: 'review' })] }).step).toBe('specified');
   });

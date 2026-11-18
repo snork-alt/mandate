@@ -333,16 +333,33 @@ export function specCriteria(spec: StoredSpec, m: Model): SpecCriteria {
   return { inherited: [...byUri.values()], waivers, standards: [...standards.values()].filter((x) => x.sections.length || x.appliesBy.length || x.exempt) };
 }
 
+/** Section types that only describe (introduction, background): never implementable, never need a criterion. */
+export const DESCRIPTIVE_TYPES = new Set(['overview', 'context']);
+
 /**
- * Live sections of a spec without any criterion: an acceptance section covers itself; another section is covered by a
- * live acceptance section it lists in `verifiedBy`, or by inherited criteria attached to it (it follows a standard /
- * rule). The ready gate requires none.
+ * Implementable sections of a spec: live, not a criterion, not an explicitly descriptive type, and carrying behaviour:
+ * covered by a criterion (own acceptance via verifiedBy, or inherited) OR ever targeted by a work order / implemented.
+ * Descriptive sections (no criteria, never targeted) do not count.
+ */
+export function implementableSections(spec: StoredSpec, workOrders: WorkOrder[], inherited: ReadonlySet<string> = new Set()): Section[] {
+  const live = spec.sections.filter((s) => !s.archived);
+  const criteria = new Set(live.filter(isCriterion).map((s) => s.id));
+  const targeted = new Set(workOrders.filter((w) => w.spec === spec.id && ['implement', 'update', 'fix'].includes(w.kind)).flatMap((w) => w.sections.map((x) => x.id)));
+  return live.filter(
+    (s) => !isCriterion(s) && !DESCRIPTIVE_TYPES.has(s.type) && (s.verifiedBy.some((v) => criteria.has(v)) || inherited.has(s.id) || !!s.implementedCommit || !!s.implementedBy || targeted.has(s.id)),
+  );
+}
+
+/**
+ * Implementable sections of a spec without any criterion: another section is covered by a live acceptance section it
+ * lists in `verifiedBy`, or by inherited criteria attached to it (it follows a standard / rule). Descriptive sections
+ * (type overview / context, or never targeted by a work order when `workOrders` is given) are not required to have one.
  */
 export function sectionsWithoutCriteria(spec: StoredSpec, m: Model): string[] {
   const live = spec.sections.filter((s) => !s.archived);
   const criteria = new Set(live.filter((s) => s.type === ACCEPTANCE).map((s) => s.id));
   const inherited = new Set(specCriteria(spec, m).inherited.flatMap((c) => c.sections));
-  return live.filter((s) => s.type !== ACCEPTANCE && !s.verifiedBy.some((v) => criteria.has(v)) && !inherited.has(s.id)).map((s) => s.id);
+  return live.filter((s) => s.type !== ACCEPTANCE && !DESCRIPTIVE_TYPES.has(s.type) && !s.verifiedBy.some((v) => criteria.has(v)) && !inherited.has(s.id)).map((s) => s.id);
 }
 
 /** Pin of a waiver: hash of the criteria its target brings (stored on the link when approved). */

@@ -8,3 +8,7 @@ export const markdownRenderer: SectionRenderer = {
   icon: IconAlignLeft,
   Body: lazy(() => import('./MarkdownBody')),
 };
+
+/** Descriptive prose (introduction, background): rendered as markdown, never implementable. */
+export const overviewRenderer: SectionRenderer = { ...markdownRenderer, id: 'overview', label: 'Overview' };
+export const contextRenderer: SectionRenderer = { ...markdownRenderer, id: 'context', label: 'Context' };

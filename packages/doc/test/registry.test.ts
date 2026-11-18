@@ -57,6 +57,8 @@ describe('section type registry', () => {
       ['rule', undefined],
       ['audit-item', undefined],
       ['wo-section', undefined],
+      ['overview', undefined],
+      ['context', undefined],
     ]);
   });
 

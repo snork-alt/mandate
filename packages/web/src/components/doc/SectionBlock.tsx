@@ -37,7 +37,7 @@ export function SectionBody({ section }: { section: Section }) {
 }
 
 /** Types whose chip adds nothing: plain prose, and items whose page already says what they are (O6, A6). */
-const NO_TYPE_CHIP = new Set(['markdown', 'wo-section', 'audit-item']);
+const NO_TYPE_CHIP = new Set(['markdown', 'overview', 'context', 'wo-section', 'audit-item']);
 
 interface Props {
   section: Section;

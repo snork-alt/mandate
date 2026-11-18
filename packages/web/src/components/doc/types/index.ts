@@ -5,13 +5,13 @@
 import { acceptanceRenderer } from './acceptance';
 import { htmlRenderer } from './html';
 import { imageRenderer } from './image';
-import { markdownRenderer } from './markdown';
+import { contextRenderer, markdownRenderer, overviewRenderer } from './markdown';
 import { mermaidRenderer } from './mermaid';
 import { ruleRenderer } from './rule';
 import { auditItemRenderer } from './audit-item';
 import { woSectionRenderer } from './wo-section';
 import { registerSectionRenderer } from './registry';
 
-for (const r of [markdownRenderer, mermaidRenderer, htmlRenderer, imageRenderer, acceptanceRenderer, ruleRenderer, auditItemRenderer, woSectionRenderer]) registerSectionRenderer(r);
+for (const r of [markdownRenderer, overviewRenderer, contextRenderer, mermaidRenderer, htmlRenderer, imageRenderer, acceptanceRenderer, ruleRenderer, auditItemRenderer, woSectionRenderer]) registerSectionRenderer(r);
 
 export { getSectionRenderer, registerSectionRenderer, type SectionBodyProps, type SectionRenderer } from './registry';

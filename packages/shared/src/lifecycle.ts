@@ -454,7 +454,7 @@ export const ERROR_ACTIONS: Record<string, string> = {
   claim_conflict: 'another agent holds a fresh claim: pick another work order (work_order_next) or coordinate (comment_add)',
   stale_claim: 'the claim is stale: work_order_claim to take it over, then retry',
   not_claimed: 'claim the work order first (work_order_claim), then retry (not needed to complete once every section is done: the claim is released automatically)',
-  criteria_missing: 'every live section a work order targets needs an acceptance criterion: insert one per listed section (section_insert type acceptance, or verifiedBy an existing one), then work_order_create again',
+  criteria_missing: 'every live behaviour section a work order targets needs an acceptance criterion: insert one per listed section (section_insert type acceptance, or verifiedBy an existing one; descriptive prose belongs in a type overview section, which needs none), then work_order_create again',
   waiver_self_approved: 'a waiver / exemption / criteria removal needs the user\'s approval: ask (question_ask purpose approval), wait for the answer, then retry with cause: the answered question',
   approval_required: 'a waiver / exemption / criteria removal needs the user\'s approval: ask (question_ask purpose approval), wait for the answer, then retry with cause: the answered question',
   all_done: 'every section is done: the agent only has to call work_order_complete (outcome, reconciliation); no claim and no release needed',

@@ -33,7 +33,7 @@ import type { GitStore } from '../git/GitStore.js';
 import type { FeedbackService } from './feedback.js';
 import { componentGaps, coverage } from './components.js';
 import { isFullSha } from './ids.js';
-import { ACCEPTANCE, criteriaOf, finder, graphProblems, openChangingOrders, sectionsWithoutCriteria, sectionUri, type Model } from './model.js';
+import { ACCEPTANCE, criteriaOf, implementableSections, finder, graphProblems, openChangingOrders, sectionsWithoutCriteria, sectionUri, type Model } from './model.js';
 import { projectWorkOrder } from './work-order-docs.js';
 import { detached, type Mutex } from './Mutex.js';
 import type { IntegrityHook } from './GitBackedRepository.js';
@@ -121,7 +121,8 @@ export function checkIntegrity(
         if (spec.status === 'done' && !spec.sections.some((s) => s.type === ACCEPTANCE && !s.archived)) out.push(issue('spec_done_without_criteria', docUri, `${spec.id} is done without any live acceptance criterion`));
         // Every live section of a done spec has a criterion (work_order_create refuses sections without one; the existing state is a warning).
         if (spec.status === 'done') {
-          for (const sid of sectionsWithoutCriteria(spec, m)) out.push(issue('spec_section_without_criteria', sectionUri('specs', spec.id, sid), `section ${sid} of ${spec.status} spec ${spec.id} has no acceptance criterion`));
+          const behaviour = new Set(implementableSections(spec, m.workOrders ?? []).map((x) => x.id));
+          for (const sid of sectionsWithoutCriteria(spec, m).filter((x) => behaviour.has(x))) out.push(issue('spec_section_without_criteria', sectionUri('specs', spec.id, sid), `section ${sid} of ${spec.status} spec ${spec.id} has no acceptance criterion`));
         }
       }
     }

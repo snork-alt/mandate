@@ -15,7 +15,7 @@ import {
   type StoredSpec,
   type WorkOrder,
 } from '@mandate/shared';
-import { isCriterion } from './model.js';
+import { implementableSections } from './model.js';
 import type { Storage } from './index.js';
 import { deriveSpecs } from './insights.js';
 
@@ -47,7 +47,8 @@ const CHANGING = new Set(['implement', 'update', 'fix']);
 
 export function specMaturity(i: MaturityInput): SpecMaturity {
   const { spec } = i;
-  const live = spec.sections.filter((s) => !s.archived && !isCriterion(s));
+  const inheritedIds = new Set(i.verification.inherited.flatMap((g) => g.criteria.flatMap((c) => c.sections ?? [])));
+  const live = implementableSections(spec, i.workOrders, inheritedIds);
   const mine = i.workOrders.filter((w) => w.spec === spec.id && CHANGING.has(w.kind));
   const doneByWo = new Set(mine.flatMap((w) => w.sections.filter((s) => s.status === 'done').map((s) => s.id)));
   const claimed = new Set(mine.filter((w) => w.claim && OPEN_WORK_ORDER_STATUSES.includes(w.status)).flatMap((w) => w.sections.filter((s) => s.status === 'pending').map((s) => s.id)));
