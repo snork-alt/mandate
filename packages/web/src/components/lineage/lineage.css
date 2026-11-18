@@ -1091,3 +1091,9 @@ a.wp-pr:hover {
   display: inline-flex;
   justify-content: flex-end;
 }
+
+.lin-doc-sections { margin-top: 8px; max-height: 260px; overflow: auto; border-top: 1px solid var(--app-border, rgba(128, 128, 128, 0.25)); padding-top: 6px; }
+.lin-doc-sections-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; margin-bottom: 4px; }
+.lin-doc-sections ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.lin-doc-section-title { font-size: 12px; display: flex; align-items: center; gap: 4px; }
+.lin-doc-link { padding-left: 18px; }

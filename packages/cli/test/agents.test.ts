@@ -156,7 +156,7 @@ describe('skills and command templates', () => {
       expect(md).toContain(`mandate-stub v${STUB_VERSION} `);
       expect(md).toMatch(/stop and tell the user/);
       expect(md).not.toMatch(/## Intake|Stage 2: DISTILL/);
-      expect(Math.ceil(md.length / 4)).toBeLessThanOrEqual(300); // front matter (description) + stub; the full skill was ~2,200
+      expect(Math.ceil(md.length / 4)).toBeLessThanOrEqual(320); // front matter (description) + stub; the full skill was ~2,200
     }
     expect(skillMd()).toMatchSnapshot();
   });

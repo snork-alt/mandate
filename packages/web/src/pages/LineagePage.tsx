@@ -11,6 +11,7 @@ import { CopyMenu } from '../components/copy';
 import { KIND_ICON } from '../components/refs/kinds';
 import { LineageStatusIcon } from '../components/lineage/LineagePanel';
 import { LineageStory } from '../components/lineage/LineageStory';
+import { DocSections } from '../components/lineage/DocSections';
 import { ElementPicker } from '../components/lineage/ElementPicker';
 import { WorkProgressLine, PrLink } from '../components/lineage/WorkProgress';
 import { AvatarStack, Contributors } from '../components/people/People';
@@ -18,6 +19,9 @@ import { useContributors } from '../lib/people';
 import { ElementCard, ElementMenu, useOpenElement, type ElementInfo, type MenuAt } from '../components/lineage/ElementActions';
 import {
   GROUP_PREFIX,
+  documentLevel,
+  edgeLabel,
+  type LineageLevel,
   LIN_NODE_H,
   LIN_NODE_W,
   STATUS_META,
@@ -84,6 +88,7 @@ const LinCard = memo(function LinCard({ data }: NodeProps<LinNode>) {
           ? `${it.members!.filter((m) => m.status !== 'neutral').length} with a status · click to expand`
           : (
             <>
+              {it.sections?.length ? `${it.sections.length} ${it.sections.length === 1 ? 'section' : 'sections'} · ` : ''}
               {info.rawStatus ? info.rawStatus.replace(/_/g, ' ') : STATUS_META[it.status].label}
               {n?.createdAt?.date && <> · {relativeTime(n.createdAt.date)}</>}
             </>
@@ -107,7 +112,10 @@ const LinCard = memo(function LinCard({ data }: NodeProps<LinNode>) {
 const NODE_TYPES = { lin: LinCard };
 
 /** The graph after the client-side declutter: causal-only (unless "Show all"), chip filter, sibling groups. */
-export function graphOf(data: Pick<LineageResponse, 'nodes' | 'edges' | 'root'>, opts: { showAll: boolean; chip: SummaryChip | null; expanded: ReadonlySet<string> }) {
+export function graphOf(
+  data: Pick<LineageResponse, 'nodes' | 'edges' | 'root'>,
+  opts: { showAll: boolean; chip: SummaryChip | null; expanded: ReadonlySet<string>; level?: LineageLevel; expandedDocs?: ReadonlySet<string> },
+) {
   let { nodes, edges } = opts.showAll ? { nodes: data.nodes, edges: data.edges } : causalOnly(data.nodes, data.edges, data.root.uri);
   if (opts.chip) {
     const chip = opts.chip;
@@ -115,10 +123,12 @@ export function graphOf(data: Pick<LineageResponse, 'nodes' | 'edges' | 'root'>,
     const ids = new Set(nodes.map((n) => n.uri));
     edges = edges.filter((e) => ids.has(e.from) && ids.has(e.to));
   }
-  return groupSiblings(nodes, edges, data.root.uri, opts.expanded);
+  const docs = opts.expandedDocs ?? new Set<string>();
+  if (opts.level === 'document') ({ nodes, edges } = documentLevel(nodes, edges, data.root.uri, docs));
+  return groupSiblings(nodes, edges, data.root.uri, docs.size ? new Set([...opts.expanded, ...docs]) : opts.expanded);
 }
 
-function Canvas({ data, showAll, chip, onCentre }: { data: LineageResponse; showAll: boolean; chip: SummaryChip | null; onCentre: (uri: string) => void }) {
+function Canvas({ data, showAll, chip, level, onCentre }: { data: LineageResponse; showAll: boolean; chip: SummaryChip | null; level: LineageLevel; onCentre: (uri: string) => void }) {
   const rf = useReactFlow();
   const scheme = useComputedColorScheme('light');
   const open = useOpenElement();
@@ -154,7 +164,8 @@ function Canvas({ data, showAll, chip, onCentre }: { data: LineageResponse; show
     [causesOf, maturities], // eslint-disable-line react-hooks/exhaustive-deps
   );
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
-  const graph = useMemo(() => graphOf(data, { showAll, chip, expanded }), [data, showAll, chip, expanded]);
+  const [expandedDocs, setExpandedDocs] = useState<ReadonlySet<string>>(new Set());
+  const graph = useMemo(() => graphOf(data, { showAll, chip, expanded, level, expandedDocs }), [data, showAll, chip, expanded, level, expandedDocs]);
   const layout = useMemo(() => layoutLineage(graph.items), [graph.items]);
   const pos = useMemo(() => new Map(layout.nodes.map((p) => [p.item.uri, p])), [layout]);
   const nodes = useMemo<LinNode[]>(
@@ -186,7 +197,7 @@ function Canvas({ data, showAll, chip, onCentre }: { data: LineageResponse; show
         type: 'smoothstep',
         className: `lin-edge${e.recorded ? ' lin-edge-recorded' : ''}${e.confidence === 'low' ? ' lin-edge-inferred' : ''}`,
         // Labels show on hover only (lineage.css); a low-confidence annotation is drawn dashed and says "inferred".
-        label: `${e.kind.replace(/_/g, ' ')}${e.confidence === 'low' ? ' · inferred' : ''}`,
+        label: edgeLabel(e),
         labelShowBg: true,
         labelBgPadding: [4, 2] as [number, number],
         labelBgBorderRadius: 4,
@@ -249,14 +260,29 @@ function Canvas({ data, showAll, chip, onCentre }: { data: LineageResponse; show
         <Controls showInteractive={false} position="bottom-left" />
         <MiniMap position="bottom-right" pannable zoomable nodeColor={(n) => `var(--lin-${(n.data as LinNodeData).it.status})`} nodeBorderRadius={6} maskColor="var(--arch-mm-mask)" />
       </ReactFlow>
-      {expanded.size > 0 && (
-        <button type="button" className="arch-focus-pill lin-collapse" onClick={() => setExpanded(new Set())}>
+      {(expanded.size > 0 || expandedDocs.size > 0) && (
+        <button
+          type="button"
+          className="arch-focus-pill lin-collapse"
+          onClick={() => {
+            setExpanded(new Set());
+            setExpandedDocs(new Set());
+          }}
+        >
           Collapse groups
         </button>
       )}
       {sel && (
         <div className="lin-selection">
           <ElementCard info={infoOf(sel)} onCenter={sel.uri === data.root.uri ? undefined : onCentre} onClose={() => setSelected(null)} />
+          {sel.sections && (
+            <DocSections
+              sections={sel.sections}
+              nodes={data.nodes}
+              edges={data.edges}
+              onExpand={level === 'document' && !expandedDocs.has(sel.uri) ? () => setExpandedDocs((x) => new Set([...x, sel.uri])) : undefined}
+            />
+          )}
         </div>
       )}
       <ElementMenu at={menu} onClose={() => setMenu(null)} onCenter={onCentre} />
@@ -304,6 +330,7 @@ export function LineagePage() {
   const onlyProgress = params.get('only') === 'in_progress';
   const structure = params.get('structure') === '1';
   const showAll = params.get('all') === '1';
+  const level: LineageLevel = params.get('sections') === '1' ? 'section' : 'document';
   const order = params.get('order') === 'desc' ? 'desc' : 'asc';
   const focus = params.get('focus');
   const kinds = params.getAll('kind');
@@ -428,6 +455,7 @@ export function LineagePage() {
               />
               <Switch size="xs" label="Only in progress" checked={onlyProgress} onChange={(e) => update({ only: e.currentTarget.checked ? 'in_progress' : null })} />
               <Switch size="xs" label="Show structure" checked={structure} onChange={(e) => update({ structure: e.currentTarget.checked ? '1' : null })} />
+              <Switch size="xs" label="Show sections" checked={level === 'section'} onChange={(e) => update({ sections: e.currentTarget.checked ? '1' : null })} />
               <Switch size="xs" label="Show all" checked={showAll} onChange={(e) => update({ all: e.currentTarget.checked ? '1' : null })} />
             </>
           )}
@@ -496,7 +524,7 @@ export function LineagePage() {
         {ref && q.isPending && <div className="lin-placeholder">Loading…</div>}
         {q.data && mode === 'layers' && (
           <ReactFlowProvider>
-            <Canvas key={q.data.root.uri} data={q.data} showAll={showAll} chip={chip} onCentre={(uri) => update({ ref: uri, focus: null })} />
+            <Canvas key={q.data.root.uri} data={q.data} showAll={showAll} chip={chip} level={level} onCentre={(uri) => update({ ref: uri, focus: null })} />
           </ReactFlowProvider>
         )}
         {q.data && mode === 'story' && (

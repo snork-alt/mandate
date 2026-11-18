@@ -177,8 +177,19 @@ export interface GraphItem {
   node?: LineageNode;
   /** Collapsed siblings (group items only). */
   members?: LineageNode[];
+  /** Document items: the sections folded into the node (document level). */
+  sections?: LineageNode[];
   createdAt?: LineageNode['createdAt'];
 }
+
+/** `document`: one node per spec / standard / component / work order (default in the UI); `section`: every section. */
+export type LineageLevel = 'document' | 'section';
+/** A lineage node that stands for a document and carries the sections folded into it. */
+export type DocNode = LineageNode & { sections?: LineageNode[] };
+/** An edge of the drawn graph; `relations`: the merged section links by relation, with counts. */
+export type GraphEdge = LineageEdge & { id: string; relations?: { kind: string; count: number }[] };
+
+const DOC_NODE_KIND: Record<string, string> = { specs: 'spec', standards: 'standard', components: 'component', 'work-orders': 'work_order', audits: 'audit' };
 
 export const GROUP_PREFIX = 'group:';
 const KIND_PLURAL: Record<string, string> = { work_order: 'work orders', code_file: 'files', code_range: 'code ranges', verification: 'verifications', finding: 'findings', feedback: 'requests', comment: 'comments', commit: 'commits', spec: 'specs', standard: 'standards', component: 'components', audit: 'audits' };
@@ -197,7 +208,7 @@ const worst = (ss: LineageStatus[]): LineageStatus => (ss.includes('attention') 
  * become one group item ("12 sections of Login with SSO", "8 rules of Security baseline"), unless expanded. Edges are
  * re-pointed at the group and de-duplicated (self-loops dropped).
  */
-export function groupSiblings(nodes: LineageNode[], edges: LineageEdge[], rootUri: string, expanded: ReadonlySet<string> = new Set(), threshold = 3): { items: GraphItem[]; edges: (LineageEdge & { id: string })[] } {
+export function groupSiblings(nodes: LineageNode[], edges: LineageEdge[], rootUri: string, expanded: ReadonlySet<string> = new Set(), threshold = 3): { items: GraphItem[]; edges: GraphEdge[] } {
   const label = new Map(nodes.map((n) => [n.uri, n.label]));
   const buckets = new Map<string, LineageNode[]>();
   for (const n of nodes) {
@@ -210,23 +221,28 @@ export function groupSiblings(nodes: LineageNode[], edges: LineageEdge[], rootUr
   const items: GraphItem[] = [];
   const grouped = new Set<string>();
   for (const [key, ms] of buckets) {
-    if (ms.length <= threshold || expanded.has(key)) continue;
-    const kind = ms[0]!.kind;
     const parent = key.split(':').slice(3).join(':');
+    // An expanded document (or group) shows its sections one by one.
+    if (ms.length <= threshold || expanded.has(key) || (parent && expanded.has(parent))) continue;
+    const kind = ms[0]!.kind;
     const isRules = kind === 'section' && parseNodeUri(parent)?.kind === 'standards';
     const what = kind === 'section' ? (isRules ? 'rules' : 'sections') : (KIND_PLURAL[kind] ?? `${kind.replace(/_/g, ' ')}s`);
     const of = parent ? ` of ${label.get(parent) ?? (parseNodeUri(parent) as { id?: string } | null)?.id ?? parent}` : '';
     items.push({ uri: key, kind, label: `${ms.length} ${what}${of}`, layer: ms[0]!.layer, status: worst(ms.map((m) => m.status)), members: ms, createdAt: ms.map((m) => m.createdAt).filter(Boolean).sort((a, b) => a!.date.localeCompare(b!.date))[0] ?? null });
     for (const m of ms) into.set(m.uri, key), grouped.add(m.uri);
   }
-  for (const n of nodes) if (!grouped.has(n.uri)) items.push({ uri: n.uri, kind: n.kind, label: n.label, layer: n.layer, status: n.status, node: n, createdAt: n.createdAt });
+  for (const n of nodes) if (!grouped.has(n.uri)) items.push({ uri: n.uri, kind: n.kind, label: n.label, layer: n.layer, status: n.status, node: n, createdAt: n.createdAt, ...((n as DocNode).sections ? { sections: (n as DocNode).sections } : {}) });
   const seen = new Set<string>();
-  const out: (LineageEdge & { id: string })[] = [];
+  const out: GraphEdge[] = [];
+  const rels = new Map<string, Map<string, number>>();
   for (const e of edges) {
     const from = into.get(e.from) ?? e.from;
     const to = into.get(e.to) ?? e.to;
     if (from === to) continue;
     const id = `${from}->${to}`;
+    const r = rels.get(id) ?? new Map<string, number>();
+    r.set(e.kind, (r.get(e.kind) ?? 0) + 1);
+    rels.set(id, r);
     if (seen.has(id)) {
       // Keep "recorded" if any of the merged edges was recorded; "inferred" only if every merged edge is.
       const have = out.find((x) => x.id === id)!;
@@ -237,7 +253,63 @@ export function groupSiblings(nodes: LineageNode[], edges: LineageEdge[], rootUr
     seen.add(id);
     out.push({ ...e, from, to, id });
   }
+  for (const e of out) {
+    const relations = [...rels.get(e.id)!].map(([kind, count]) => ({ kind, count })).sort((a, b) => b.count - a.count || a.kind.localeCompare(b.kind));
+    e.relations = relations;
+    e.kind = relations[0]!.kind as LineageEdge['kind'];
+  }
   return { items, edges: out };
+}
+
+/** "depends on (3), affects": the merged relations of an edge with their counts (a single plain edge: just its kind). */
+export function edgeLabel(e: Pick<GraphEdge, 'kind' | 'relations' | 'confidence'>): string {
+  const rels = e.relations?.length ? e.relations : [{ kind: e.kind as string, count: 1 }];
+  const text = rels.map((r) => `${r.kind.replace(/_/g, ' ')}${r.count > 1 ? ` (${r.count})` : ''}`).join(', ');
+  return `${text}${e.confidence === 'low' ? ' · inferred' : ''}`;
+}
+
+/**
+ * Document level: every section becomes its document (spec / standard / component / work order), so the graph has one
+ * node per document. The document node carries its sections (`sections`) and the roll-up of their statuses (attention
+ * over in progress over done); a document that is not in the lineage is made up from its sections. Section-to-section
+ * links are re-pointed at the documents (self-loops dropped; `groupSiblings` merges parallel edges into one edge with
+ * relation counts). The element itself and the documents in `expanded` keep their section nodes.
+ */
+export function documentLevel(nodes: LineageNode[], edges: LineageEdge[], rootUri: string, expanded: ReadonlySet<string> = new Set()): { nodes: DocNode[]; edges: LineageEdge[] } {
+  const byUri = new Map(nodes.map((n) => [n.uri, n]));
+  const into = new Map<string, string>();
+  const sectionsOf = new Map<string, LineageNode[]>();
+  for (const n of nodes) {
+    if (n.kind !== 'section' || n.uri === rootUri) continue;
+    const parent = parentOf(n);
+    if (!parent || expanded.has(parent)) continue;
+    into.set(n.uri, parent);
+    sectionsOf.set(parent, [...(sectionsOf.get(parent) ?? []), n]);
+  }
+  if (!into.size) return { nodes, edges };
+  const out: DocNode[] = nodes.filter((n) => !into.has(n.uri) && !sectionsOf.has(n.uri));
+  for (const [parent, raw] of sectionsOf) {
+    const sections = raw.slice().sort((a, b) => a.label.localeCompare(b.label));
+    const have = byUri.get(parent);
+    const status = worst([...(have ? [have.status] : []), ...sections.map((x) => x.status)]);
+    if (have) {
+      out.push({ ...have, status, sections });
+      continue;
+    }
+    const r = parseNodeUri(parent);
+    const first = sections[0]!;
+    out.push({
+      uri: parent,
+      ref: parent,
+      kind: (DOC_NODE_KIND[r?.kind ?? ''] ?? 'spec') as LineageNode['kind'],
+      label: first.label.includes(' \u203a ') ? first.label.split(' \u203a ')[0]! : ((r as { id?: string } | null)?.id ?? parent),
+      layer: sections.reduce((m, x) => (Math.abs(x.layer) < Math.abs(m) ? x.layer : m), first.layer),
+      status,
+      createdAt: sections.map((x) => x.createdAt).filter(Boolean).sort((a, b) => a!.date.localeCompare(b!.date))[0] ?? null,
+      sections,
+    });
+  }
+  return { nodes: out, edges: edges.map((e) => ({ ...e, from: into.get(e.from) ?? e.from, to: into.get(e.to) ?? e.to })).filter((e) => e.from !== e.to) };
 }
 
 /* ------------------------------------------------------------------ layering (pure, unit-tested) */

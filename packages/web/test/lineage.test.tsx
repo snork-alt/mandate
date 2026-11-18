@@ -6,7 +6,8 @@ import { MantineProvider } from '@mantine/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildCodeRef, buildFindingRef, buildRef, type LineageEvent, type LineageNode, type LineageResponse, type WhereUsedResponse } from '@mandate/shared';
 import { installDom } from './dom';
-import { LIN_NODE_H, LIN_GAP_Y, causalOnly, formatDuration, groupSiblings, gutterLayout, layoutLineage, refFromInput, splitLineage, storyDays, summaryChips } from '../src/lib/lineage';
+import { DocSections } from '../src/components/lineage/DocSections';
+import { documentLevel, edgeLabel, LIN_NODE_H, LIN_GAP_Y, causalOnly, formatDuration, groupSiblings, gutterLayout, layoutLineage, refFromInput, splitLineage, storyDays, summaryChips } from '../src/lib/lineage';
 import { LineageStory } from '../src/components/lineage/LineageStory';
 import { graphOf } from '../src/pages/LineagePage';
 import { LineageView } from '../src/components/lineage/LineagePanel';
@@ -206,6 +207,77 @@ describe('declutter (pure)', () => {
     expect(g2.items.filter((i) => i.kind === 'section' && !i.members)).toHaveLength(12);
     // Three siblings are not grouped.
     expect(groupSiblings([nodes[0]!, ...secs.slice(0, 3)], [], SPEC).items.some((i) => i.members)).toBe(false);
+  });
+
+  describe('document level', () => {
+    const sec = (doc: string, id: string, layer: number, status: LineageNode['status'] = 'neutral', kind: 'specs' | 'standards' = 'specs') =>
+      node(buildRef({ kind, id: doc, sectionId: id }), layer, { kind: 'section', label: `${doc === 'billing' ? 'Billing' : 'Tokens'} \u203a ${id}`, status });
+    const b1 = sec('billing', 'b1', 1, 'done');
+    const b2 = sec('billing', 'b2', 1, 'in_progress');
+    const b3 = sec('billing', 'b3', 1, 'attention');
+    const t1 = sec('tokens', 't1', -1, 'done', 'standards');
+    const root = nodes[0]!;
+    const all = [root, b1, b2, b3, t1];
+    const edges = [
+      { from: SPEC, to: b1.uri, kind: 'depends_on' as const, recorded: false },
+      { from: SPEC, to: b2.uri, kind: 'depends_on' as const, recorded: false },
+      { from: SPEC, to: b3.uri, kind: 'affects' as const, recorded: false },
+      { from: t1.uri, to: SPEC, kind: 'inherits_rule' as const, recorded: false },
+      { from: b1.uri, to: b2.uri, kind: 'follows' as const, recorded: false },
+    ];
+    const run = (o: Partial<Parameters<typeof graphOf>[1]> = {}) => graphOf({ nodes: all, edges, root }, { showAll: true, chip: null, expanded: new Set(), level: 'document', ...o });
+    const billing = buildRef({ kind: 'specs', id: 'billing' });
+
+    it('one node per document, made up from its sections, with the rolled-up status', () => {
+      const g = run();
+      expect(g.items.map((i) => i.uri).sort()).toEqual([SPEC, billing, buildRef({ kind: 'standards', id: 'tokens' })].sort());
+      const doc = g.items.find((i) => i.uri === billing)!;
+      expect(doc.kind).toBe('spec');
+      expect(doc.label).toBe('Billing');
+      expect(doc.sections).toHaveLength(3);
+      expect(doc.status).toBe('attention');
+      expect(g.items.find((i) => i.uri === buildRef({ kind: 'standards', id: 'tokens' }))!.status).toBe('done');
+    });
+
+    it('section links become one edge per document pair with relation counts; links inside a document disappear', () => {
+      const g = run();
+      const e = g.edges.find((x) => x.from === SPEC && x.to === billing)!;
+      expect(e.relations).toEqual([
+        { kind: 'depends_on', count: 2 },
+        { kind: 'affects', count: 1 },
+      ]);
+      expect(edgeLabel(e)).toBe('depends on (2), affects');
+      expect(g.edges).toHaveLength(2);
+      expect(edgeLabel({ kind: 'caused_by' })).toBe('caused by');
+    });
+
+    it('section level keeps every section; documentLevel folds the statuses into an existing document node', () => {
+      expect(run({ level: 'section' }).items.filter((i) => i.kind === 'section')).toHaveLength(4);
+      const doc = node(billing, 1, { label: 'Billing', status: 'done' });
+      const r = documentLevel([root, doc, b1, b3], [], SPEC);
+      expect(r.nodes.find((n) => n.uri === billing)!.status).toBe('attention');
+      expect(r.nodes).toHaveLength(2);
+    });
+
+    it('expanding one document shows its sections again, the others stay folded', () => {
+      const g = run({ expandedDocs: new Set([billing]) });
+      expect(g.items.filter((i) => i.kind === 'section').map((i) => i.uri).sort()).toEqual([b1.uri, b2.uri, b3.uri].sort());
+      expect(g.items.some((i) => i.uri === buildRef({ kind: 'standards', id: 'tokens' }))).toBe(true);
+      expect(g.items.some((i) => i.members)).toBe(false);
+    });
+
+    it('the side panel lists sections with their links and offers "Expand in graph"', () => {
+      const onExpand = vi.fn();
+      render(
+        <MantineProvider>
+          <DocSections sections={[b1, b2, b3]} nodes={all} edges={edges} onExpand={onExpand} />
+        </MantineProvider>,
+      );
+      expect(screen.getAllByTestId('doc-section')).toHaveLength(3);
+      expect(screen.getByText(/follows → /)).toBeTruthy();
+      fireEvent.click(screen.getByText('Expand in graph'));
+      expect(onExpand).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('wraps wide layers so depth 3 stays readable', () => {

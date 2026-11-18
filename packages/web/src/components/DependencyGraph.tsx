@@ -27,6 +27,7 @@ import { copyTargetProps } from './copy/copyTargets';
 import { CanvasViewer, ClaimAvatar } from './doc';
 import { WORK_ORDER_STATUS_META, WorkOrderStatusIcon } from './WorkOrderStatusIcon';
 import { KIND_ICON } from './refs/kinds';
+import { dependencyEdgeLabel, documentTree, type DocDependencyNode, type DocDependencyTree } from '../lib/dependency-docs';
 
 const ComponentIcon = KIND_ICON.component;
 
@@ -193,7 +194,7 @@ function HoverSummary({ n }: { n: DependencyNode }) {
 }
 
 /** One node card: click opens it, hover shows its summary, right-click copies its reference (reference first). */
-function NodeCard({ n, commit, style, now }: { n: DependencyNode; commit: string | null; style?: React.CSSProperties; now: number }) {
+function NodeCard({ n, commit, style, now, onExpand }: { n: DocDependencyNode; commit: string | null; style?: React.CSSProperties; now: number; onExpand?: (docKey: string) => void }) {
   const navigate = useNavigate();
   const [menu, setMenu] = useState(false);
   const target = useMemo(() => nodeTarget(n, commit), [n, commit]);
@@ -235,6 +236,19 @@ function NodeCard({ n, commit, style, now }: { n: DependencyNode; commit: string
               <div className="dep-node-title">
                 <StateIcon n={n} />
                 <span className={n.type === 'work_order' ? 'mono' : undefined}>{nodeTitle(n)}</span>
+                {n.sectionCount ? (
+                  <button
+                    type="button"
+                    className="dep-node-sections faint small"
+                    title="Show this document's sections in the graph"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onExpand?.(n.key);
+                    }}
+                  >
+                    {n.sectionCount} {n.sectionCount === 1 ? 'section' : 'sections'} · expand
+                  </button>
+                ) : null}
                 {n.truncated && <span className="faint">…</span>}
               </div>
               <div className="dep-node-foot">
@@ -297,7 +311,7 @@ interface Layout {
 }
 
 /** ELK layered layout, left to right (upstream -> work order -> downstream). */
-async function layoutGraph(tree: DependencyTree): Promise<Layout> {
+async function layoutGraph(tree: DocDependencyTree): Promise<Layout> {
   const { default: ELK } = await import('elkjs/lib/elk.bundled.js');
   const elk = new ELK();
   // Every card the same size: the widest card width and the tallest footer among all nodes.
@@ -332,7 +346,7 @@ function edgeTone(e: DependencyEdge, byKey: Map<string, DependencyNode>, root: s
   return 'plain';
 }
 
-function GraphCanvas({ tree, layout, now }: { tree: DependencyTree; layout: Layout; now: number }) {
+function GraphCanvas({ tree, layout, now, onExpand }: { tree: DocDependencyTree; layout: Layout; now: number; onExpand: (docKey: string) => void }) {
   const byKey = useMemo(() => new Map(tree.nodes.map((n) => [n.key, n])), [tree]);
   return (
     <div className="dep-canvas" style={{ width: layout.width, height: layout.height }}>
@@ -362,7 +376,7 @@ function GraphCanvas({ tree, layout, now }: { tree: DependencyTree; layout: Layo
               strokeDasharray={e.soft ? '5 4' : undefined}
               markerEnd={`url(#dep-arrow-${tone})`}
             >
-              <title>{`${e.rel.replace(/_/g, ' ')}${e.via ? ` (via ${e.via})` : ''}`}</title>
+              <title>{`${dependencyEdgeLabel(e)}${e.via ? ` (via ${e.via})` : ''}`}</title>
             </path>
           );
         })}
@@ -370,14 +384,14 @@ function GraphCanvas({ tree, layout, now }: { tree: DependencyTree; layout: Layo
       {tree.nodes.map((n) => {
         const p = layout.pos.get(n.key);
         if (!p) return null;
-        return <NodeCard key={n.key} n={n} commit={tree.commit} now={now} style={{ left: p.x, top: p.y, width: p.w, height: p.h }} />;
+        return <NodeCard key={n.key} n={n} commit={tree.commit} now={now} onExpand={onExpand} style={{ left: p.x, top: p.y, width: p.w, height: p.h }} />;
       })}
     </div>
   );
 }
 
 /** Indented tree of one side; nodes seen before become "↻ see above" stubs. */
-function SideList({ tree, side, now }: { tree: DependencyTree; side: 'upstream' | 'downstream'; now: number }) {
+function SideList({ tree, side, now, onExpand }: { tree: DocDependencyTree; side: 'upstream' | 'downstream'; now: number; onExpand: (docKey: string) => void }) {
   const byKey = new Map(tree.nodes.map((n) => [n.key, n]));
   const children = (key: string) =>
     tree.edges
@@ -400,8 +414,8 @@ function SideList({ tree, side, now }: { tree: DependencyTree; side: 'upstream' 
       seen.add(n.key);
       return [
         <li key={id} className="dep-list-item" style={{ paddingLeft: level * 16 }} data-soft={e.soft || undefined}>
-          <span className="faint small dep-list-rel">{e.rel.replace(/_/g, ' ')}</span>
-          <NodeCard n={n} commit={tree.commit} now={now} />
+          <span className="faint small dep-list-rel">{dependencyEdgeLabel(e)}</span>
+          <NodeCard n={n} commit={tree.commit} now={now} onExpand={onExpand} />
         </li>,
         ...render(n.key, level + 1),
       ];
@@ -416,7 +430,7 @@ function SideList({ tree, side, now }: { tree: DependencyTree; side: 'upstream' 
 }
 
 /** Markdown outline of the graph (the canvas "source" and its copy action). */
-function toMarkdown(tree: DependencyTree): string {
+function toMarkdown(tree: DocDependencyTree): string {
   const byKey = new Map(tree.nodes.map((n) => [n.key, n]));
   const lines: string[] = [];
   const label = (n: DependencyNode) =>
@@ -464,15 +478,19 @@ export function DependencyGraph({ tree }: { tree: DependencyTree }) {
   const narrow = useMediaQuery('(max-width: 760px)');
   const [layout, setLayout] = useState<Layout | null>(null);
   const empty = tree.nodes.length <= 1;
+  // Document level by default: one node per document; "expand" shows one document's sections.
+  const [expandedDocs, setExpandedDocs] = useState<ReadonlySet<string>>(new Set());
+  const shown = useMemo(() => documentTree(tree, expandedDocs), [tree, expandedDocs]);
+  const expand = (k: string) => setExpandedDocs((x) => new Set([...x, k]));
 
   useEffect(() => {
     if (!open || narrow || empty) return;
     let live = true;
-    void layoutGraph(tree).then((l) => live && setLayout(l));
+    void layoutGraph(shown).then((l) => live && setLayout(l));
     return () => {
       live = false;
     };
-  }, [tree, open, narrow, empty]);
+  }, [shown, open, narrow, empty]);
 
   const toggle = () => {
     setOpen((o) => {
@@ -498,18 +516,25 @@ export function DependencyGraph({ tree }: { tree: DependencyTree }) {
           <div className="faint small dep-empty">No section links lead to or from this work order.</div>
         ) : narrow ? (
           <div className="dep-lists">
-            <SideList tree={tree} side="upstream" now={now} />
-            <SideList tree={tree} side="downstream" now={now} />
+            <SideList tree={shown} side="upstream" now={now} onExpand={expand} />
+            <SideList tree={shown} side="downstream" now={now} onExpand={expand} />
           </div>
         ) : layout ? (
+          <>
+          {expandedDocs.size > 0 && (
+            <button type="button" className="dep-collapse faint small" onClick={() => setExpandedDocs(new Set())}>
+              Collapse sections
+            </button>
+          )}
           <CanvasViewer
             title="Dependencies"
             icon={<IconHierarchy3 size={14} />}
-            source={toMarkdown(tree)}
+            source={toMarkdown(shown)}
             sourceLang="markdown"
             maxInlineHeight={420}
-            render={() => <GraphCanvas tree={tree} layout={layout} now={now} />}
+            render={() => <GraphCanvas tree={shown} layout={layout} now={now} onExpand={expand} />}
           />
+          </>
         ) : (
           <div className="dep-loading" />
         ))}

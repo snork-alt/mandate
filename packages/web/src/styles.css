@@ -7034,3 +7034,6 @@ button.flow-badge {
 .proved-by { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; width: 100%; }
 .proved-by-item { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
 .chip-test { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.dep-node-sections { background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline dotted; }
+.dep-collapse { background: none; border: 0; padding: 2px 8px; cursor: pointer; }
