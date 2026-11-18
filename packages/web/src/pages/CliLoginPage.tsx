@@ -21,11 +21,34 @@ interface LoginInfo {
 
 export function CliLoginPage() {
   const code = new URLSearchParams(window.location.search).get('code') ?? '';
-  const info = useQuery({ queryKey: ['cli-login', code], queryFn: () => uiRequest<LoginInfo>('GET', `/ui/cli-login/${encodeURIComponent(code)}`), enabled: !!code, retry: false });
-  const [done, setDone] = useState<'approved' | 'denied' | null>(null);
+  // The decision is remembered for this tab: once the CLI collects its token the code is gone (single use), so a later
+  // refetch or remount would otherwise fall back to an error / the initial prompt.
+  const doneKey = `mandate.cli-login.${code}`;
+  const [done, setDone] = useState<'approved' | 'denied' | null>(() => {
+    try {
+      const v = sessionStorage.getItem(doneKey);
+      return v === 'approved' || v === 'denied' ? v : null;
+    } catch {
+      return null;
+    }
+  });
+  const info = useQuery({
+    queryKey: ['cli-login', code],
+    queryFn: () => uiRequest<LoginInfo>('GET', `/ui/cli-login/${encodeURIComponent(code)}`),
+    enabled: !!code && !done,
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
   const decide = useMutation({
     mutationFn: (approve: boolean) => uiRequest<{ status: 'approved' | 'denied' }>('POST', `/ui/cli-login/${encodeURIComponent(code)}/${approve ? 'approve' : 'deny'}`, {}),
-    onSuccess: (r) => setDone(r.status),
+    onSuccess: (r) => {
+      try {
+        sessionStorage.setItem(doneKey, r.status);
+      } catch {
+        // storage unavailable: the in-memory state still shows the result
+      }
+      setDone(r.status);
+    },
   });
   const d = info.data;
   return (
@@ -34,11 +57,11 @@ export function CliLoginPage() {
         <Stack gap="md">
           <Group gap={8}>
             <IconTerminal2 size={20} />
-            <Title order={3}>Authorize Mandate CLI</Title>
+            <Title order={3}>{done === 'approved' ? 'Mandate CLI authorized' : 'Authorize Mandate CLI'}</Title>
           </Group>
           {!code && <Alert color="red" icon={<IconAlertTriangle size={16} />}>No code in the link. Run <Code>mandate channel login</Code> again.</Alert>}
           {info.isLoading && <Loader size="sm" />}
-          {info.isError && (
+          {info.isError && !done && (
             <Alert color="red" icon={<IconAlertTriangle size={16} />} data-testid="cli-login-error">
               {(info.error as Error).message}
             </Alert>
