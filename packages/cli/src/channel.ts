@@ -114,6 +114,8 @@ export interface ChannelOptions {
   io: ChannelIO;
   /** ms before reconnect attempt n (default: 1 s doubling to 30 s, jittered). */
   backoff?: (n: number) => number;
+  /** A 401/403/404 lasting this long (default 90 s; a restarting server answers them for a moment) stops the stream with a notice. */
+  authGraceMs?: number;
   /** Stop signal (tests). */
   signal?: AbortSignal;
 }
@@ -143,19 +145,26 @@ export async function serveChannel(o: ChannelOptions): Promise<number> {
     writeFileSync(marker, JSON.stringify({ pid: process.pid, ppid, project: endpoint.project, at: new Date().toISOString() }));
     let last = 0;
     let failures = 0;
+    let rejectedSince = 0;
     while (!ac.signal.aborted) {
       try {
         for await (const ev of streamEvents(endpoint, { ...(last ? { lastEventId: last } : {}), signal: ac.signal })) {
           failures = 0;
+          rejectedSince = 0;
           last = Math.max(last, ev.seq);
           send(channelNotification(endpoint.project, ev));
         }
       } catch (e) {
         if (ac.signal.aborted) break;
         if (e instanceof AuthError) {
-          log(`${(e as Error).message}; run: mandate channel login --project ${endpoint.project} (approve in the browser)`);
-          failures = Math.max(failures, 6); // slow retries: the token may be fixed meanwhile
-        } else if (failures === 0) log(`stream lost (${(e as Error).message}); reconnecting`);
+          rejectedSince ||= Date.now();
+          if (Date.now() - rejectedSince >= (o.authGraceMs ?? 90_000)) {
+            log(`${(e as Error).message}; the project is unknown to ${endpoint.base} or the token was revoked. Stopping delivery: run \`mandate channel login --project ${endpoint.project}\`, or remove the entry: mandate connect --remove --no-repo --project ${endpoint.project} --url ${endpoint.base}`);
+            break; // idle (not exited: Claude Code would show the server as failed)
+          }
+        } else rejectedSince = 0;
+        if (e instanceof AuthError) failures = Math.max(failures, 1);
+        else if (failures === 0) log(`stream lost (${(e as Error).message}); reconnecting`);
       }
       if (ac.signal.aborted) break;
       failures++;

@@ -42,11 +42,12 @@ const targetLabel = (t: string, doc: string) => {
   return l ? `${rest} ${l.replace('#', '')}` : rest;
 };
 
-const STATE_LABEL: Record<AgentPresenceView['state'], string> = { online: 'online', busy: 'busy', offline: 'offline' };
+const STATE_LABEL: Record<AgentPresenceView['state'], string> = { online: 'online', busy: 'busy', reconnecting: 'reconnecting…', offline: 'offline' };
 
-/** Active agents (online or busy), wakeable first. */
+/** Active agents (online or busy, wakeable first), then reconnecting ones (seen just before a server restart; deliveries queue until they are back). */
 export function activeAgents(presence: PresenceReply | undefined): AgentPresenceView[] {
-  return (presence?.agents ?? []).filter((a) => a.state !== 'offline').sort((x, y) => Number(y.wakeable === true) - Number(x.wakeable === true));
+  const rank = (a: AgentPresenceView) => (a.state === 'reconnecting' ? 2 : a.wakeable === true ? 0 : 1);
+  return (presence?.agents ?? []).filter((a) => a.state !== 'offline').sort((x, y) => rank(x) - rank(y));
 }
 /** The preselected agent: the suggestion when it is active, else the first active one ('' when none is). */
 export function defaultAgent(presence: PresenceReply | undefined): string {
@@ -70,7 +71,7 @@ export function AgentPicker({ presence, value, onChange, showOffline, allowAny, 
             {a.state === 'offline' && showOffline ? 'offline: queued until it connects' : STATE_LABEL[a.state]}
             {a.busyWith[0] ? `: ${a.busyWith[0].summary}` : ''}
           </span>
-          {a.state !== 'offline' && a.wakeable === false && (
+          {a.state !== 'offline' && a.state !== 'reconnecting' && a.wakeable === false && (
             <span className="cmt-pick-warn" data-testid="cant-wake">
               <Ticks text={CANT_WAKE} />
             </span>

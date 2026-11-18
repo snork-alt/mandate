@@ -190,3 +190,78 @@ export async function cmdClaude(ctx: Ctx, a: Args, err: (s: string) => void): Pr
     child.on('exit', (code, sig) => resolve(code ?? (sig ? 128 : 1)));
   });
 }
+
+/* ------------------------------------------------------------------ wiring scan (stale entries) */
+
+export interface WiredProject {
+  project: string;
+  /** Server origin of the entry. */
+  url: string;
+  via: ('channel' | 'hooks')[];
+}
+
+const unq = (s: string) => s.replace(/^'(.*)'$/, '$1');
+const originOf = (u: string) => {
+  try {
+    return new URL(u).origin;
+  } catch {
+    return u;
+  }
+};
+const argAfter = (tokens: string[], flag: string) => (tokens.indexOf(flag) >= 0 ? unq(tokens[tokens.indexOf(flag) + 1] ?? '') : undefined);
+
+/** Every project whose event channel / hooks are wired in Claude Code's user files, with the server each points at. */
+export function wiredProjects(ctx: Ctx): WiredProject[] {
+  const map = new Map<string, WiredProject>();
+  const add = (project: string | undefined, url: string | undefined, via: 'channel' | 'hooks') => {
+    if (!project || !url) return;
+    const k = `${project}\u0000${originOf(url)}`;
+    const cur = map.get(k) ?? { project, url: originOf(url), via: [] };
+    if (!cur.via.includes(via)) cur.via.push(via);
+    map.set(k, cur);
+  };
+  try {
+    const cj = claudeJson(ctx);
+    const servers = jsonGet(cj, readText(cj), ['mcpServers']);
+    if (servers && typeof servers === 'object') {
+      for (const [k, v] of Object.entries(servers as Record<string, { args?: unknown }>)) {
+        if (!CHANNEL_NAME.test(k) || !Array.isArray(v?.args)) continue;
+        const args = v.args.map(String);
+        add(argAfter(args, '--project'), argAfter(args, '--url'), 'channel');
+      }
+    }
+  } catch {
+    // unreadable: nothing to report
+  }
+  try {
+    const sj = settingsJson(ctx);
+    const hooks = (jsonGet(sj, readText(sj), ['hooks']) ?? {}) as Record<string, Group[]>;
+    for (const groups of Object.values(hooks)) {
+      if (!Array.isArray(groups)) continue;
+      for (const g of groups) for (const h of g.hooks ?? []) if (isOurs(h.command)) {
+        const t = String(h.command).split(' ');
+        add(argAfter(t, '--project'), argAfter(t, '--url'), 'hooks');
+      }
+    }
+  } catch {
+    // unreadable
+  }
+  return [...map.values()];
+}
+
+const isLoopback = (u: string) => /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(originOf(u));
+
+/**
+ * Entries that point at nothing useful for the server being wired: a loopback server that no longer has the project
+ * (`known` = the projects of this machine's server), or the same project on another server URL (it moved).
+ */
+export function staleWiring(wired: WiredProject[], target: { base: string; project?: string; known?: string[] }): (WiredProject & { reason: string })[] {
+  const out: (WiredProject & { reason: string })[] = [];
+  for (const w of wired) {
+    if (isLoopback(w.url) && isLoopback(target.base) && target.known && !target.known.includes(w.project)) out.push({ ...w, reason: `project '${w.project}' no longer exists on this server` });
+    else if (target.project && w.project === target.project && w.url !== originOf(target.base) && !(isLoopback(w.url) && isLoopback(target.base))) out.push({ ...w, reason: `'${w.project}' points at ${w.url}, not ${originOf(target.base)}` });
+  }
+  return out;
+}
+
+export const removeCommand = (w: { project: string; url: string }) => `${BIN} connect --remove --no-repo --project ${w.project} --url ${w.url}`;

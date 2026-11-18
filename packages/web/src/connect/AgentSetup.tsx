@@ -367,7 +367,9 @@ export function ChannelStatus() {
   const yes = !!me && me.state !== 'offline' && me.wakeable;
   const text = yes
     ? 'Event channel connected: yes. Claude Code can be woken.'
-    : me && me.state !== 'offline'
+    : me?.state === 'reconnecting'
+      ? 'Event channel connected: reconnecting… (the server restarted; Claude Code reconnects on its next hook or tool call).'
+      : me && me.state !== 'offline'
       ? `Event channel connected: no. Claude Code is connected over MCP only and can't be woken: ${WAKE_FIX}.`
       : 'Event channel connected: no (Claude Code has not connected yet, or is idle).';
   return (

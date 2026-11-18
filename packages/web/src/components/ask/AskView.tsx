@@ -6,7 +6,7 @@ import { SearchField } from '../SearchField';
 import { useRailOptional } from '../rail/railContext';
 import { suggestionsFor } from './suggestions';
 import { useMcpSearch } from '../../mcp/queries';
-import { AgentPicker } from '../comments/CommentsPanel';
+import { activeAgents, AgentPicker } from '../comments/CommentsPanel';
 import { useAgentsPresence } from '../../lib/comments';
 import { AskTurnView } from './AskThread';
 import { useAsk } from './AskProvider';
@@ -99,7 +99,7 @@ export function AskView() {
   const { draft, setDraft, chips, removeChip, addChip, turns, send: onSend, stop: onStop, running: streaming, reset, agentChoice, setAgentChoice } = useAsk();
   const [picking, setPicking] = useState(false);
   const presence = useAgentsPresence(undefined);
-  const agents = (presence.data?.agents ?? []).filter((a) => a.state !== 'offline');
+  const agents = activeAgents(presence.data);
   const field = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
   const rail = useRailOptional();
   const visible = rail ? !rail.collapsed && rail.activeTab === 'ask' : true;
@@ -166,7 +166,7 @@ export function AskView() {
         {agents.length === 1 && (
           <div className="rail-faint" data-testid="ask-agent-auto">
             Answered by {agents[0]!.label}
-            {agents[0]!.state === 'busy' ? ' (busy: it answers in the background)' : ''}
+            {agents[0]!.state === 'busy' ? ' (busy: it answers in the background)' : agents[0]!.state === 'reconnecting' ? ' (reconnecting…: it answers when it is back)' : ''}
           </div>
         )}
         {needsPick && <AgentPicker presence={presence.data} value={to ?? ''} onChange={setAgentChoice} />}

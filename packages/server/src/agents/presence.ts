@@ -28,12 +28,17 @@ export interface AgentInfo {
   /** When the last stream closed: the rewake watch re-arms on the next hook, so a just-closed stream still counts as wakeable for a short grace. */
   streamClosedAt?: number;
   lastSeen: number;
+  /** Known from the persisted directory only (no activity since this process started). */
+  seeded?: boolean;
 }
 
 /** Grace after a stream closes (rewake re-arm gap between hook events). */
 export const STREAM_GRACE_MS = 2 * 60_000;
 
-export type AgentState = 'online' | 'busy' | 'offline';
+/** An agent seen this recently before a restart is `reconnecting` (not offline) until it is seen again. */
+export const RECONNECT_MS = 30 * 60_000;
+
+export type AgentState = 'online' | 'busy' | 'reconnecting' | 'offline';
 export interface AgentView {
   id: string;
   /** The handle to use in `@mention` / `to`. */
@@ -46,7 +51,8 @@ export interface AgentView {
   /** Open claims (work orders) while busy. */
   busyWith: { ref: string; summary: string }[];
   repos: string[];
-  lastSeen: string;
+  /** ISO time of its last activity; absent when never seen. */
+  lastSeen?: string;
 }
 
 export class AgentPresence {
@@ -69,14 +75,20 @@ export class AgentPresence {
     if (agentName) a.names.add(agentName);
     if (repo) a.repos.add(repo);
     a.lastSeen = Date.now();
+    delete a.seeded;
     if (!wasOnline) this.connected(c.id);
     return a;
   }
 
   /** Register a client known from before (the client directory) without marking it online or firing connect listeners. */
-  know(c: { id: string; label: string; client: string; user?: string }): void {
-    if (this.agents.has(c.id)) return;
-    this.agents.set(c.id, { id: c.id, label: c.label, client: c.client, ...(c.user ? { user: c.user } : {}), names: new Set(), repos: new Set(), streams: 0, lastSeen: 0 });
+  know(c: { id: string; label: string; client: string; user?: string }, lastSeenAt?: number): void {
+    const seen = lastSeenAt && Number.isFinite(lastSeenAt) ? lastSeenAt : 0;
+    const cur = this.agents.get(c.id);
+    if (cur) {
+      if (cur.seeded && seen > cur.lastSeen) cur.lastSeen = seen;
+      return;
+    }
+    this.agents.set(c.id, { id: c.id, label: c.label, client: c.client, ...(c.user ? { user: c.user } : {}), names: new Set(), repos: new Set(), streams: 0, lastSeen: seen, seeded: true });
   }
 
   /** A stream (SSE / channel) is connected; returns the disconnect function. */
@@ -133,7 +145,7 @@ export class AgentPresence {
 
   isOnline(id: string, now = Date.now()): boolean {
     const a = this.agents.get(id);
-    return !!a && (a.streams > 0 || now - a.lastSeen < PRESENCE_ACTIVE_MS);
+    return !!a && (a.streams > 0 || (!a.seeded && now - a.lastSeen < PRESENCE_ACTIVE_MS));
   }
 
   /** Presence of every known agent, with what each is busy with (claims of `workOrders`). */
@@ -149,23 +161,24 @@ export class AgentPresence {
       .map((a): AgentView => {
         const busyWith = claims.get(a.id) ?? [];
         const online = this.isOnline(a.id, now);
+        const reconnecting = !online && !!a.seeded && a.lastSeen > 0 && now - a.lastSeen < RECONNECT_MS;
         return {
           id: a.id,
           handle: handleOf(a, this.agents.values()),
           label: a.user ? `${a.label} (${a.user})` : a.label,
           ...(a.user ? { user: a.user } : {}),
-          state: busyWith.length && online ? 'busy' : online ? 'online' : busyWith.length ? 'busy' : 'offline',
+          state: busyWith.length && online ? 'busy' : online ? 'online' : busyWith.length ? 'busy' : reconnecting ? 'reconnecting' : 'offline',
           wakeable: this.isWakeable(a.id, now),
           busyWith,
           repos: [...a.repos],
-          lastSeen: new Date(a.lastSeen).toISOString(),
+          ...(a.lastSeen > 0 ? { lastSeen: new Date(a.lastSeen).toISOString() } : {}),
         };
       })
-      .sort((x, y) => rank(x.state) - rank(y.state) || y.lastSeen.localeCompare(x.lastSeen));
+      .sort((x, y) => rank(x.state) - rank(y.state) || (y.lastSeen ?? '').localeCompare(x.lastSeen ?? ''));
   }
 }
 
-const rank = (s: AgentState) => (s === 'online' ? 0 : s === 'busy' ? 1 : 2);
+const rank = (s: AgentState) => (s === 'online' ? 0 : s === 'busy' ? 1 : s === 'reconnecting' ? 2 : 3);
 
 /** The short handle: the client slug when unique in the project, else the client id with `-` for `/` (mentionable). */
 function handleOf(a: AgentInfo, all: Iterable<AgentInfo>): string {
@@ -176,7 +189,7 @@ function handleOf(a: AgentInfo, all: Iterable<AgentInfo>): string {
 
 /** Suggest who should take work: an idle online agent on one of `repos`, else the least busy online agent. */
 export function suggestAgent(views: AgentView[], repos: string[] = []): string | null {
-  const online = views.filter((v) => v.state !== 'offline');
+  const online = views.filter((v) => v.state !== 'offline' && v.state !== 'reconnecting');
   if (!online.length) return null;
   const idle = online.filter((v) => v.state === 'online');
   const onRepo = idle.find((v) => v.repos.some((r) => repos.includes(r)));

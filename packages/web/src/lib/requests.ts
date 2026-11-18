@@ -99,7 +99,7 @@ export function assigneeLabel(assignee: string | undefined, presence?: PresenceR
   if (assignee === 'any') return 'Any agent';
   return presence?.agents.find((a) => a.id === assignee || a.handle === assignee)?.label ?? assignee;
 }
-export function assigneeState(assignee: string | undefined, presence?: PresenceReply): 'online' | 'busy' | 'offline' | undefined {
+export function assigneeState(assignee: string | undefined, presence?: PresenceReply): 'online' | 'busy' | 'reconnecting' | 'offline' | undefined {
   if (!assignee || assignee === 'any') return undefined;
   return presence?.agents.find((a) => a.id === assignee || a.handle === assignee)?.state ?? 'offline';
 }
@@ -113,12 +113,13 @@ export function deliveryProblem(f: Pick<Feedback, 'status' | 'assignee' | 'start
   if (!presence || !Array.isArray(presence.agents) || f.status === 'closed' || !f.assignee || f.startedBy) return null;
   const agents = presence.agents;
   if (f.assignee === 'any') {
-    if (agents.some((a) => a.state !== 'offline' && a.wakeable)) return null;
+    if (agents.some((a) => a.state !== 'offline' && a.state !== 'reconnecting' && a.wakeable)) return null;
     return agents.some((a) => a.state !== 'offline')
       ? `Waiting for any agent. The connected agents can't be woken: they see this request on their next tool call. To wake them, ${WAKE_FIX}.`
       : `Waiting for any agent. None is connected. Start Claude Code with \`mandate claude\` (first run \`mandate channel login\`); it picks the request up when it connects.`;
   }
   const a = agents.find((x) => x.id === f.assignee || x.handle === f.assignee);
+  if (a?.state === 'reconnecting') return `${a.label} is reconnecting (the server restarted): the request is delivered when it reconnects or at its next tool call.`;
   if (!a || a.state === 'offline') return `${assigneeLabel(f.assignee, presence)} is offline: the request waits until it connects. To wake an idle agent, ${WAKE_FIX}.`;
   if (a.wakeable === false) return `${a.label} is connected but can't be woken: it sees this request on its next tool call. To wake it, ${WAKE_FIX}.`;
   return null;

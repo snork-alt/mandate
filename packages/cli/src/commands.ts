@@ -353,6 +353,17 @@ export async function cmdDoctor(ctx: Ctx, a: Args, out: Out): Promise<number> {
     add('key env vars', missing.length ? 'warn' : 'ok', missing.length ? `not set in this shell: ${missing.join(', ')}` : 'set', missing.length ? `open a new terminal${rcs.length ? '' : `, or add: . ${envFile(ctx)} to your shell profile`}` : undefined);
   }
 
+  // Event wiring per project (Claude Code channel entries and hooks); stale ones are flagged with the removal command.
+  {
+    const { removeCommand, staleWiring, wiredProjects } = await import('./push.js');
+    const wired = wiredProjects(ctx);
+    const stale = staleWiring(wired, { base: s.localUrl, known: projects.map((p) => p.id) });
+    for (const w of wired) {
+      const st = stale.find((x) => x.project === w.project && x.url === w.url);
+      add(`wiring: ${w.project}`, st ? 'warn' : 'ok', `${w.url} (${w.via.join(' + ')})${st ? `: stale, ${st.reason}` : ''}`, st ? removeCommand(w) : undefined);
+    }
+  }
+
   // Integrity lint per project (read-only): errors and reference-gap warnings, each with its suggested fix.
   if (projects.length) {
     const { projectIntegrity } = await import('../../server/src/storage/doctor.js');

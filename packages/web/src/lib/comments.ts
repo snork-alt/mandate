@@ -40,7 +40,7 @@ export interface AgentPresenceView {
   handle: string;
   label: string;
   user?: string;
-  state: 'online' | 'busy' | 'offline';
+  state: 'online' | 'busy' | 'reconnecting' | 'offline';
   /** An event stream (channel / hook) is connected: news wakes the agent. false: connected over MCP only. */
   wakeable?: boolean;
   lastSeen?: string;

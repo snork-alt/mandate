@@ -14,7 +14,7 @@ import { SUPPORTED_AGENTS } from '../../shared/src/supported-agents.js';
 import { disconnectChanges, pickAgents, type Runtime } from './install.js';
 import { askAgentChange, auditAgentChange, claudeFlowWiring } from './claude-flow.js';
 import { resolveToken } from './events.js';
-import { channelName, pushChanges, pushMode, type PushMode } from './push.js';
+import { channelName, pushChanges, pushMode, removeCommand, staleWiring, wiredProjects, type PushMode } from './push.js';
 import { browserLogin, finishLogin, ttyAvailable } from './login.js';
 import { publicUrlProblem, readSettings } from './settings.js';
 import { c, fail, info, ok, warn } from './ui.js';
@@ -259,6 +259,19 @@ async function connectRemote(rt: Runtime, a: Args, repo: string, url: string): P
         if (r.ok) finishLogin(rt, project, r.token, `stored${r.login ? ` for ${r.login}` : ''}`);
         else out.log(warn(`${r.message}; run ${c.cyan(`${BIN} channel login --project ${project} --url ${base}`)} to enable the event channel`));
       } else out.log(warn(`the event channel needs a one-time approval: run ${c.cyan(`${BIN} channel login --project ${project} --url ${base}`)}`));
+    }
+  }
+  // Earlier Mandate wiring (channel entries, hooks) of projects this server no longer knows, or for another server URL.
+  if (claude && !rt.dryRun) {
+    const stale = staleWiring(wiredProjects(ctx), { base, project, known: listProjects(ctx).map((p) => p.id) });
+    if (stale.length) {
+      out.log(`\n${c.bold('Stale Mandate wiring')}`);
+      for (const w of stale) {
+        out.log(warn(`${w.project} @ ${w.url} (${w.via.join(' + ')}): ${w.reason}`));
+        if (rt.prompt.interactive && (await rt.prompt.confirm(`Remove the event channel and hooks of '${w.project}' @ ${w.url}?`, true))) {
+          applyChanges(pushChanges(ctx, w.project, w.url, 'off', true), { dryRun: false, out, home: ctx.home });
+        } else out.log(`  ${c.dim('remove with:')} ${c.cyan(removeCommand(w))}`);
+      }
     }
   }
   out.log(`\n${c.bold('Verify')}`);

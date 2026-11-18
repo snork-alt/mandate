@@ -25,15 +25,31 @@ const sleep = (ms: number, signal?: AbortSignal) =>
   });
 
 /** Block until events arrive (all that are available right away), or `timeoutMs` / abort pass (empty). */
-export async function waitForEvents(ep: Endpoint, o: { timeoutMs: number; signal?: AbortSignal; settleMs?: number; backoffMs?: number }): Promise<PushedEvent[]> {
+export async function waitForEvents(
+  ep: Endpoint,
+  o: {
+    timeoutMs: number;
+    signal?: AbortSignal;
+    settleMs?: number;
+    /** Fixed delay before a reconnect (default: 1 s doubling to 30 s). */
+    backoffMs?: number;
+    /** A 401/403/404 that lasts this long (default 90 s: a restarting server answers 404 / 401 for a moment) means a revoked token or unknown project: give up and call `onRejected`. */
+    authGraceMs?: number;
+    onRejected?: (e: AuthError) => void;
+  },
+): Promise<PushedEvent[]> {
   const deadline = Date.now() + o.timeoutMs;
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), o.timeoutMs);
   o.signal?.addEventListener('abort', () => ac.abort(), { once: true });
+  let failures = 0;
+  let rejectedSince = 0;
   try {
     while (!ac.signal.aborted && Date.now() < deadline) {
       try {
         const missed = await fetchPending(ep, { signal: ac.signal });
+        failures = 0;
+        rejectedSince = 0;
         if (missed.length) return missed;
         for await (const first of streamEvents(ep, { signal: ac.signal })) {
           // Events that followed right behind it.
@@ -42,9 +58,17 @@ export async function waitForEvents(ep: Endpoint, o: { timeoutMs: number; signal
           return [first, ...more];
         }
       } catch (e) {
-        if (ac.signal.aborted || e instanceof AuthError) return [];
+        if (ac.signal.aborted) return [];
+        if (e instanceof AuthError) {
+          rejectedSince ||= Date.now();
+          if (Date.now() - rejectedSince >= (o.authGraceMs ?? 90_000)) {
+            o.onRejected?.(e);
+            return [];
+          }
+        } else rejectedSince = 0;
       }
-      await sleep(o.backoffMs ?? 5000, ac.signal);
+      failures++;
+      await sleep(o.backoffMs ?? Math.min(30_000, 1000 * 2 ** Math.min(failures, 5)) * (0.75 + Math.random() * 0.5), ac.signal);
     }
     return [];
   } finally {
@@ -118,7 +142,12 @@ export async function cmdWatch(ctx: Ctx, a: Args, out: Out, stdin: Readable = pr
   for (const sig of ['SIGTERM', 'SIGINT'] as const) process.once(sig, () => ac.abort());
   try {
     const seconds = Number(str(a, 'timeout')) || 55 * 60;
-    const got = await waitForEvents(r.ep, { timeoutMs: seconds * 1000, signal: ac.signal });
+    const got = await waitForEvents(r.ep, {
+      timeoutMs: seconds * 1000,
+      signal: ac.signal,
+      ...(a.flags['auth-grace'] !== undefined ? { authGraceMs: Number(str(a, 'auth-grace')) * 1000 } : {}),
+      onRejected: () => rejectedNotice(ctx, r.ep.project, r.ep.base, out),
+    });
     // Delivered is delivered: only what is newer than the last delivery wakes this session (an older item only again after
     // the re-push delay, which the server enforces); inside a Stop continuation only strictly newer items count.
     const settled = Date.now();
@@ -134,6 +163,19 @@ export async function cmdWatch(ctx: Ctx, a: Args, out: Out, stdin: Readable = pr
   } finally {
     if (readFileSafe(lock) === String(process.pid)) rmSync(lock, { force: true });
   }
+}
+
+/** Once per project: a server that keeps rejecting the project / token. The hook then exits 0, quietly. */
+function rejectedNotice(ctx: Ctx, project: string, base: string, out: Out): void {
+  const f = path.join(runDir(ctx), `watch-rejected-${project}`);
+  if (readFileSafe(f)) return;
+  try {
+    mkdirSync(runDir(ctx), { recursive: true, mode: 0o700 });
+    writeFileSync(f, new Date().toISOString(), { mode: 0o600 });
+  } catch {
+    // best effort
+  }
+  out.err(`mandate: ${base} rejects project '${project}' (unknown project or revoked token); its event hook stops. Remove it: mandate connect --remove --no-repo --project ${project} --url ${base} (or re-run the installer).`);
 }
 
 const readFileSafe = (f: string) => {

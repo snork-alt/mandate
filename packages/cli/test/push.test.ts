@@ -93,6 +93,8 @@ interface Fake {
   drop(): void;
   requests: { url: string; headers: http.IncomingHttpHeaders }[];
   pending: PushedEvent[];
+  /** Answer everything with this status (a restarting server / an unknown project) until reset. */
+  fail?: number;
   close(): Promise<void>;
 }
 async function fakeServer(): Promise<Fake> {
@@ -110,6 +112,7 @@ async function fakeServer(): Promise<Fake> {
   };
   const srv = http.createServer((req, res) => {
     f.requests.push({ url: req.url!, headers: req.headers });
+    if (f.fail) return void res.writeHead(f.fail).end();
     if (req.headers.authorization !== 'Bearer mndp_test_token_123') return void res.writeHead(401).end();
     if (req.url!.startsWith('/p/web/events/pending')) {
       res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ items: f.pending.splice(0), next: 0 }));
@@ -237,8 +240,50 @@ describe('mandate watch --rewake', () => {
     expect((await w).map((e) => e.seq)).toEqual([30]);
   });
 
-  it('a wrong token is a quiet no-op (never fails the session)', async () => {
-    expect(await waitForEvents({ ...ep(), token: 'nope' }, { timeoutMs: 1000 })).toEqual([]);
+  it('a wrong token is a quiet no-op (never fails the session): after the grace it gives up and reports once', async () => {
+    const rejected: string[] = [];
+    expect(await waitForEvents({ ...ep(), token: 'nope' }, { timeoutMs: 3000, authGraceMs: 0, onRejected: (e) => rejected.push(e.message) })).toEqual([]);
+    expect(rejected).toHaveLength(1);
+  });
+
+  it('survives a server restart: the stream drops, the server answers 404 / 503 for a moment, then it reconnects and delivers', async () => {
+    const streams = () => fake.requests.filter((r) => r.url === '/p/web/events' || r.url.startsWith('/p/web/events?')).length;
+    const before = streams();
+    const w = waitForEvents(ep(), { timeoutMs: 8000, settleMs: 10, backoffMs: 30, authGraceMs: 60_000 });
+    await until(() => streams() === before + 1);
+    fake.fail = 404; // restarting: the project is not loaded yet
+    fake.drop();
+    await new Promise((r) => setTimeout(r, 250));
+    fake.fail = 401;
+    await new Promise((r) => setTimeout(r, 150));
+    fake.fail = undefined;
+    await until(() => streams() === before + 2);
+    await new Promise((r) => setTimeout(r, 50));
+    fake.emit(ev(40));
+    expect((await w).map((e) => e.seq)).toEqual([40]);
+  });
+
+  it('cmdWatch: a project the server keeps rejecting (404) exits 0 quietly with a one-line notice, once', async () => {
+    const ctx = tempCtx();
+    const c = { ...ctx, env: { ...ctx.env, MANDATE_CHANNEL_TOKEN: TOKEN } };
+    const a = parseArgs(['watch', '--rewake', '--project', 'web', '--url', fake.base, '--auth-grace', '0', '--timeout', '3']);
+    const input = () => {
+      const s = new PassThrough();
+      s.end(JSON.stringify({ session_id: 'sess-404', hook_event_name: 'Stop' }));
+      return s;
+    };
+    fake.fail = 404;
+    try {
+      const out = capture();
+      expect(await cmdWatch(c, a, out, input())).toBe(0);
+      expect(out.text().trim().split('\n')).toHaveLength(1);
+      expect(out.text()).toContain('mandate connect --remove --no-repo --project web');
+      const again = capture();
+      expect(await cmdWatch(c, a, again, input())).toBe(0);
+      expect(again.text()).toBe('');
+    } finally {
+      fake.fail = undefined;
+    }
   });
 
   it('cmdWatch: exit 2 with the event text on stderr; exit 0 on timeout; exit 0 without waiting when this session has an active channel', async () => {
@@ -390,5 +435,28 @@ describe('mandate claude (launcher)', () => {
     expect(await cmdClaude({ ...ctx, env: { ...ctx.env, MANDATE_CLAUDE_BIN: bin } }, parseArgs(['claude', '-p', 'hi']), (s) => errs.push(s))).toBe(0);
     expect(errs.join('')).toMatch(/no Mandate event channel is set up/);
     expect(readFileSync(out, 'utf8').split('\n')[0]).toBe('-p');
+  });
+});
+
+describe('stale Mandate wiring', () => {
+  it('connect lists entries of unknown loopback projects / moved projects and prints the exact removal; doctor flags them', async () => {
+    const { wiredProjects, staleWiring } = await import('../src/push.js');
+    const ctx = tempCtx();
+    write(path.join(ctx.home, '.claude.json'), JSON.stringify({ mcpServers: { mandate_events_test123: { type: 'stdio', command: 'mandate', args: ['channel', '--project', 'test123', '--url', 'http://localhost:4000'] } } }));
+    write(path.join(ctx.home, '.claude', 'settings.json'), JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'mandate watch --rewake --project test123 --url http://localhost:4000', asyncRewake: true }] }] } }));
+    const wired = wiredProjects(ctx);
+    expect(wired).toEqual([{ project: 'test123', url: 'http://localhost:4000', via: ['channel', 'hooks'] }]);
+    expect(staleWiring(wired, { base: 'http://localhost:4000', known: ['other'] })).toHaveLength(1);
+    expect(staleWiring(wired, { base: 'http://localhost:4000', known: ['test123'] })).toHaveLength(0);
+    expect(staleWiring(wired, { base: 'https://m.example.com', project: 'test123' })).toHaveLength(1); // moved
+    expect(staleWiring(wired, { base: 'https://m.example.com', project: 'web' })).toHaveLength(0); // another server's project: left alone
+
+    const out = capture();
+    expect(await run(['connect', '--yes', '--no-repo', '--url', 'http://localhost:4000', '--project', 'web', '--agents', 'claude-code'], envOf(ctx), out, ctx.dir)).toBe(0);
+    expect(out.text()).toContain('Stale Mandate wiring');
+    expect(out.text()).toContain('mandate connect --remove --no-repo --project test123 --url http://localhost:4000');
+    const doc = capture();
+    await run(['doctor', '--json'], envOf(ctx), doc, ctx.dir);
+    expect(doc.text()).toContain('wiring: test123');
   });
 });

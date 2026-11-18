@@ -66,7 +66,10 @@ export function registerEventRoutes(app: FastifyInstance, o: { projects: Project
     }
     const ident = clientIdentity({ principal: p, clientName: q(req, 'client') ?? 'claude-code' });
     const client = ident.id;
-    return { news, client, ident, consumer: q(req, 'consumer') ?? `anon-${Math.random().toString(36).slice(2, 10)}` };
+    const settings = (rt?.ctx as ToolContext | undefined)?.settings;
+    const seen = () => void settings?.clients.seen(project, ident).catch(() => undefined);
+    seen();
+    return { news, client, ident, seen, consumer: q(req, 'consumer') ?? `anon-${Math.random().toString(36).slice(2, 10)}` };
   };
 
   app.get('/p/:projectId/events', async (req, reply) => {
@@ -105,6 +108,7 @@ export function registerEventRoutes(app: FastifyInstance, o: { projects: Project
     const hb = setInterval(() => {
       if (!res.write(': hb\n\n')) return;
       c.news.presence.note(c.ident);
+      c.seen();
       void flush(); // also picks up items whose wake-up was missed (a restart between ingest and listen)
     }, o.heartbeatMs ?? 15_000);
     const close = () => {

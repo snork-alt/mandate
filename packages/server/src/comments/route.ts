@@ -146,7 +146,7 @@ export async function seedKnownClients(ctx: Pick<ToolContext, 'settings'>, prese
   try {
     const s = ctx.settings;
     if (!s) return;
-    for (const r of await s.clients.list(s.project)) if (r.client !== 'web-ui') presence.know(r);
+    for (const r of await s.clients.list(s.project)) if (r.client !== 'web-ui') presence.know(r, Date.parse(r.lastSeenAt));
   } catch {
     /* presence stays as it is */
   }
